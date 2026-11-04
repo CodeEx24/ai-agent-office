@@ -1,0 +1,38 @@
+# Dependencies and build output
+node_modules/
+.pnpm-store/
+.next/
+out/
+dist/
+build/
+coverage/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+
+# Env and secrets (only .env.example is committed)
+.env
+.env.*
+!.env.example
+secrets/
+
+# Supabase local state
+supabase/.branches/
+supabase/.temp/
+
+# Test artifacts
+playwright-report/
+test-results/
+blob-report/
+.playwright-mcp/
+
+# Claude Code personal settings (shared settings live in .claude/settings.json)
+.claude/settings.local.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log

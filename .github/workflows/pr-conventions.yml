@@ -1,0 +1,40 @@
+name: PR conventions
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-conventions:
+    name: pr-conventions
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # Inputs are passed through env, never interpolated into the script (PR titles are untrusted).
+      - name: Check branch name and PR title
+        env:
+          BRANCH: ${{ github.head_ref }}
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          branch_re='^(feat|fix|chore|refactor|docs|test|perf|build|ci)/ago-[0-9]+/[a-z0-9]+(-[a-z0-9]+)*$'
+          title_re='^(feat|fix|chore|refactor|docs|test|perf|build|ci)(\([a-z0-9-]+\))?: .+ \(AGO-[0-9]+\)$'
+          ok=true
+          if [[ ! "$BRANCH" =~ $branch_re ]]; then
+            echo "::error::Branch must look like <type>/ago-<ticket>/<short-kebab-title> (got: $BRANCH)"
+            ok=false
+          fi
+          if [[ ! "$TITLE" =~ $title_re ]]; then
+            echo "::error::PR title must look like 'type(scope): summary (AGO-###)' (got: $TITLE)"
+            ok=false
+          fi
+          branch_ticket=$(sed -E 's#^[a-z]+/ago-([0-9]+)/.*#\1#' <<<"$BRANCH")
+          title_ticket=$(sed -E 's#.*\(AGO-([0-9]+)\)$#\1#' <<<"$TITLE")
+          if [[ "$branch_ticket" != "$title_ticket" ]]; then
+            echo "::error::Branch ticket (AGO-$branch_ticket) and title ticket (AGO-$title_ticket) differ"
+            ok=false
+          fi
+          $ok
