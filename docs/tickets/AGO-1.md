@@ -11,6 +11,10 @@ Sets up the tooling that lets AI agents deliver AGO tickets end to end with a hu
 - `orca.yaml` + `scripts/worktree-setup.mjs`: env copy and `pnpm install` in each new worktree. `scripts/free-port.mjs` gives parallel dev servers their own ports.
 - From aitmpl.com and the skill registries: see the table in `docs/ai-workflow.md`.
 - The AGENTS.md merge rule is narrowed: only `/pr-gate` merges, and humans merge rule/tooling PRs.
+- Naming is locked down (CLAUDE.md §5): unpadded keys, a coordinator-assigned branch that never changes after the first push, the same type in branch and title, and a fixed scope list. All of it is enforced in `pr-conventions` CI and checked again by `/run-waves` and `/pr-gate`.
+- One schema-changing ticket in flight at a time (the schema slot in `/run-waves`).
+- `PushNotification` on every human-needed event.
+- Optional bot account: `scripts/as-bot.mjs` authors agent commits, pushes and PRs as the bot when `AGO_BOT_TOKEN` is set. The gate only comments and never approves; approving under the human's account was rejected as self-approval.
 
 ## API changes
 None.

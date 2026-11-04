@@ -164,6 +164,9 @@ function checkSupabase(tokens) {
 }
 
 function checkShell(command, cwd) {
+  if (/AGO_BOT(_GIT)?_TOKEN/.test(command)) {
+    deny('The bot token is only used through scripts/as-bot.mjs; never read, print or pass it directly.');
+  }
   for (const tokens of segmentsOf(command)) {
     const push = argsAfter(tokens, 'git', 'push');
     if (push) checkGitPush(push);

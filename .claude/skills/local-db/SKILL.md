@@ -21,7 +21,8 @@ description: >-
   node scripts/db-lock.mjs release AGO-###
   ```
   Always release, even when a step fails. Locks older than 60 min are broken automatically.
-- Migrations: `supabase migration new <name>`. Every table gets `workspace_id` + RLS policies. Keep migrations reversible: add a down/rollback note in `docs/tickets/AGO-###.md`. Load the `supabase-postgres-best-practices` and `supabase` skills before writing SQL.
+- Only one schema-changing ticket is in flight at a time (the `/run-waves` schema slot). Ask the coordinator before writing a migration if your brief says `schema: no`.
+- Migrations: `supabase migration new ago_<n>_<what>`, which gives `<timestamp>_ago_<n>_<what>.sql`. Every table gets `workspace_id` + RLS policies. Keep migrations reversible: add a down/rollback note in `docs/tickets/AGO-###.md`. Load the `supabase-postgres-best-practices` and `supabase` skills before writing SQL.
 
 ## CLI
 Once the monorepo exists (AGO-57), the Supabase CLI is a root dev dependency, so use `pnpm exec supabase …`. Before that, use `pnpm dlx supabase@3.0.0 …`. Docker Desktop must be running (`docker ps`).

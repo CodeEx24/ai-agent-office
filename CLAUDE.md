@@ -47,9 +47,12 @@ Agent packs (JSON export/import, epic EP-19): a pack never contains secrets, IDs
 Reuse-first: before creating a component, util or pattern, check whether it should be a shared component, a utility, or an existing pattern to follow. Avoid duplicate solutions.
 
 ## 5. Git
-Branch: `<type>/ago-<ticket>/<short-kebab-title>` with type feat, fix, chore, refactor, docs, test, perf, build or ci. Example: `feat/ago-014/agent-wizard`.
-Commit (Conventional Commits): `feat(scope): summary (AGO-###)`.
-Trunk-based: short branch, PR, one review plus green CI, squash-merge. The PR restates the acceptance criteria.
+Ticket key: the Jira key exactly, never zero-padded: `AGO-57` in titles and commits, `ago-57` in branches. It is the only ID in branches, commits and file names; the planning ID (`US-004`) goes in the PR body only.
+Branch: `<type>/ago-<n>/<slug>`, where the slug is lowercase ASCII, 2-5 words, at most 40 chars, with `US-###` and filler words dropped. Example: `build/ago-57/scaffold-monorepo`. The `/run-waves` coordinator assigns the exact name, workers never rename a branch after its first push, and fix rounds push to the same branch.
+Type: Story → `feat`, Bug → `fix`, setup/tooling → `build`, `ci` or `chore`, docs only → `docs`; also `refactor`, `test`, `perf`.
+Commit and PR title (Conventional Commits): `type(scope): summary (AGO-<n>)`, with the same type as the branch. Scope is one of: web, worker, shared, ui, assets, db, auth, agents, work, vault, control, office, policy, ci, tooling, deps, repo. The squash commit on main is the PR title plus ` (#PR)`.
+Files: ticket notes `docs/tickets/AGO-<n>.md`; migrations `<timestamp>_ago_<n>_<what>.sql`.
+Trunk-based: short branch, PR, one review plus green CI, squash-merge. The PR restates the acceptance criteria. Only one schema-changing ticket is in flight at a time.
 
 ## 6. Best-practice skills
 Install: `npx skills add vercel-labs/agent-skills` (React and Next.js best practices), `npx skills add supabase/agent-skills` (Supabase and RLS). When building any feature, load and follow these for language and framework practice. If a skill and a ticket AC conflict: AC wins for behavior, the skill wins for how it is coded.

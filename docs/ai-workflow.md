@@ -31,6 +31,33 @@ How AGO tickets go from Jira to `main` with AI agents doing the work and a human
 | `/implement-ticket AGO-###` | One ticket by hand, interactive, in the current checkout. |
 | `/local-db` | Local Supabase in Docker: start, reset, lock, types, RLS tests. |
 
+## Naming (CLAUDE.md §5, CI-enforced)
+| Thing | Rule | Example |
+|---|---|---|
+| Branch | `<type>/ago-<n>/<slug>`, unpadded key, assigned by `/run-waves` | `build/ago-57/scaffold-monorepo` |
+| Worktree | `ago-<n>-<slug>`, display name `AGO-<n> <summary>` | `ago-57-scaffold-monorepo` |
+| PR title / commits | `type(scope): summary (AGO-<n>)`, same type as the branch, fixed scope list | `build(repo): scaffold the monorepo (AGO-57)` |
+| Squash commit | PR title + ` (#PR)` | `build(repo): scaffold the monorepo (AGO-57) (#4)` |
+| Ticket notes | `docs/tickets/AGO-<n>.md` | `docs/tickets/AGO-57.md` |
+| Migration | `<timestamp>_ago_<n>_<what>.sql` | `20261105093000_ago_34_policy_tables.sql` |
+
+The branch name is fixed for the ticket's whole life: assigned by the coordinator, renamed from Orca's default before the first commit, never renamed after a push, and fix rounds push to it. `pr-conventions` CI, `/run-waves` and `/pr-gate` all check it.
+
+## One schema change at a time
+Only one ticket that changes the DB schema is in flight at once, from dispatch until merge. A worker that discovers it needs a migration asks the coordinator for the schema slot. Non-schema tickets keep running in parallel.
+
+## Notifications
+`/run-waves` (and `/pr-gate` when run on its own) sends a `PushNotification` when something needs you: a payment or secret question, a human-merge PR, a ticket that failed twice, 3 fix rounds, or a finished wave. It appears as a desktop notification. To get it on your phone, connect Remote Control (`/remote-control`) in the coordinator session.
+
+## Bot account (optional, free)
+With a bot, agent commits, pushes and PRs are authored by the bot instead of you, and its token can only write to this repo: it can't change settings, branch protection or other repos, even if a guard is bypassed. The gate never approves PRs; its verdict stays a review comment.
+1. Sign up for a free GitHub account, e.g. `codeex24-agobot`, with `jocarlbasco24+agobot@gmail.com` (Gmail plus-addressing lands in your inbox).
+2. Tell Claude the username. It invites the bot as a collaborator with **write** access, then you accept the invite on the bot account.
+3. On the bot account, create a fine-grained token: Settings → Developer settings → Fine-grained tokens. Repository access is only `CodeEx24/ai-agent-office`. Permissions: Contents read/write, Pull requests read/write, Metadata read. Expiry 90 days.
+4. Save it as a Windows user env var (never in the repo or `.env`): `setx AGO_BOT_TOKEN "<token>"`. Then restart Orca so new worktrees inherit it.
+5. Implementers already call `node scripts/as-bot.mjs git commit|push` and `node scripts/as-bot.mjs gh pr create`. Without the token, those run as your account.
+6. Rotate the token before it expires. The guard blocks agents from printing it.
+
 ## What always comes back to you
 - Anything that costs money: paid plans, upgrades, purchases, paid API credits, anything that bills.
 - Secrets and credentials only you have, and the `.env.local` values.

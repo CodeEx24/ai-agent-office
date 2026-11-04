@@ -29,6 +29,7 @@ Fixed facts: repo `CodeEx24/ai-agent-office`, base `main`. Jira cloudId `db54a41
 - `gh pr view <n> --json number,title,headRefName,headRefOid,baseRefName,isDraft,mergeable,mergeStateStatus,files,body,url,statusCheckRollup`
 - Post `<!-- pr-gate:running sha=<headRefOid> -->` as a PR comment, so parallel gates and watch mode skip this PR.
 - Take the AGO key from the title or branch, then fetch the Jira ticket: summary, description/AC, status, links. No key, a draft, or a base other than `main` → `CHANGES_REQUESTED` with the reason.
+- Naming (CLAUDE.md §5): branch `<type>/ago-<n>/<slug>` and title `type(scope): summary (AGO-<n>)`, with an unpadded key, the same type and ticket in both, and a scope from the list. When the brief names an assigned branch, the head branch must equal it. Any mismatch → `CHANGES_REQUESTED`.
 - Check out the head: `gh pr checkout <n>`. In an Orca worktree that already holds the branch, `git fetch && git switch <branch> && git pull --ff-only`.
 
 ### 2. Human-only changes → ESCALATE
@@ -37,7 +38,7 @@ Agents never change their own rules, so the gate never merges a PR that touches 
 - `.github/workflows/**`, `.github/CODEOWNERS`;
 - `AGENTS.md`, `CLAUDE.md`, `orca.yaml`, `scripts/worktree-setup.mjs`, `scripts/db-lock.mjs`.
 
-It also escalates PRs that add a paid service or SDK requiring billing, or that change the policy engine's tier table or approval semantics beyond what the ticket's AC asks. Still run the full review and post it. The verdict is `ESCALATE: needs human merge` with the reason, and the human merges.
+It also escalates PRs that add a paid service or SDK requiring billing, or that change the policy engine's tier table or approval semantics beyond what the ticket's AC asks. Still run the full review and post it. The verdict is `ESCALATE: needs human merge` with the reason, and the human merges. When running outside `/run-waves` (by hand or in watch mode), also send a `PushNotification`: `PR #<n> AGO-<n> needs your merge: <reason>`.
 
 ### 3. CI
 - `mergeStateStatus` = `BEHIND`: run `gh pr update-branch <n>`, then wait for CI again.

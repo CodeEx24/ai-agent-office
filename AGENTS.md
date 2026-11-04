@@ -13,7 +13,8 @@ Rules for all coding agents. CLAUDE.md is canonical; this mirrors the must-follo
 - Validate all external input with Zod at the boundary; no `any`.
 - Reuse-first: check for a shared component, utility or existing pattern before creating new code.
 - Do not bloat CLAUDE.md: put per-ticket detail in `docs/tickets/AGO-###.md`; update CLAUDE.md only at epic completion or when a decision becomes stable.
-- Branch `<type>/ago-<ticket>/<short-kebab-title>`; commit `type(scope): summary (AGO-###)`; one ticket per PR.
+- Branch `<type>/ago-<n>/<slug>`; commit and PR title `type(scope): summary (AGO-<n>)`; unpadded Jira key; scope from the CLAUDE.md §5 list; one ticket, one branch, one PR. Use the branch name you are assigned and never rename it after the first push.
+- Only one schema-changing ticket is in flight at a time; ask the coordinator for the schema slot before writing a migration.
 - Never merge your own PR, deploy, or enable a risky capability yourself. Only the independent `/pr-gate` reviewer squash-merges, on green CI and a clean verified review; PRs that change agent rules or tooling (`.claude/`, `.github/workflows/`, `AGENTS.md`, `CLAUDE.md`, `orca.yaml`) are merged by a human.
 - Anything that costs money (paid plans, purchases, paid API credits) is a human decision: ask, never assume.
 - Use only the local Supabase stack in Docker; never link, push to or change a hosted project. Wrap schema resets and DB tests in `scripts/db-lock.mjs`.

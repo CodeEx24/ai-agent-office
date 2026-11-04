@@ -20,15 +20,24 @@ jobs:
           TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -euo pipefail
-          branch_re='^(feat|fix|chore|refactor|docs|test|perf|build|ci)/ago-[0-9]+/[a-z0-9]+(-[a-z0-9]+)*$'
-          title_re='^(feat|fix|chore|refactor|docs|test|perf|build|ci)(\([a-z0-9-]+\))?: .+ \(AGO-[0-9]+\)$'
+          # Conventions live in CLAUDE.md section 5. Ticket keys are never zero-padded.
+          types='feat|fix|chore|refactor|docs|test|perf|build|ci'
+          scopes='web|worker|shared|ui|assets|db|auth|agents|work|vault|control|office|policy|ci|tooling|deps|repo'
+          branch_re="^($types)/ago-[1-9][0-9]*/[a-z0-9]+(-[a-z0-9]+)*$"
+          title_re="^($types)\(($scopes)\): .+ \(AGO-[1-9][0-9]*\)$"
           ok=true
-          if [[ ! "$BRANCH" =~ $branch_re ]]; then
-            echo "::error::Branch must look like <type>/ago-<ticket>/<short-kebab-title> (got: $BRANCH)"
+          if [[ ! "$BRANCH" =~ $branch_re ]] || (( ${#BRANCH} > 70 )); then
+            echo "::error::Branch must be <type>/ago-<n>/<slug>: unpadded key, lowercase kebab slug, 70 chars max (got: $BRANCH)"
             ok=false
           fi
           if [[ ! "$TITLE" =~ $title_re ]]; then
-            echo "::error::PR title must look like 'type(scope): summary (AGO-###)' (got: $TITLE)"
+            echo "::error::PR title must be 'type(scope): summary (AGO-<n>)' with a scope from CLAUDE.md section 5 (got: $TITLE)"
+            ok=false
+          fi
+          branch_type=${BRANCH%%/*}
+          title_type=${TITLE%%(*}
+          if [[ "$branch_type" != "$title_type" ]]; then
+            echo "::error::Branch type ($branch_type) and title type ($title_type) differ"
             ok=false
           fi
           branch_ticket=$(sed -E 's#^[a-z]+/ago-([0-9]+)/.*#\1#' <<<"$BRANCH")

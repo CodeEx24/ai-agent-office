@@ -4,7 +4,7 @@ Replace every `{{…}}` before dispatch.
 
 ---
 
-**Target:** PR #{{PR}} ({{PR_URL}}) for Jira {{KEY}}. Check out its head branch in this worktree.
+**Target:** PR #{{PR}} ({{PR_URL}}) for Jira {{KEY}}. The assigned branch is `{{BRANCH}}`; check it out in this worktree. If the PR's head branch is anything else, return `CHANGES_REQUESTED: branch is not the assigned {{BRANCH}}`.
 
 **Change:** Run `/pr-gate {{PR}}`. You are an independent reviewer. You did not write this code, so don't trust the PR description; verify it.
 

@@ -52,7 +52,15 @@ Use the wave from the argument, or else the lowest `wave-N` that still has open 
 
 Fetch `issuelinks` for each ticket. A ticket is **ready** when every ticket that blocks it is Done. That includes blockers in earlier waves; a blocker in a later wave is a plan error, so report it and skip the ticket. Order the ready set by priority (`p0` > `p1` > `p2`), then by how many tickets each one unblocks.
 
-`--dry-run`: print the table (Ticket · Summary · Ready? · Blocked by) and stop.
+**Schema tickets.** Mark a ticket `schema` when its summary, description or AC mentions tables, columns, migrations, RLS, policies on data, triggers, functions, Realtime publications or seed data, or when it belongs to EP-01 (Data and auth). Only **one** schema ticket may be in flight at a time, from dispatch until its PR is merged. Other ready schema tickets wait for that slot, while non-schema tickets keep flowing. This stops migrations being written in parallel against different bases.
+
+**Assign the names now** (CLAUDE.md §5). Workers and the gate never invent them:
+- `type`: Story → `feat`, Bug → `fix`, EP-00 setup work → `build` (repo/tooling), `ci` (pipelines) or `chore`, docs only → `docs`.
+- `scope`: one of web, worker, shared, ui, assets, db, auth, agents, work, vault, control, office, policy, ci, tooling, deps, repo. Pick the one that matches where most of the change will land.
+- `slug`: from the summary, minus the `US-###` prefix and filler words. Lowercase ASCII kebab-case, 2–5 words, 40 chars max (`US-004 Scaffold the monorepo` → `scaffold-monorepo`).
+- `branch` = `<type>/ago-<n>/<slug>`, `worktree` = `ago-<n>-<slug>`, display name = `AGO-<n> <summary without US-###>`. Use the Jira key unpadded.
+
+`--dry-run`: print the table (Ticket · Summary · Ready? · Blocked by · Schema? · Branch) and stop.
 
 ## 2. Dispatch implementers (max parallel: 3 unless `--max-parallel`)
 
@@ -60,11 +68,11 @@ Bind one Run per invocation: `orca orchestration run-create --objective "AGO wav
 
 For each ready ticket, up to the parallel limit:
 1. Transition Jira to **In Progress** (`21`). Comment: `Picked up by /run-waves (wave N). Worktree ago-<n>-<slug>.`
-2. Fill `references/worker-brief.md` (ticket key, summary, wave) and start the worker in a **new top-level worktree**:
+2. Fill `references/worker-brief.md` (key, number, summary, wave, branch, type, scope, schema yes/no) and start the worker in a **new top-level worktree**:
    ```
-   orca orchestration worker-start --spec "<filled brief>" --worktree new-top-level --name ago-<n>-<slug> --agent claude --setup run --json
+   orca orchestration worker-start --spec "<filled brief>" --worktree new-top-level --name ago-<n>-<slug> --display-name "AGO-<n> <summary>" --agent claude --setup run --json
    ```
-   `<slug>` is 2–4 kebab words from the summary. Record ticket → task id, dispatch id, worktree id and terminal handle. If `worker-start` fails, read `failedStage` and load `references/recovery-and-cleanup.md`. Do not blindly relaunch.
+   Record ticket → branch, task id, dispatch id, worktree id and terminal handle. If `worker-start` fails, read `failedStage` and load `references/recovery-and-cleanup.md`. Do not blindly relaunch.
 3. Start every independent ticket before the first wait. Dispatch the remaining ready tickets as slots free up.
 
 ## 3. Wait and route
@@ -75,7 +83,8 @@ orca orchestration check --wait --types "worker_done,escalation,question" --time
 Process every message in the delivery, then `--ack` it. Follow the orchestration guide's loop rules: timeouts are checkpoints, and after three empty waits run `worker-list`.
 
 **Questions from workers.** Classify each one first:
-- **Human-only.** Escalate to the user with AskUserQuestion, put the recommended option first, then relay the answer with `orchestration reply`. Human-only means any of:
+- **Schema slot request.** A worker that finds it needs a migration without being marked `schema` asks for the slot. If the slot is free, grant it and mark the ticket `schema`. If not, reply "wait": the worker finishes its non-schema parts and asks again. Re-check the slot whenever a schema PR merges.
+- **Human-only.** First call `PushNotification` (load it with ToolSearch `select:PushNotification` if it is deferred). Keep it under 200 characters and lead with the action, for example `AGO-57 needs you: approve paid Higgsfield credits?`. Then ask the user with AskUserQuestion, recommended option first, and relay the answer with `orchestration reply`. Keep processing other workers while you wait. Human-only means any of:
   - spend: paid plans, upgrades, purchases, subscriptions, paid APIs or credits (Higgsfield, model providers, Telegram paid features), anything that bills;
   - a secret or credential only the human has;
   - creating or changing hosted Supabase/Vercel/cloud resources;
@@ -87,7 +96,7 @@ Process every message in the delivery, then `--ack` it. Follow the orchestration
 **Implementer `worker_done`.**
 - `--outcome succeeded` with a PR URL: transition Jira to **In Review** (`31`), then `worker-retain` the implementer (it may get fixes). Dispatch the gate into the **same worktree** with a fresh agent:
   ```
-  orca orchestration worker-start --spec "<filled references/review-brief.md>" --worktree id:<that worktree id> --agent claude --json
+  orca orchestration worker-start --spec "<filled references/review-brief.md, including the assigned branch>" --worktree id:<that worktree id> --agent claude --json
   ```
 - `failed`, or no PR: read its summary. A missing env var or secret is human-only (escalate). Otherwise retry once with a fresh implementer in the same worktree, adding the failure summary to the brief. A second failure escalates to the user. Leave the ticket In Progress with a Jira comment that names the blocker.
 
@@ -100,7 +109,11 @@ Process every message in the delivery, then `--ack` it. Follow the orchestration
   ```
   Release the gate worker. When the fix is done, dispatch a fresh gate. After **3** fix rounds without a clean gate, escalate to the user.
 - `VERDICT: WAITING`: CI is still running or GitHub is slow. Re-dispatch the gate after 10 minutes.
-- `VERDICT: ESCALATE`: relay the reason to the user verbatim and pause that ticket.
+- `VERDICT: ESCALATE`: `PushNotification` (`PR #<n> AGO-<n> needs your merge: <reason>`), relay the reason to the user verbatim, and pause that ticket.
+
+Also send a `PushNotification` when a ticket fails twice, when a PR hits 3 fix rounds, and when a wave finishes. Don't send one for routine progress.
+
+**Branch check.** On every `worker_done` that carries a PR, confirm the PR's `headRefName` equals the assigned branch. If it doesn't, the worker renamed after pushing: send it a fix task to close that PR and reopen from the assigned branch. Never accept a second branch for one ticket.
 
 ## 4. Finish the wave
 
@@ -116,5 +129,7 @@ The wave is done when every non-epic `wave-<N>` ticket is Done. Then:
 - Never merge, approve or push code yourself. The gate merges, and only through `/pr-gate`.
 - Never decide a human-only question. When unsure whether something costs money, ask.
 - Never start two implementers on one ticket, and never put two tickets in one worktree.
+- Never have two schema tickets in flight at once.
+- Never let a worker pick or change its own branch name.
 - Keep Jira in sync at every step. The board is what the human reads.
 - If a guard hook denies an action, treat that as a human-only boundary. Don't work around it.
