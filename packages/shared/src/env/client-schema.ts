@@ -31,22 +31,35 @@ export type ClientEnv = z.infer<typeof clientEnvSchema>;
 export const CLIENT_ENV_NAMES: readonly string[] = Object.keys(clientEnvSchema.shape);
 
 const PUBLIC_PREFIX = "NEXT_PUBLIC_";
-/** Never allowed to be public, with or without the NEXT_PUBLIC_ prefix. */
-const ALWAYS_SECRET = /(SECRET|PRIVATE|TOKEN|PASSWORD|SERVICE_ROLE|API_KEY)/;
-/** Server-side names ending in _KEY are treated as secret too (public keys use the prefix + ANON). */
-const SECRET_KEY_SUFFIX = /_KEY$/;
+/** Whole-name fragments that make a variable secret wherever they appear (APIKEY, DB_PASSWORD, ...). */
+const SECRET_FRAGMENTS = [
+  "APIKEY",
+  "SECRET",
+  "TOKEN",
+  "PASSWORD",
+  "PASSWD",
+  "PRIVATE",
+  "CREDENTIAL",
+  "AUTH",
+  "SIGNING",
+  "SERVICE_ROLE",
+];
+/** Whole `_`-separated tokens that make a variable secret (KEY, PWD). */
+const SECRET_TOKENS = ["KEY", "PWD"];
 
 /**
- * True when an env var name looks like a secret. The NEXT_PUBLIC_ prefix is stripped before
- * classifying, so it cannot launder a secret into the browser. A prefixed `..._ANON_KEY` stays
- * allowed because it is public by design; any other prefixed name needs ALWAYS_SECRET to match.
+ * True when an env var name looks like a secret. Deliberately broad (deny by default): the name
+ * is upper-cased, the NEXT_PUBLIC_ prefix is stripped, and it is secret when it contains a
+ * secret fragment, has a secret token, or ends with KEY. Variables declared public in
+ * `clientEnvSchema` (for example NEXT_PUBLIC_SUPABASE_ANON_KEY) are the only exception.
  */
 export function isSecretLikeEnvName(name: string): boolean {
   const upper = name.toUpperCase();
-  const isPublic = upper.startsWith(PUBLIC_PREFIX);
-  const stripped = isPublic ? upper.slice(PUBLIC_PREFIX.length) : upper;
-  if (ALWAYS_SECRET.test(stripped)) return true;
-  return !isPublic && SECRET_KEY_SUFFIX.test(stripped);
+  if (CLIENT_ENV_NAMES.includes(upper)) return false;
+  const stripped = upper.startsWith(PUBLIC_PREFIX) ? upper.slice(PUBLIC_PREFIX.length) : upper;
+  if (SECRET_FRAGMENTS.some((fragment) => stripped.includes(fragment))) return true;
+  if (stripped.endsWith("KEY")) return true;
+  return stripped.split("_").some((token) => SECRET_TOKENS.includes(token));
 }
 
 /** The name without its NEXT_PUBLIC_ prefix (any case), upper-cased; undefined when not public. */

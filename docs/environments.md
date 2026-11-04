@@ -19,6 +19,7 @@ resources: Vercel and hosted Supabase are set up by a human.
 - Only `NEXT_PUBLIC_*` variables may reach the browser (`clientEnvSchema`). Read them with
   `getClientEnv()` from `apps/web/src/lib/env/client.ts`, which imports `@ago/shared/client-env`
   (a subpath that excludes the server schema; never import the `@ago/shared` barrel from client code).
+- Public variables are deny-by-default: any `NEXT_PUBLIC_` variable not declared in `clientEnvSchema` is rejected at startup and flagged by the bundle check. To expose one, add it to the schema.
 - Everything else is server-only. `apps/web/src/lib/env/server.ts` imports `server-only`, so
   importing `getServerEnv()` from a client component fails the build.
 - The worker validates with `loadWorkerEnv()` in `apps/worker/src/env.ts`.

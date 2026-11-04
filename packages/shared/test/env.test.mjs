@@ -136,14 +136,52 @@ test("parseServerEnv accepts the allowed public variables", () => {
   assert.doesNotThrow(() => parseServerEnv({ NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-placeholder" }));
 });
 
-test("isForbiddenPublicEnvName: a NEXT_PUBLIC_ twin of a secret server-only var is forbidden, case-insensitively", () => {
-  for (const name of ["NEXT_PUBLIC_DATABASE_URL", "next_public_database_url", "Next_Public_Anthropic_Api_Key"]) {
+test("isForbiddenPublicEnvName denies by default: only NEXT_PUBLIC_ vars declared in clientEnvSchema pass, case-insensitively", () => {
+  for (const name of [
+    "NEXT_PUBLIC_DATABASE_URL",
+    "next_public_database_url",
+    "Next_Public_Anthropic_Api_Key",
+    "NEXT_PUBLIC_ANTHROPIC_APIKEY",
+    "NEXT_PUBLIC_REDIS_URL",
+    "NEXT_PUBLIC_APP_ENV",
+    "NEXT_PUBLIC_SENTRY_DSN",
+    "NEXT_PUBLIC_ANYTHING_ELSE",
+  ]) {
     assert.equal(isForbiddenPublicEnvName(name), true, name);
   }
-  // Non-secret server-only vars and the allowed public ones are not forbidden.
-  for (const name of ["NEXT_PUBLIC_APP_ENV", "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SENTRY_DSN", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "DATABASE_URL"]) {
-    assert.equal(isForbiddenPublicEnvName(name), false, name);
+  for (const name of CLIENT_ENV_NAMES) assert.equal(isForbiddenPublicEnvName(name), false, name);
+  assert.equal(isForbiddenPublicEnvName("next_public_supabase_anon_key"), false);
+  // Not public at all: this rule does not apply to server-side names.
+  for (const name of ["DATABASE_URL", "APP_ENV"]) assert.equal(isForbiddenPublicEnvName(name), false, name);
+});
+
+test("isSecretLikeEnvName is broad: fragments, tokens and trailing KEY, with or without the prefix", () => {
+  for (const name of [
+    "ANTHROPIC_APIKEY",
+    "NEXT_PUBLIC_ANTHROPIC_APIKEY",
+    "DB_PASSWD",
+    "REDIS_PWD",
+    "GITHUB_AUTH_HEADER",
+    "JWT_SIGNING_SALT",
+    "CLOUD_CREDENTIALS",
+    "STRIPE_WEBHOOK_SECRET",
+    "VENDORKEY",
+    "SOME_KEY_ID",
+  ]) {
+    assert.equal(isSecretLikeEnvName(name), true, name);
   }
+  for (const name of ["APP_ENV", "SUPABASE_URL", "DATABASE_URL", "LANGFUSE_HOST", "SENTRY_DSN", "NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"]) {
+    assert.equal(isSecretLikeEnvName(name), false, name);
+  }
+});
+
+test("parseServerEnv rejects undeclared NEXT_PUBLIC_ vars (typo-like APIKEY and REDIS_URL) without printing values", () => {
+  const message = messageOf(() =>
+    parseServerEnv({ NEXT_PUBLIC_ANTHROPIC_APIKEY: SENTINEL, NEXT_PUBLIC_REDIS_URL: `redis://:${SENTINEL}@h:6379` }),
+  );
+  assert.match(message, /NEXT_PUBLIC_ANTHROPIC_APIKEY: invalid/);
+  assert.match(message, /NEXT_PUBLIC_REDIS_URL: invalid/);
+  assert.ok(!message.includes(SENTINEL), "message leaked a value");
 });
 
 test("parseServerEnv rejects NEXT_PUBLIC_DATABASE_URL (any case) and never prints its value", () => {

@@ -101,3 +101,54 @@ test("names are matched case-insensitively", () => {
     assert.ok(names.includes("DATABASE_URL") && names.includes("next_public_database_url"), names.join());
   });
 });
+
+const b64url = (obj) => Buffer.from(JSON.stringify(obj)).toString("base64url");
+const jwt = (role) => `eyJ${b64url({ alg: "HS256" }).slice(3)}.${b64url({ iss: "supabase", role })}.${"s".repeat(20)}`;
+
+test("well-known secret value shapes are flagged whatever the variable name", () => {
+  const samples = {
+    "Anthropic API key": "sk-ant-api03-" + "a1B2c3D4e5".repeat(3),
+    "OpenAI project key": "sk-proj-" + "a1B2c3D4e5".repeat(3),
+    "GitHub token": "ghp_" + "a1B2c3D4e5".repeat(3) + "a1B2c3",
+    "GitHub fine-grained token": "github_pat_" + "a1B2c3D4e5".repeat(3),
+    "Supabase access token": "sbp_" + "0123456789abcdef".repeat(2) + "01234567",
+    "Supabase secret key": "sb_secret_" + "a1B2c3D4e5".repeat(3),
+    "Slack token": "xoxb-" + "1234567890-abcdef",
+    "AWS access key": "AKIA" + "ABCDEFGHIJKLMNOP",
+    "private key": "-----BEGIN RSA PRIVATE KEY-----",
+    "Telegram bot token": "123456789:AA" + "a1B2c3D4e5".repeat(3) + "abc",
+  };
+  for (const [label, value] of Object.entries(samples)) {
+    withBundle({ "a.js": `x("${value}")` }, (dir) => {
+      const findings = scanBundle(dir, { serverNames: SERVER_NAMES, env: {} });
+      assert.ok(findings.some((f) => f.name === "SECRET_VALUE" && f.reason === label), label);
+      assert.ok(!JSON.stringify(findings).includes(value), `${label}: report leaked the value`);
+    });
+  }
+});
+
+test("a service_role JWT is flagged, the anon JWT is allowed", () => {
+  withBundle({ "a.js": `x("${jwt("service_role")}")` }, (dir) => {
+    const findings = scanBundle(dir, { serverNames: SERVER_NAMES, env: {} });
+    assert.ok(findings.some((f) => f.reason === "Supabase service_role JWT"));
+  });
+  withBundle({ "a.js": `x("${jwt("anon")}")` }, (dir) =>
+    assert.deepEqual(scanBundle(dir, { serverNames: SERVER_NAMES, env: {} }), []),
+  );
+});
+
+test("credential URLs are flagged across schemes, including an empty username and a 1-char password", () => {
+  for (const url of [
+    "redis://:pw12345678@cache.example.com:6379",
+    "rediss://:p@cache.example.com:6380",
+    "mongodb+srv://user:p@cluster.example.net/db",
+    "amqp://guest:g@mq.example.com:5672",
+    "mysql://root:r@db.example.com/app",
+    "https://user:p@api.example.com/x",
+  ]) {
+    withBundle({ "a.js": `x("${url}")` }, (dir) => {
+      const findings = scanBundle(dir, { serverNames: SERVER_NAMES, env: {} });
+      assert.ok(findings.some((f) => f.name === "CONNECTION_STRING"), url);
+    });
+  }
+});

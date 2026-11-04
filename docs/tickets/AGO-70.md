@@ -47,6 +47,9 @@ None. No migration; the schema slot was not needed.
 | Secret value matching | Values of every server-only schema var, plus any secret-like name even under `NEXT_PUBLIC_`; explicit non-secret allowlist: `APP_ENV`, `SUPABASE_URL`, `LANGFUSE_HOST`, `SENTRY_DSN` | Those four legitimately appear in bundles (e.g. `production`) and would fail every real build |
 | Server-name twins (fix round 2) | A `NEXT_PUBLIC_` var is forbidden when its prefix-stripped name is in `SERVER_ONLY_ENV_NAMES` minus the non-secret allowlist, in addition to the secret-keyword rule; names are compared case-insensitively; the allowlist lives in `@ago/shared` (`NON_SECRET_SERVER_ENV_NAMES`) and the bundle check reuses it | `NEXT_PUBLIC_DATABASE_URL` carries credentials but has no secret keyword |
 | Credential URLs (defence in depth) | The bundle check flags any `scheme://user:password@host` string whatever the variable name | Catches secrets exposed under names no rule anticipated |
+| Deny-by-default public vars (fix round 3) | Any `NEXT_PUBLIC_` var not declared in `clientEnvSchema` is rejected at startup (`parseServerEnv`) and flagged in the bundle, case-insensitively | Name and keyword rules kept missing cases (`NEXT_PUBLIC_REDIS_URL`, `NEXT_PUBLIC_ANTHROPIC_APIKEY`); an allowlist cannot be bypassed by naming. To expose a variable, add it to the schema |
+| Broad secret-name rule (fix round 3) | Upper-cased, prefix-stripped name is secret if it contains APIKEY, SECRET, TOKEN, PASSWORD, PASSWD, PRIVATE, CREDENTIAL, AUTH, SIGNING or SERVICE_ROLE, has a `KEY` or `PWD` token, or ends with KEY; declared public vars are exempt | Used for ambient-value matching and `process.env.*` references in the bundle |
+| Bundle backstops (fix round 3) | Credential URLs `scheme://[user]:password@host` (empty username, 1-char password, any scheme) and well-known secret value shapes (AWS, Anthropic, OpenAI, GitHub, Supabase `sbp_`/`sb_secret_`, Stripe live, Slack, Telegram, Google, private keys, `service_role` JWT) | Catches secrets whatever the variable was named; patterns mirror `.claude/hooks/guard.mjs` (copied, not imported) |
 | Startup rejection | `parseServerEnv` also rejects any secret-like `NEXT_PUBLIC_*` var, naming it only | Fail fast at startup as well as at build |
 | Local Supabase URL | `http://127.0.0.1:55421` | Matches the API port in AGO-78's `supabase/config.toml` (verified after merging main) |
 | `.env.example` | Write it, blocked by a deny rule on `.env*`; coordinator asked, human lifting the deny | AC3 requires it; no workaround used |
@@ -63,6 +66,7 @@ None. No migration; the schema slot was not needed.
 - Fail-fast: start the web app with `APP_ENV=production` and no keys; startup logs the missing variable names.
 
 ## Follow-up tasks
+- Vercel's optional `NEXT_PUBLIC_VERCEL_*` system variables are rejected by deny-by-default; add them to `clientEnvSchema` if the human enables them.
 - Bundle check does not detect encoded secrets (string concatenation, base64, hex). Judged low risk (the secret would have to be deliberately obfuscated in client code); add detection if a real need appears.
 - Port tests to Vitest after AGO-111.
 - Wire `loadWorkerEnv()` into the worker entrypoint: **known gap, owned by AGO-143** (the worker skeleton). Not fixed in AGO-70; `loadWorkerEnv()` exists and is tested but nothing calls it at process start yet.

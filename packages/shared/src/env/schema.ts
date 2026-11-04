@@ -1,12 +1,12 @@
 import { z } from "zod";
 
 import {
+  CLIENT_ENV_NAMES,
   LOCAL_SUPABASE_URL,
   clientEnvSchema,
   emptyToUndefined,
   httpUrlString,
   optionalString,
-  isSecretLikeEnvName,
   stripPublicPrefix,
 } from "./client-schema.js";
 import { EnvValidationError, parseEnv, type EnvIssue, type EnvSource } from "./parse.js";
@@ -98,21 +98,19 @@ export const SERVER_ONLY_ENV_NAMES: readonly string[] = Object.keys(serverOnlyEn
 export const NON_SECRET_SERVER_ENV_NAMES: readonly string[] = ["APP_ENV", "SUPABASE_URL", "LANGFUSE_HOST", "SENTRY_DSN"];
 
 /**
- * True when `name` must never be exposed to the browser under a NEXT_PUBLIC_ prefix: its
- * prefix-stripped name is secret-like, or is a secret server-only variable (for example
- * DATABASE_URL, which carries credentials but has no secret keyword). Case-insensitive.
+ * Deny by default: a NEXT_PUBLIC_ variable is forbidden unless it is declared public in
+ * `clientEnvSchema` (case-insensitive). Anything undeclared would be bundled into the browser
+ * unreviewed, whatever it is called (NEXT_PUBLIC_DATABASE_URL, NEXT_PUBLIC_ANTHROPIC_APIKEY, ...).
+ * To expose a new variable on purpose, add it to `clientEnvSchema`.
  */
 export function isForbiddenPublicEnvName(name: string): boolean {
-  const stripped = stripPublicPrefix(name);
-  if (stripped === undefined) return false;
-  if (isSecretLikeEnvName(name)) return true;
-  return SERVER_ONLY_ENV_NAMES.includes(stripped) && !NON_SECRET_SERVER_ENV_NAMES.includes(stripped);
+  return stripPublicPrefix(name) !== undefined && !CLIENT_ENV_NAMES.includes(name.toUpperCase());
 }
 
 
 /**
- * Validate a server-side env source. Also rejects any NEXT_PUBLIC_ variable whose stripped
- * name is secret-like (it would be bundled into the browser), so that fails at startup too.
+ * Validate a server-side env source. Also rejects any NEXT_PUBLIC_ variable that is not declared
+ * public in `clientEnvSchema` (it would be bundled into the browser), so that fails at startup too.
  */
 export function parseServerEnv(source: EnvSource): ServerEnv {
   const publicSecrets: EnvIssue[] = Object.keys(source).filter(isForbiddenPublicEnvName).map((name) => ({

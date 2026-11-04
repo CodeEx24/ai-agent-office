@@ -6,9 +6,11 @@
  *
  * Flags a client bundle file when it contains:
  *  1. the NAME of a server-only variable (from @ago/shared SERVER_ONLY_ENV_NAMES);
- *  2. a `process.env.<SECRET_LIKE_NAME>` reference that is not `NEXT_PUBLIC_*`
- *     (names containing SECRET, TOKEN, PASSWORD, SERVICE_ROLE, PRIVATE_KEY, or ending in _KEY);
- *  3. the VALUE of a server-only or secret-named variable currently set in the environment.
+ *  2. a `process.env.<NAME>` reference whose name is secret-like (broad, deny by default) or is a
+ *     NEXT_PUBLIC_ variable not declared public in the schema (see @ago/shared);
+ *  3. the VALUE of a server-only, secret-like or undeclared NEXT_PUBLIC_ variable set in the environment;
+ *  4. a connection string with embedded credentials, or a well-known secret value shape
+ *     (API keys, tokens, private keys, a service_role JWT), whatever the variable was called.
  *
  * Output names the file and the variable only. Values are never printed.
  */
@@ -33,8 +35,43 @@ export const isSecretName = (name) => shared.isSecretLikeEnvName(name) || shared
 const SERVER_NAME_SET = new Set(shared.SERVER_ONLY_ENV_NAMES);
 const NON_SECRET_VALUE_NAMES = new Set(shared.NON_SECRET_SERVER_ENV_NAMES);
 
-/** Defence in depth: scheme://user:password@host, whatever the variable was called. */
-const CREDENTIAL_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@"'`\\]+:[^\s/@"'`\\]+@[^\s/"'`\\]+/i;
+/**
+ * Defence in depth: scheme://[user]:password@host, whatever the variable was called. The username
+ * may be empty (redis://:pw@host) and the password needs only one character. Any scheme matches,
+ * which covers redis, rediss, postgres(ql), mysql, mongodb(+srv), amqp(s) and http(s).
+ */
+const CREDENTIAL_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@"'`\\]*:[^\s/@"'`\\]+@[^\s/"'`\\]+/i;
+
+/** Well-known secret value shapes, flagged whatever the variable was called (mirrors .claude/hooks/guard.mjs). */
+const SECRET_VALUE_PATTERNS = [
+  [/AKIA[0-9A-Z]{16}/, "AWS access key"],
+  [/sk-ant-[A-Za-z0-9_-]{20,}/, "Anthropic API key"],
+  [/sk-proj-[A-Za-z0-9_-]{20,}/, "OpenAI project key"],
+  [/\bsk-[A-Za-z0-9]{48,}\b/, "OpenAI API key"],
+  [/\bgh[pousr]_[A-Za-z0-9]{36}\b/, "GitHub token"],
+  [/github_pat_[A-Za-z0-9_]{22,}/, "GitHub fine-grained token"],
+  [/\bsbp_[0-9a-f]{40}\b/, "Supabase access token"],
+  [/\bsb_secret_[A-Za-z0-9_-]{20,}/, "Supabase secret key"],
+  [/\b(sk|rk)_live_[0-9a-zA-Z]{24,}/, "Stripe live key"],
+  [/\bxox[baprs]-[0-9A-Za-z-]{10,}/, "Slack token"],
+  [/\b\d{8,10}:AA[0-9A-Za-z_-]{33}\b/, "Telegram bot token"],
+  [/AIza[0-9A-Za-z_-]{35}/, "Google API key"],
+  [/-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/, "private key"],
+];
+const JWT = /eyJ[A-Za-z0-9_-]{10,}\.(eyJ[A-Za-z0-9_-]{6,})\.[A-Za-z0-9_-]{10,}/g;
+
+/** True when a JWT in `text` carries the Supabase service_role role (the anon key's role is allowed). */
+function hasServiceRoleJwt(text) {
+  for (const match of text.matchAll(JWT)) {
+    try {
+      const payload = JSON.parse(Buffer.from(match[1], "base64url").toString("utf8"));
+      if (payload?.role === "service_role") return true;
+    } catch {
+      // not a decodable JWT payload
+    }
+  }
+  return false;
+}
 
 function* walk(dir) {
   for (const entry of readdirSync(dir)) {
@@ -86,6 +123,10 @@ export function scanBundle(bundleDir, { serverNames = [], env = process.env } = 
       if (name && isSecretName(name)) add(name, "secret-named process.env reference");
     }
     if (CREDENTIAL_URL.test(text)) add("CONNECTION_STRING", "URL with embedded credentials");
+    for (const [pattern, label] of SECRET_VALUE_PATTERNS) {
+      if (pattern.test(text)) add("SECRET_VALUE", label);
+    }
+    if (hasServiceRoleJwt(text)) add("SECRET_VALUE", "Supabase service_role JWT");
     for (const [name, value] of secretValues) {
       if (text.includes(value)) add(name, "secret value present");
     }
