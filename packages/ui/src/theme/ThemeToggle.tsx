@@ -1,5 +1,6 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
 import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
 import { useTheme } from "next-themes";
 
@@ -15,9 +16,24 @@ function nextTheme(current: string | undefined): ThemeName {
   return THEME_CYCLE[(index + 1) % THEME_CYCLE.length] ?? "light";
 }
 
-/** Cycles light -> dark -> system. The label always names the theme that will be applied next. */
+const subscribeNoop = () => () => {};
+
+/** False during SSR and hydration, true after mount, so client-only values never cause a mismatch. */
+function useIsMounted(): boolean {
+  return useSyncExternalStore(
+    subscribeNoop,
+    () => true,
+    () => false,
+  );
+}
+
+/**
+ * Cycles light -> dark -> system. The stored theme is unknown on the server, so the icon and
+ * label depend on it only after mount; before that a same-size placeholder keeps layout stable.
+ */
 function ThemeToggle() {
   const { theme, setTheme } = useTheme();
+  const isMounted = useIsMounted();
   const upcoming = nextTheme(theme);
   const Icon = ICONS[(theme as ThemeName | undefined) ?? "system"] ?? MonitorIcon;
   return (
@@ -25,11 +41,10 @@ function ThemeToggle() {
       variant="outline"
       size="icon"
       data-testid="theme-toggle"
-      aria-label={`Switch to ${upcoming} theme`}
-      suppressHydrationWarning
+      aria-label={isMounted ? `Switch to ${upcoming} theme` : "Toggle theme"}
       onClick={() => setTheme(upcoming)}
     >
-      <Icon />
+      {isMounted ? <Icon /> : <span className="size-4" aria-hidden />}
     </Button>
   );
 }
