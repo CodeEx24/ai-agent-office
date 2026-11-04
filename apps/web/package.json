@@ -4,13 +4,26 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
     "typecheck": "tsc --noEmit",
-    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+    "clean": "node -e \"require('node:fs').rmSync('.next',{recursive:true,force:true})\""
   },
   "dependencies": {
+    "@ago/assets": "workspace:*",
     "@ago/shared": "workspace:*",
     "@ago/ui": "workspace:*",
-    "@ago/assets": "workspace:*"
+    "next": "16.4.5",
+    "react": "19.2.9",
+    "react-dom": "19.2.9"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.4",
+    "@types/node": "^24.19.2",
+    "@types/react": "~19.2.18",
+    "@types/react-dom": "~19.2.7",
+    "babel-plugin-react-compiler": "1.0.0",
+    "tailwindcss": "4.3.4"
   }
 }

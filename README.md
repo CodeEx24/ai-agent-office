@@ -6,7 +6,7 @@ A web app where AI agents with skills and capabilities work in a shared workspac
 
 | Path | Package | Role |
 |---|---|---|
-| `apps/web` | `@ago/web` | Next.js app (placeholder until AGO-61) |
+| `apps/web` | `@ago/web` | Next.js 16 app (App Router, Turbopack, React Compiler, Tailwind v4) |
 | `apps/worker` | `@ago/worker` | Agent runtime and queue worker |
 | `packages/shared` | `@ago/shared` | Zod schemas, event types, policy types, DB types |
 | `packages/ui` | `@ago/ui` | shadcn/ui components and tokens |
@@ -18,18 +18,24 @@ A web app where AI agents with skills and capabilities work in a shared workspac
 
 - Node.js 24 or newer
 - pnpm 10.17.1 (`corepack enable` picks it up from `packageManager`)
+- Docker Desktop, for the local Supabase stack (database commands only)
 
 ## Commands
 
 ```
 pnpm install     install all workspace dependencies
-pnpm build       build every package in dependency order (Turborepo)
+pnpm build       build every package in dependency order (Turborepo; runs `next build` for the web app)
 pnpm typecheck   type-check every package
-pnpm dev         run every package's dev task
+pnpm dev         run the web dev server (Next.js, Turbopack). Honors PORT, e.g. PORT=$(node scripts/free-port.mjs) pnpm dev
 pnpm clean       remove build output
+pnpm db:start    start the local Supabase stack (Docker)
+pnpm db:stop     stop it (keeps data)
+pnpm db:reset    rebuild the local DB from supabase/migrations
+pnpm db:migration:new <name>   create a migration
+pnpm db:types    regenerate types into packages/shared
 ```
 
-Lint, test and E2E scripts arrive with AGO-111; the database commands with AGO-78.
+Lint, test and E2E scripts arrive with AGO-111. Database ports, the migration workflow, locking and rollback are in [docs/database.md](docs/database.md).
 
 ## Importing between packages
 
