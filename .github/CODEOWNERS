@@ -1,0 +1,7 @@
+# Dependency manifests and CI are owner-reviewed (AGO-92).
+/package.json          @CodeEx24
+/pnpm-lock.yaml        @CodeEx24
+/pnpm-workspace.yaml   @CodeEx24
+/apps/*/package.json   @CodeEx24
+/packages/*/package.json @CodeEx24
+/.github/              @CodeEx24

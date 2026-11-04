@@ -10,6 +10,8 @@ permissions:
 jobs:
   pr-conventions:
     name: pr-conventions
+    # Dependabot PRs use dependabot/* branches; the owner retitles them at squash-merge.
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
