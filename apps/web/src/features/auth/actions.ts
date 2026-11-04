@@ -1,9 +1,8 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { resolveOrigin } from "../../lib/request-origin";
+import { getAppUrl } from "../../lib/env";
 import { createSupabaseServerClient } from "../../lib/supabase/server";
 import { oauthProviderSchema, sendCodeSchema, verifyCodeSchema } from "./schemas";
 import { safeNextPath } from "./safe-next-path";
@@ -27,7 +26,8 @@ export async function sendCodeAction(_prev: SignInState, formData: FormData): Pr
   }
 
   const next = safeNextPath(formString(formData, "next"));
-  const redirectTo = `${resolveOrigin(await headers())}/auth/callback?next=${encodeURIComponent(next)}`;
+  // Sent to Supabase, so it comes from configuration, never from request headers.
+  const redirectTo = `${getAppUrl()}/auth/callback?next=${encodeURIComponent(next)}`;
 
   try {
     const supabase = await createSupabaseServerClient();
@@ -85,7 +85,7 @@ export async function signInWithOAuthAction(formData: FormData): Promise<void> {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: provider.data,
       options: {
-        redirectTo: `${resolveOrigin(await headers())}/auth/callback?next=${encodeURIComponent(next)}`,
+        redirectTo: `${getAppUrl()}/auth/callback?next=${encodeURIComponent(next)}`,
         skipBrowserRedirect: true,
       },
     });
@@ -101,9 +101,13 @@ export async function signInWithOAuthAction(formData: FormData): Promise<void> {
 export async function signOutAction(): Promise<void> {
   try {
     const supabase = await createSupabaseServerClient();
-    await supabase.auth.signOut();
+    // Global scope revokes the refresh token server-side. If the Auth server is unreachable it
+    // returns an error without touching the cookie, so fall back to a local sign-out, which
+    // always clears this browser's session.
+    const { error } = await supabase.auth.signOut();
+    if (error) await supabase.auth.signOut({ scope: "local" });
   } catch {
-    // Even if Supabase is unreachable the local cookies are cleared by the client on signOut.
+    // Unreachable Supabase or env: nothing more can be cleared from here.
   }
   redirect(SIGN_IN_PATH);
 }

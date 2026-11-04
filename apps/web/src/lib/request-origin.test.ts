@@ -11,13 +11,13 @@ describe("resolveOrigin", () => {
     expect(resolveOrigin(headers({ host: "127.0.0.1:3100" }))).toBe("http://127.0.0.1:3100");
   });
 
-  it("uses https for a public host and honours forwarded headers", () => {
+  it("uses https for a public host and ignores a spoofable x-forwarded-host", () => {
     expect(resolveOrigin(headers({ host: "app.example.com" }))).toBe("https://app.example.com");
     expect(
       resolveOrigin(
         headers({
-          host: "internal:3000",
-          "x-forwarded-host": "app.example.com",
+          host: "app.example.com",
+          "x-forwarded-host": "evil.com",
           "x-forwarded-proto": "https",
         }),
       ),

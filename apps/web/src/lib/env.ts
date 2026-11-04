@@ -17,7 +17,10 @@ export interface SupabasePublicEnv {
   anonKey: string;
 }
 
-/** Public origin of this app (used to build auth redirect URLs). Never derived from request headers. */
+/**
+ * Configured public origin of this app. Used for every URL sent to Supabase or emailed
+ * (never derived from request headers). Set NEXT_PUBLIC_APP_URL to match the port you run on.
+ */
 export function getAppUrl(): string {
   const raw = process.env;
   return z

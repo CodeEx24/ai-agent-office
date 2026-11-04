@@ -19,6 +19,9 @@ Supabase Auth with `@supabase/ssr` in the App Router. How it fits together is in
 - `packages/ui` gained shadcn `Input` and `Label` (none existed).
 - Origin for redirects comes from the request's Host header (`lib/request-origin.ts`): Next rewrites `127.0.0.1` to `localhost` in `nextUrl`, which drops host-scoped cookies. Found by the E2E run.
 
+### Independent review (security and invariants reviewers, fresh context)
+No blocking findings. Fixed: (1) sign-out left the cookie when the Auth server was unreachable, so it now falls back to a local-scope sign-out; (2) URLs sent to Supabase (email link, OAuth `redirectTo`) came from the Host header, so they now use the configured `NEXT_PUBLIC_APP_URL`, and the Host-derived origin is only used for same-requester redirects with `x-forwarded-host` ignored; (3) `?error=__proto__` could crash `/sign-in`, now `Object.hasOwn`; (4) the callback redirect now sends `Cache-Control: no-store`; (5) local-only warnings on the redirect wildcards. Not done: `import "server-only"` (package not installed, and these modules hold only public values); shortening `otp_expiry` from the 1 hour default (needs another shared-stack restart; follow-up).
+
 ### Decisions taken (no human at the keyboard; recommended option chosen each time)
 | Decision | Chosen | Why |
 |---|---|---|

@@ -17,7 +17,12 @@ export async function GET(request: NextRequest) {
     try {
       const supabase = await createSupabaseServerClient();
       const { error } = await supabase.auth.exchangeCodeForSession(code);
-      if (!error) return NextResponse.redirect(new URL(next, origin));
+      if (!error) {
+        const response = NextResponse.redirect(new URL(next, origin));
+        // This response sets session cookies: keep CDNs and browsers from caching it.
+        response.headers.set("Cache-Control", "no-store");
+        return response;
+      }
     } catch {
       // Fall through to the error redirect.
     }

@@ -30,7 +30,7 @@ Read through `apps/web/src/lib/env.ts` (to be replaced by the validated env conf
 |---|---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` | `apps/web/.env.local` | `http://127.0.0.1:55421` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `apps/web/.env.local` | the `ANON_KEY` from `pnpm exec supabase status -o env` (a local demo key) |
-| `NEXT_PUBLIC_APP_URL` | `apps/web/.env.local` | fallback origin only, e.g. `http://127.0.0.1:3000` |
+| `NEXT_PUBLIC_APP_URL` | `apps/web/.env.local` | the origin you run on, e.g. `http://127.0.0.1:3000`. Used for the email link and OAuth `redirectTo` sent to Supabase, so it must match your `PORT`. |
 
 `.env.local` files are written by the owner, never by agents or commits. Run the app on a free port: `PORT=$(node scripts/free-port.mjs) pnpm dev`.
 
@@ -79,6 +79,8 @@ SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET=...
 ```
 
 Then in `supabase/config.toml` set `enabled = true` under `[auth.external.google]` and `[auth.external.github]` (they ship `false` because the CLI refuses to start an enabled provider with empty credentials), and restart: `pnpm db:stop && pnpm db:start`. Check by pressing a provider button on `/sign-in`.
+
+The `127.0.0.1:*` and `localhost:*` entries in `additional_redirect_urls` are for local development only. Never push them to a hosted project; list its exact production URLs instead.
 
 For a hosted project the same two redirect URLs become `https://<project-ref>.supabase.co/auth/v1/callback`, and the provider IDs go in the Supabase dashboard. That is a human step, outside this ticket.
 

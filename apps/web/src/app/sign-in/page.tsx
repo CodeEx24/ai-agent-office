@@ -23,7 +23,8 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
   if (await getCurrentUser()) redirect(next);
 
   const errorKey = Array.isArray(params.error) ? params.error[0] : params.error;
-  const notice = errorKey ? NOTICES[errorKey] : undefined;
+  // hasOwn: `?error=__proto__` must not resolve to an Object.prototype member.
+  const notice = errorKey && Object.hasOwn(NOTICES, errorKey) ? NOTICES[errorKey] : undefined;
 
   return (
     <main className="flex min-h-screen items-center justify-center p-8">
