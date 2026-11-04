@@ -1,0 +1,1 @@
+-- Local seed data. Intentionally empty in AGO-78; `pnpm db:seed` and fixtures arrive with the core schema (AGO-74).

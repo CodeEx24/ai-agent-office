@@ -30,7 +30,7 @@ None. No migration; the schema slot was not needed.
 
 ## Dependencies on other tickets
 - AGO-61 (Done): Next.js app.
-- AGO-78 (not merged when written): local Supabase ports 55420-55429. The default local URL uses 55421 as a placeholder; confirm when AGO-78 merges.
+- AGO-78 (merged): local Supabase ports 55420-55429. Confirmed API port 55421 and DB port 55422 in `supabase/config.toml`; the defaults and `.env.example` use them.
 - AGO-111 (Vitest) and AGO-115: also touch root `package.json`/lockfile. The tests here use Node's built-in `node --test`; port to Vitest when AGO-111 lands.
 - AGO-143 (worker skeleton): should call `loadWorkerEnv()` at startup.
 
@@ -42,7 +42,7 @@ None. No migration; the schema slot was not needed.
 | Test runner | `node --test` against built `dist` | Vitest (AGO-111) not merged yet |
 | Build check wiring | `&&` after `next build` in the web `build` script | pnpm 10 does not run `postbuild` hooks automatically |
 | Bundle check detection | Server variable names, secret-named `process.env` references, and secret values | Names catch accidental references; values catch inlined secrets |
-| Local Supabase URL | `http://127.0.0.1:55421` | AGO-78 not merged; placeholder inside the reserved range |
+| Local Supabase URL | `http://127.0.0.1:55421` | Matches the API port in AGO-78's `supabase/config.toml` (verified after merging main) |
 | `.env.example` | Write it, blocked by a deny rule on `.env*`; coordinator asked, human lifting the deny | AC3 requires it; no workaround used |
 
 ## Known limitations
@@ -59,5 +59,4 @@ None. No migration; the schema slot was not needed.
 ## Follow-up tasks
 - Port tests to Vitest after AGO-111.
 - Wire `loadWorkerEnv()` into the worker entrypoint (AGO-143).
-- Confirm the local Supabase port after AGO-78.
 - Human: create hosted preview and production environments and set `APP_ENV` and keys.

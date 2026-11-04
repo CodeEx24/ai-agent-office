@@ -6,3 +6,5 @@ export const PROJECT_NAME = "Agent Office";
 export function describeWorkspace(packageName: string): string {
   return `${packageName} (${PROJECT_NAME})`;
 }
+
+export type { Database, Json } from "./db/database.types.js";

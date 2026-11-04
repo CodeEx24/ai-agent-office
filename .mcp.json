@@ -2,11 +2,11 @@
   "mcpServers": {
     "playwright": {
       "command": "cmd",
-      "args": ["/c", "npx", "-y", "@playwright/mcp@0.0.84", "--headless", "--isolated"]
+      "args": ["/c", "npx", "-y", "@playwright/mcp@0.0.84", "--headless", "--isolated", "--browser", "msedge"]
     },
     "supabase-local": {
       "type": "http",
-      "url": "http://127.0.0.1:54321/mcp"
+      "url": "http://127.0.0.1:55421/mcp"
     }
   }
 }
