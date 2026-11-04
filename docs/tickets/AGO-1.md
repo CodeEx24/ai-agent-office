@@ -14,6 +14,7 @@ Sets up the tooling that lets AI agents deliver AGO tickets end to end with a hu
 - Naming is locked down (CLAUDE.md §5): unpadded keys, a coordinator-assigned branch that never changes after the first push, the same type in branch and title, and a fixed scope list. All of it is enforced in `pr-conventions` CI and checked again by `/run-waves` and `/pr-gate`.
 - One schema-changing ticket in flight at a time (the schema slot in `/run-waves`).
 - `PushNotification` on every human-needed event.
+- Tester stage (`run-waves/references/tester-brief.md`): after each implementer PR, a fresh agent verifies every AC in a real browser and writes a Playwright E2E (or integration) test per AC, including negative security cases. `/pr-gate` requires `QA: PASS` for the current head and always runs `pnpm test:e2e`.
 - Optional bot account: `scripts/as-bot.mjs` authors agent commits, pushes and PRs as the bot when `AGO_BOT_TOKEN` is set. The gate only comments and never approves; approving under the human's account was rejected as self-approval.
 
 ## API changes
