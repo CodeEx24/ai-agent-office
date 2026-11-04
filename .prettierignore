@@ -1,0 +1,19 @@
+node_modules
+.next
+dist
+build
+coverage
+.turbo
+pnpm-lock.yaml
+packages/shared/src/db/database.types.ts
+supabase
+.claude
+.playwright-mcp
+skills-lock.json
+**/next-env.d.ts
+# Docs, ticket notes and ops scripts are owned by other tickets; not auto-formatted
+*.md
+docs
+scripts
+.github
+.mcp.json

@@ -16,7 +16,7 @@ function nextTheme(current: string | undefined): ThemeName {
   return THEME_CYCLE[(index + 1) % THEME_CYCLE.length] ?? "light";
 }
 
-const subscribeNoop = () => () => {};
+const subscribeNoop = () => () => undefined;
 
 /** False during SSR and hydration, true after mount, so client-only values never cause a mismatch. */
 function useIsMounted(): boolean {
@@ -35,14 +35,17 @@ function ThemeToggle() {
   const { theme, setTheme } = useTheme();
   const isMounted = useIsMounted();
   const upcoming = nextTheme(theme);
-  const Icon = ICONS[(theme as ThemeName | undefined) ?? "system"] ?? MonitorIcon;
+  const Icon =
+    (ICONS as Record<string, typeof MonitorIcon | undefined>)[theme ?? "system"] ?? MonitorIcon;
   return (
     <Button
       variant="outline"
       size="icon"
       data-testid="theme-toggle"
       aria-label={isMounted ? `Switch to ${upcoming} theme` : "Toggle theme"}
-      onClick={() => setTheme(upcoming)}
+      onClick={() => {
+        setTheme(upcoming);
+      }}
     >
       {isMounted ? <Icon /> : <span className="size-4" aria-hidden />}
     </Button>
