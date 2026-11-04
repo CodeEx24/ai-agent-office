@@ -291,3 +291,94 @@ test("AC3: the schema defines exactly the documented set of variables", () => {
   ].sort();
   assert.deepEqual([...SERVER_ONLY_ENV_NAMES, ...CLIENT_ENV_NAMES].sort(), expected);
 });
+
+// ---------------------------------------------------------------------------------------------
+// Re-test after fix round 1 (NEXT_PUBLIC_ prefix must not launder a secret into the browser)
+// ---------------------------------------------------------------------------------------------
+
+const PUBLIC_SECRET_NAMES = [
+  "NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY",
+  "NEXT_PUBLIC_APP_PRIVATE_KEY",
+  "NEXT_PUBLIC_DB_PASSWORD",
+  "NEXT_PUBLIC_GITHUB_TOKEN",
+];
+
+test("AC1 (bypass): startup rejects secret-like NEXT_PUBLIC_ variables, naming them and never printing values", () => {
+  for (const name of PUBLIC_SECRET_NAMES) {
+    const result = runWorkerEnv({ [name]: SECRET });
+    assert.notEqual(result.status, 0, `${name} must fail startup`);
+    assert.ok(result.stderr.includes(name), `stderr should name ${name}`);
+    assert.ok(!(result.stdout + result.stderr).includes(SECRET), `${name}: output must not contain the value`);
+  }
+});
+
+test("AC1 (bypass): the web app refuses to start with a NEXT_PUBLIC_ service-role key, without printing it", async () => {
+  const output = await startWebAndWait(
+    { NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY: SECRET },
+    (text) => text.includes("Invalid environment configuration"),
+  );
+  assert.ok(output.includes("NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY"));
+  assert.ok(!output.includes(SECRET), "startup error must not print a variable value");
+});
+
+test("AC1: the public anon key under its NEXT_PUBLIC_ name is accepted at startup", () => {
+  const result = runWorkerEnv({ NEXT_PUBLIC_SUPABASE_ANON_KEY: SECRET });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("AC2 (bypass): NEXT_PUBLIC_ plus *_PRIVATE_KEY / *_PASSWORD / *_TOKEN is flagged by reference and by value", () => {
+  for (const name of PUBLIC_SECRET_NAMES) {
+    withBundle({ "a.js": `x(process.env.${name})` }, (dir) => {
+      const findings = scanBundle(dir, { serverNames: SERVER_ONLY_ENV_NAMES, env: {} });
+      assert.ok(findings.some((f) => f.name === name), `${name} reference must be flagged`);
+    });
+    withBundle({ "a.js": `x("${SECRET}")` }, (dir) => {
+      const findings = scanBundle(dir, { serverNames: SERVER_ONLY_ENV_NAMES, env: { [name]: SECRET } });
+      assert.ok(findings.some((f) => f.name === name), `${name} value must be flagged`);
+      assert.ok(!JSON.stringify(findings).includes(SECRET), "report must not contain the value");
+    });
+  }
+});
+
+test("AC2 (bypass): the public anon key reference is not a false positive", () => {
+  withBundle({ "a.js": "x(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)" }, (dir) => {
+    assert.deepEqual(scanBundle(dir, { serverNames: SERVER_ONLY_ENV_NAMES, env: {} }), []);
+  });
+});
+
+test("AC2 (allowlist): only APP_ENV, SUPABASE_URL, LANGFUSE_HOST and SENTRY_DSN values may appear in a bundle", () => {
+  const allowed = {
+    APP_ENV: "production",
+    SUPABASE_URL: "https://project.example.test",
+    LANGFUSE_HOST: "https://langfuse.example.test",
+    SENTRY_DSN: "https://publickey@o0.ingest.sentry.example.test/1",
+  };
+  withBundle({ "a.js": Object.values(allowed).map((v) => `x("${v}");`).join("") }, (dir) => {
+    assert.deepEqual(scanBundle(dir, { serverNames: SERVER_ONLY_ENV_NAMES, env: allowed }), []);
+  });
+  for (const name of SERVER_ONLY_ENV_NAMES.filter((n) => !(n in allowed))) {
+    withBundle({ "a.js": `x("${SECRET}")` }, (dir) => {
+      const findings = scanBundle(dir, { serverNames: SERVER_ONLY_ENV_NAMES, env: { [name]: SECRET } });
+      assert.ok(findings.some((f) => f.name === name), `the value of ${name} must be flagged`);
+    });
+  }
+});
+
+// Known open defect found by QA (head b3268f8): DATABASE_URL carries credentials but has no
+// secret keyword in its name, so a NEXT_PUBLIC_ twin is neither rejected at startup nor caught
+// in the bundle when the server-side DATABASE_URL is not also set. These two tests fail until
+// the prefix-stripped name is also compared with SERVER_ONLY_ENV_NAMES.
+test("AC2 (bypass): startup rejects NEXT_PUBLIC_DATABASE_URL (a server-only variable under a public name)", () => {
+  const result = runWorkerEnv({ NEXT_PUBLIC_DATABASE_URL: `postgres://user:${SECRET}@db.example.test:5432/app` });
+  assert.notEqual(result.status, 0, "NEXT_PUBLIC_DATABASE_URL would put database credentials in the browser");
+  assert.ok(result.stderr.includes("NEXT_PUBLIC_DATABASE_URL"));
+  assert.ok(!(result.stdout + result.stderr).includes(SECRET));
+});
+
+test("AC2 (bypass): a database URL value exposed under NEXT_PUBLIC_DATABASE_URL is flagged in the bundle", () => {
+  const url = `postgres://user:${SECRET}@db.example.test:5432/app`;
+  withBundle({ "a.js": `x("${url}")` }, (dir) => {
+    const findings = scanBundle(dir, { serverNames: SERVER_ONLY_ENV_NAMES, env: { NEXT_PUBLIC_DATABASE_URL: url } });
+    assert.ok(findings.length > 0, "database credentials must not reach the client bundle under a public name");
+  });
+});
