@@ -1,0 +1,20 @@
+{
+  "name": "agent-office",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Agent Office: AI agents working in a shared 3D virtual office with shared Markdown memory.",
+  "packageManager": "pnpm@10.17.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0",
+    "typescript": "~5.9.3"
+  }
+}
