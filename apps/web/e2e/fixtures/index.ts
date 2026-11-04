@@ -3,7 +3,10 @@ import { test as base, expect } from "@playwright/test";
 // Shared test entry point: every spec imports `test` and `expect` from here, never from
 // "@playwright/test" directly, so cross-cutting guards apply to all specs.
 //
-// Add new fixtures here (for example a signed-in page once auth state exists, AGO-67).
+// Signed-in specs (AGO-67): in a describe block, `test.use({ storageState: AUTH_STATE_PATH })` starts
+// every test signed in. auth.setup.ts writes that file once per run, so they need E2E_SUPABASE=1
+// (see ../support/live-stack.ts). Guard with `test.skip(!isLiveStack, "needs the local Supabase stack")`.
+export { AUTH_STATE_PATH, isLiveStack } from "../support/live-stack";
 
 /**
  * Fails the test when the page logs a console error or throws an uncaught exception.
