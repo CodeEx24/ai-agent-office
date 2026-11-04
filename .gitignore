@@ -36,3 +36,6 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 *.log
+
+# E2E auth state written by Playwright setup (AGO-67); never commit
+apps/web/e2e/.auth/

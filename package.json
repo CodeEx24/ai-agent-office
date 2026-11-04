@@ -16,6 +16,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
     "clean": "turbo run clean",
     "db:start": "supabase start",
     "db:stop": "supabase stop",

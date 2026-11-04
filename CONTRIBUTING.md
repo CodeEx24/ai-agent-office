@@ -20,8 +20,9 @@ Every PR runs these GitHub Actions checks. They are the required status checks o
 | `typecheck` | `pnpm typecheck` |
 | `test` | `pnpm test` |
 | `build` | `pnpm build` (Turborepo) |
+| `test-e2e` | `pnpm test:e2e` (Playwright against a production build; see `docs/testing.md`) |
 
-Run `pnpm lint && pnpm typecheck && pnpm test` locally before pushing. The E2E job (`test-e2e`) is added with the Playwright harness (AGO-118) and becomes required then.
+Run `pnpm lint && pnpm typecheck && pnpm test` locally before pushing, plus `PORT=$(node scripts/free-port.mjs) pnpm test:e2e` when you touch a user-facing path. The `test-e2e` job exists as of AGO-118; the owner adds it to the required checks.
 
 Changes to `.github/` (workflows, `CODEOWNERS`, `dependabot.yml`), `package.json` and `pnpm-lock.yaml` are owner-reviewed through `CODEOWNERS`.
 
