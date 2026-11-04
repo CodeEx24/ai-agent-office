@@ -191,3 +191,20 @@ test("parseServerEnv rejects NEXT_PUBLIC_DATABASE_URL (any case) and never print
     assert.ok(!message.includes(SENTINEL), "message leaked a value");
   }
 });
+
+test("parseServerEnv tells the developer what to do about an undeclared public var", () => {
+  const message = messageOf(() => parseServerEnv({ NEXT_PUBLIC_FEATURE_X: SENTINEL }));
+  assert.match(message, /NEXT_PUBLIC_FEATURE_X: invalid/);
+  assert.match(message, /NEXT_PUBLIC_FEATURE_X is not declared\. Add it to clientEnvSchema in packages\/shared\/src\/env\/schema\.ts \(public vars are deny-by-default\)/);
+  assert.ok(!/must not be public/.test(message), "undeclared var must not get the secret message");
+  assert.ok(!message.includes(SENTINEL), "message leaked a value");
+});
+
+test("parseServerEnv says secret-like and server-only public names must not be public", () => {
+  for (const name of ["NEXT_PUBLIC_ANTHROPIC_APIKEY", "NEXT_PUBLIC_DATABASE_URL"]) {
+    const message = messageOf(() => parseServerEnv({ [name]: SENTINEL }));
+    assert.match(message, new RegExp(`${name}: invalid \\(secret-like or server-only names must not be public`));
+    assert.ok(!/is not declared/.test(message), `${name} must not get the undeclared message`);
+    assert.ok(!message.includes(SENTINEL), "message leaked a value");
+  }
+});

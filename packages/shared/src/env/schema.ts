@@ -6,6 +6,7 @@ import {
   clientEnvSchema,
   emptyToUndefined,
   httpUrlString,
+  isSecretLikeEnvName,
   optionalString,
   stripPublicPrefix,
 } from "./client-schema.js";
@@ -106,7 +107,11 @@ export const NON_SECRET_SERVER_ENV_NAMES: readonly string[] = ["APP_ENV", "SUPAB
 export function isForbiddenPublicEnvName(name: string): boolean {
   return stripPublicPrefix(name) !== undefined && !CLIENT_ENV_NAMES.includes(name.toUpperCase());
 }
-
+/** Message selection only: a forbidden public name that is secret-like or mirrors a server-only variable. */
+function isSecretOrServerOnlyPublicName(name: string): boolean {
+  const stripped = stripPublicPrefix(name);
+  return isSecretLikeEnvName(name) || (stripped !== undefined && SERVER_ONLY_ENV_NAMES.includes(stripped));
+}
 
 /**
  * Validate a server-side env source. Also rejects any NEXT_PUBLIC_ variable that is not declared
@@ -116,7 +121,9 @@ export function parseServerEnv(source: EnvSource): ServerEnv {
   const publicSecrets: EnvIssue[] = Object.keys(source).filter(isForbiddenPublicEnvName).map((name) => ({
     name,
     kind: "invalid",
-    reason: "NEXT_PUBLIC_ variables are bundled into the browser; secret-like or server-only names are not allowed",
+    reason: isSecretOrServerOnlyPublicName(name)
+      ? "secret-like or server-only names must not be public; NEXT_PUBLIC_ variables are bundled into the browser"
+      : `${name} is not declared. Add it to clientEnvSchema in packages/shared/src/env/schema.ts (public vars are deny-by-default)`,
   }));
   let env: ServerEnv | undefined;
   let schemaIssues: readonly EnvIssue[] = [];
