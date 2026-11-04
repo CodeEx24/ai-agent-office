@@ -53,6 +53,26 @@ test("fixture: known secret value in the bundle fails and is never reported", ()
   });
 });
 
+test("non-secret server values (APP_ENV, SUPABASE_URL) in a bundle are not flagged", () => {
+  withBundle({ "a.js": 'if(process.env.NODE_ENV==="production"){fetch("https://x.example.test")}' }, (dir) =>
+    assert.deepEqual(
+      scanBundle(dir, {
+        serverNames: ["APP_ENV", "SUPABASE_URL"],
+        env: { APP_ENV: "production", SUPABASE_URL: "https://x.example.test" },
+      }),
+      [],
+    ),
+  );
+});
+
+test("DATABASE_URL value in a bundle fails", () => {
+  const dsn = "postgresql://user:pw-fixture@db.example.test:5432/postgres";
+  withBundle({ "a.js": `const d="${dsn}";` }, (dir) => {
+    const findings = scanBundle(dir, { serverNames: SERVER_NAMES, env: { DATABASE_URL: dsn } });
+    assert.ok(findings.some((f) => f.name === "DATABASE_URL" && f.reason === "secret value present"));
+  });
+});
+
 test("NEXT_PUBLIC_ names and short values are not flagged", () => {
   assert.equal(isSecretName("NEXT_PUBLIC_SUPABASE_ANON_KEY"), false);
   assert.equal(isSecretName("SUPABASE_SERVICE_ROLE_KEY"), true);

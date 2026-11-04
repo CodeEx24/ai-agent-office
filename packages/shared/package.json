@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./client-env": {
+      "types": "./dist/env/client-entry.d.ts",
+      "default": "./dist/env/client-entry.js"
     }
   },
   "scripts": {

@@ -46,7 +46,9 @@ function extensionOf(file) {
 export function scanBundle(bundleDir, { serverNames = [], env = process.env } = {}) {
   const secretValues = new Map();
   for (const [name, value] of Object.entries(env)) {
-    const isSecretVar = serverNames.includes(name) || isSecretName(name);
+    // Only genuinely secret values: not every server-only var (APP_ENV, SUPABASE_URL are not secret
+    // and legitimately appear in bundles). DATABASE_URL embeds credentials, so it is listed explicitly.
+    const isSecretVar = isSecretName(name) || name === "DATABASE_URL";
     if (isSecretVar && value && value.length >= MIN_SECRET_VALUE_LENGTH) secretValues.set(name, value);
   }
 

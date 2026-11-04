@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+import {
+  LOCAL_SUPABASE_URL,
+  clientEnvSchema,
+  emptyToUndefined,
+  httpUrlString,
+  optionalString,
+} from "./client-schema.js";
+
 /**
  * Environment model for Agent Office (AGO-70).
  *
@@ -15,27 +23,6 @@ import { z } from "zod";
 export const APP_ENVIRONMENTS = ["local", "preview", "production"] as const;
 export const appEnvironmentSchema = z.enum(APP_ENVIRONMENTS);
 export type AppEnvironment = z.infer<typeof appEnvironmentSchema>;
-
-/** Local Supabase stack ports are reserved as 55420-55429 (see AGO-78); 55421 is the API default. */
-export const LOCAL_SUPABASE_URL = "http://127.0.0.1:55421";
-export const LOCAL_APP_URL = "http://localhost:3000";
-
-const optionalString = z.string().min(1).optional();
-const httpUrlString = z.url({ protocol: /^https?$/ });
-
-/** Treat an empty string (e.g. `FOO=` in a dotenv file) as unset. */
-function emptyToUndefined(value: unknown): unknown {
-  return value === "" ? undefined : value;
-}
-
-/** Variables that may be bundled into the browser. Must start with `NEXT_PUBLIC_`. */
-export const clientEnvSchema = z.object({
-  NEXT_PUBLIC_APP_URL: z.preprocess(emptyToUndefined, httpUrlString.default(LOCAL_APP_URL)),
-  NEXT_PUBLIC_SUPABASE_URL: z.preprocess(emptyToUndefined, httpUrlString.default(LOCAL_SUPABASE_URL)),
-  /** Anon key is public by design; RLS is the protection. Required outside local. */
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.preprocess(emptyToUndefined, optionalString),
-});
-export type ClientEnv = z.infer<typeof clientEnvSchema>;
 
 /** Variables that must never reach a client bundle. */
 export const serverOnlyEnvSchema = z.object({
@@ -101,5 +88,3 @@ export type WorkerEnv = ServerEnv;
 /** Names of every variable that must stay server-side. Used by the client bundle check. */
 export const SERVER_ONLY_ENV_NAMES: readonly string[] = Object.keys(serverOnlyEnvSchema.shape);
 
-/** Names of the variables allowed in a client bundle. */
-export const CLIENT_ENV_NAMES: readonly string[] = Object.keys(clientEnvSchema.shape);

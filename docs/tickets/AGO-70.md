@@ -42,6 +42,8 @@ None. No migration; the schema slot was not needed.
 | Test runner | `node --test` against built `dist` | Vitest (AGO-111) not merged yet |
 | Build check wiring | `&&` after `next build` in the web `build` script | pnpm 10 does not run `postbuild` hooks automatically |
 | Bundle check detection | Server variable names, secret-named `process.env` references, and secret values | Names catch accidental references; values catch inlined secrets |
+| Client import path | `@ago/shared/client-env` subpath, not the barrel | The barrel carries server variable names; a real client build tripped the bundle check |
+| Secret value matching | Only secret-named vars plus `DATABASE_URL` | `APP_ENV`/`SUPABASE_URL` values legitimately appear in bundles |
 | Local Supabase URL | `http://127.0.0.1:55421` | Matches the API port in AGO-78's `supabase/config.toml` (verified after merging main) |
 | `.env.example` | Write it, blocked by a deny rule on `.env*`; coordinator asked, human lifting the deny | AC3 requires it; no workaround used |
 

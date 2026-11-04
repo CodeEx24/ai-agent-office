@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
@@ -82,4 +83,15 @@ test("client schema only knows NEXT_PUBLIC_ names; server-only names never overl
   assert.ok(SERVER_ONLY_ENV_NAMES.every((name) => !name.startsWith("NEXT_PUBLIC_")));
   const parsed = parseEnv(clientEnvSchema, { SUPABASE_SERVICE_ROLE_KEY: SENTINEL });
   assert.ok(!JSON.stringify(parsed).includes(SENTINEL), "client env must strip non-public variables");
+});
+
+test("client entry (@ago/shared/client-env) never references a server-only variable name", async () => {
+  const entry = await import("../dist/env/client-entry.js");
+  assert.ok("clientEnvSchema" in entry && !("serverEnvSchema" in entry));
+  for (const file of ["client-entry", "client-schema", "parse"]) {
+    const text = readFileSync(new URL(`../dist/env/${file}.js`, import.meta.url), "utf8");
+    for (const name of SERVER_ONLY_ENV_NAMES) {
+      assert.ok(!new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`).test(text), `${file}.js mentions ${name}`);
+    }
+  }
 });

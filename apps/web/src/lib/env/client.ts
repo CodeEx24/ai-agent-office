@@ -1,4 +1,6 @@
-import { clientEnvSchema, parseEnv, type ClientEnv } from "@ago/shared";
+// Import from the client-only entry: the `@ago/shared` barrel also carries the server schema,
+// whose variable names must never be bundled into the browser.
+import { clientEnvSchema, parseEnv, type ClientEnv } from "@ago/shared/client-env";
 
 let cached: ClientEnv | undefined;
 
