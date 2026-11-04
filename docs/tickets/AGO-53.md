@@ -58,7 +58,7 @@ Prompt: see `office-v2-environment.prompt.md` (cartoon-style office with floatin
 
 Assessment (agent, for the owner): the render now matches Pixel's style (rounded chunky furniture, flat clay-like materials, saturated teal/navy/peach palette, simple soft lighting). Composition caveat: the fantasy scenery is seen through the office windows (islands, waterfalls, mushrooms) rather than framing the left and right sides of the frame as in the first brief. Not regenerated, per the one-generation limit.
 
-Owner verdict on v2 environment: PENDING (requested via the coordinator).
+Owner verdict on v2 environment: **APPROVED** (2026-11-05), together with the Pixel v1 character sheet, as **art direction v1 (revisable later, not final)**. Total spend: 1.0 credit; balance 899 credits. No more generations. Note: fantasy scenery wrapping the sides of the office is to be built in the 3D scene (AGO-36 / AGO-106); the v2 image shows it through the windows only.
 
 ### Prompt (v0, rejected)
 ```
@@ -80,7 +80,7 @@ Prompt built with the Higgsfield `character-sheet` workflow (3d-stylized preset,
 | v1 generations | Exactly 2 (character sheet + environment), within the 1-credit total approval; no retries | Owner's spend limit; environment rendering looks semi-realistic but was not regenerated without a new approval |
 
 ## Implementation details
-Docs and image assets only. Files: this note, plus under `docs/assets/concepts/`, each with its prompt: `pixel-v0-rejected`, `pixel-v1-character-sheet` (approved), `office-v1-rejected`, `office-v2-environment` (verdict pending).
+Docs and image assets only. Files: this note, plus under `docs/assets/concepts/`, each with its prompt: `pixel-v0-rejected`, `pixel-v1-character-sheet` (approved), `office-v1-rejected`, `office-v2-environment` (approved).
 
 ## API changes
 None.
@@ -92,7 +92,7 @@ None.
 AGO-57 (scaffold): once merged, move the images to `packages/assets/concepts/`. AGO-28 (art direction guide) must treat "art direction v1" as revisable, not final.
 
 ## Known limitations
-One generation per image; consistency across multiple sheets is not tested here. Environment v2 shows the fantasy scenery through the windows rather than at the sides. Owner verdict on the v2 environment pending.
+One generation per image; consistency across multiple sheets is not tested here. Environment v2 shows the fantasy scenery through the windows rather than at the sides (to be built in the 3D scene, AGO-36 / AGO-106). Art direction v1 is approved but revisable.
 
 ## Testing notes
 No code. The repo has no lint/typecheck/test scripts yet, so those gates are skipped. Manual check: image opens, three views are visible, prompt file matches this note.
