@@ -6,7 +6,8 @@ import {
   emptyToUndefined,
   httpUrlString,
   optionalString,
-  findSecretLikePublicVars,
+  isSecretLikeEnvName,
+  stripPublicPrefix,
 } from "./client-schema.js";
 import { EnvValidationError, parseEnv, type EnvIssue, type EnvSource } from "./parse.js";
 
@@ -90,16 +91,34 @@ export type WorkerEnv = ServerEnv;
 /** Names of every variable that must stay server-side. Used by the client bundle check. */
 export const SERVER_ONLY_ENV_NAMES: readonly string[] = Object.keys(serverOnlyEnvSchema.shape);
 
+/**
+ * Server-only variables whose values are not secret and legitimately appear in bundles
+ * (for example `production` or a public URL). Everything else server-only is treated as secret.
+ */
+export const NON_SECRET_SERVER_ENV_NAMES: readonly string[] = ["APP_ENV", "SUPABASE_URL", "LANGFUSE_HOST", "SENTRY_DSN"];
+
+/**
+ * True when `name` must never be exposed to the browser under a NEXT_PUBLIC_ prefix: its
+ * prefix-stripped name is secret-like, or is a secret server-only variable (for example
+ * DATABASE_URL, which carries credentials but has no secret keyword). Case-insensitive.
+ */
+export function isForbiddenPublicEnvName(name: string): boolean {
+  const stripped = stripPublicPrefix(name);
+  if (stripped === undefined) return false;
+  if (isSecretLikeEnvName(name)) return true;
+  return SERVER_ONLY_ENV_NAMES.includes(stripped) && !NON_SECRET_SERVER_ENV_NAMES.includes(stripped);
+}
+
 
 /**
  * Validate a server-side env source. Also rejects any NEXT_PUBLIC_ variable whose stripped
  * name is secret-like (it would be bundled into the browser), so that fails at startup too.
  */
 export function parseServerEnv(source: EnvSource): ServerEnv {
-  const publicSecrets: EnvIssue[] = findSecretLikePublicVars(source).map((name) => ({
+  const publicSecrets: EnvIssue[] = Object.keys(source).filter(isForbiddenPublicEnvName).map((name) => ({
     name,
     kind: "invalid",
-    reason: "NEXT_PUBLIC_ variables are bundled into the browser; secret-like names are not allowed",
+    reason: "NEXT_PUBLIC_ variables are bundled into the browser; secret-like or server-only names are not allowed",
   }));
   let env: ServerEnv | undefined;
   let schemaIssues: readonly EnvIssue[] = [];

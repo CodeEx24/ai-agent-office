@@ -7,6 +7,7 @@ import {
   EnvValidationError,
   SERVER_ONLY_ENV_NAMES,
   clientEnvSchema,
+  isForbiddenPublicEnvName,
   isSecretLikeEnvName,
   parseEnv,
   parseServerEnv,
@@ -133,4 +134,22 @@ test("parseServerEnv reports schema problems and secret-like public vars togethe
 
 test("parseServerEnv accepts the allowed public variables", () => {
   assert.doesNotThrow(() => parseServerEnv({ NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-placeholder" }));
+});
+
+test("isForbiddenPublicEnvName: a NEXT_PUBLIC_ twin of a secret server-only var is forbidden, case-insensitively", () => {
+  for (const name of ["NEXT_PUBLIC_DATABASE_URL", "next_public_database_url", "Next_Public_Anthropic_Api_Key"]) {
+    assert.equal(isForbiddenPublicEnvName(name), true, name);
+  }
+  // Non-secret server-only vars and the allowed public ones are not forbidden.
+  for (const name of ["NEXT_PUBLIC_APP_ENV", "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SENTRY_DSN", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "DATABASE_URL"]) {
+    assert.equal(isForbiddenPublicEnvName(name), false, name);
+  }
+});
+
+test("parseServerEnv rejects NEXT_PUBLIC_DATABASE_URL (any case) and never prints its value", () => {
+  for (const key of ["NEXT_PUBLIC_DATABASE_URL", "next_public_database_url"]) {
+    const message = messageOf(() => parseServerEnv({ [key]: `postgres://u:${SENTINEL}@h/db` }));
+    assert.ok(message.includes(key), "names the variable");
+    assert.ok(!message.includes(SENTINEL), "message leaked a value");
+  }
 });

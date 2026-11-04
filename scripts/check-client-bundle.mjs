@@ -27,11 +27,14 @@ const shared = await import(
   process.exit(2);
 });
 
-/** Secret-like names, with the NEXT_PUBLIC_ prefix stripped first (see @ago/shared). */
-export const isSecretName = shared.isSecretLikeEnvName;
+/** Names that must never reach the browser, case-insensitive (see @ago/shared). */
+export const isSecretName = (name) => shared.isSecretLikeEnvName(name) || shared.isForbiddenPublicEnvName(name);
 
-/** Server-only vars whose values are legitimately public-ish and appear in bundles (APP_ENV=production, URLs). */
-const NON_SECRET_VALUE_NAMES = new Set(["APP_ENV", "SUPABASE_URL", "LANGFUSE_HOST", "SENTRY_DSN"]);
+const SERVER_NAME_SET = new Set(shared.SERVER_ONLY_ENV_NAMES);
+const NON_SECRET_VALUE_NAMES = new Set(shared.NON_SECRET_SERVER_ENV_NAMES);
+
+/** Defence in depth: scheme://user:password@host, whatever the variable was called. */
+const CREDENTIAL_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@"'`\\]+:[^\s/@"'`\\]+@[^\s/"'`\\]+/i;
 
 function* walk(dir) {
   for (const entry of readdirSync(dir)) {
@@ -56,7 +59,8 @@ export function scanBundle(bundleDir, { serverNames = [], env = process.env } = 
   for (const [name, value] of Object.entries(env)) {
     // Every server-only var's value is matched unless explicitly non-secret; secret-like names are
     // matched even under a NEXT_PUBLIC_ prefix. DATABASE_URL embeds credentials, so it stays matched.
-    const isSecretVar = isSecretName(name) || (serverNames.includes(name) && !NON_SECRET_VALUE_NAMES.has(name));
+    const upper = name.toUpperCase();
+    const isSecretVar = isSecretName(name) || (SERVER_NAME_SET.has(upper) && !NON_SECRET_VALUE_NAMES.has(upper));
     if (isSecretVar && value && value.length >= MIN_SECRET_VALUE_LENGTH) secretValues.set(name, value);
   }
 
@@ -75,12 +79,13 @@ export function scanBundle(bundleDir, { serverNames = [], env = process.env } = 
     };
 
     for (const name of serverNames) {
-      if (new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`).test(text)) add(name, "server-only variable name");
+      if (new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`, "i").test(text)) add(name, "server-only variable name");
     }
     for (const match of text.matchAll(PROCESS_ENV_REF)) {
       const name = match[1] ?? match[2];
       if (name && isSecretName(name)) add(name, "secret-named process.env reference");
     }
+    if (CREDENTIAL_URL.test(text)) add("CONNECTION_STRING", "URL with embedded credentials");
     for (const [name, value] of secretValues) {
       if (text.includes(value)) add(name, "secret value present");
     }

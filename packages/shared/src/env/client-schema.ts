@@ -42,13 +42,20 @@ const SECRET_KEY_SUFFIX = /_KEY$/;
  * allowed because it is public by design; any other prefixed name needs ALWAYS_SECRET to match.
  */
 export function isSecretLikeEnvName(name: string): boolean {
-  const isPublic = name.startsWith(PUBLIC_PREFIX);
-  const stripped = isPublic ? name.slice(PUBLIC_PREFIX.length) : name;
+  const upper = name.toUpperCase();
+  const isPublic = upper.startsWith(PUBLIC_PREFIX);
+  const stripped = isPublic ? upper.slice(PUBLIC_PREFIX.length) : upper;
   if (ALWAYS_SECRET.test(stripped)) return true;
   return !isPublic && SECRET_KEY_SUFFIX.test(stripped);
 }
 
+/** The name without its NEXT_PUBLIC_ prefix (any case), upper-cased; undefined when not public. */
+export function stripPublicPrefix(name: string): string | undefined {
+  const upper = name.toUpperCase();
+  return upper.startsWith(PUBLIC_PREFIX) ? upper.slice(PUBLIC_PREFIX.length) : undefined;
+}
+
 /** Names of NEXT_PUBLIC_ variables in `source` whose stripped name is secret-like. */
 export function findSecretLikePublicVars(source: Readonly<Record<string, string | undefined>>): string[] {
-  return Object.keys(source).filter((name) => name.startsWith(PUBLIC_PREFIX) && isSecretLikeEnvName(name));
+  return Object.keys(source).filter((name) => stripPublicPrefix(name) !== undefined && isSecretLikeEnvName(name));
 }

@@ -80,3 +80,24 @@ test("NEXT_PUBLIC_ names and short values are not flagged", () => {
     assert.deepEqual(scanBundle(dir, { serverNames: ["APP_ENV"], env: { APP_ENV: "local" } }), []),
   );
 });
+
+test("connection string with embedded credentials is flagged whatever the variable name", () => {
+  withBundle({ "a.js": 'const c="postgres://app:hunter2pw@db.example.test:5432/app";' }, (dir) => {
+    const findings = scanBundle(dir, { serverNames: SERVER_NAMES, env: {} });
+    assert.deepEqual(findings.map((f) => f.name), ["CONNECTION_STRING"]);
+    assert.ok(!JSON.stringify(findings).includes("hunter2pw"));
+  });
+});
+
+test("URLs without credentials are not flagged as connection strings", () => {
+  withBundle({ "a.js": 'fetch("https://app.example.test/path?x=a:b@c");fetch("postgres://db.example.test:5432/app")' }, (dir) =>
+    assert.deepEqual(scanBundle(dir, { serverNames: SERVER_NAMES, env: {} }), []),
+  );
+});
+
+test("names are matched case-insensitively", () => {
+  withBundle({ "a.js": "x(process.env.next_public_database_url);x(process.env.database_url)" }, (dir) => {
+    const names = scanBundle(dir, { serverNames: ["DATABASE_URL"], env: {} }).map((f) => f.name).sort();
+    assert.ok(names.includes("DATABASE_URL") && names.includes("next_public_database_url"), names.join());
+  });
+});

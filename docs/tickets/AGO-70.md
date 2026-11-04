@@ -45,6 +45,8 @@ None. No migration; the schema slot was not needed.
 | Client import path | `@ago/shared/client-env` subpath, not the barrel | The barrel carries server variable names; a real client build tripped the bundle check |
 | Secret classification | One shared `isSecretLikeEnvName` that strips `NEXT_PUBLIC_` first; SECRET, PRIVATE, TOKEN, PASSWORD, SERVICE_ROLE and API_KEY are never public; other `*_KEY` is secret unless prefixed (so `NEXT_PUBLIC_SUPABASE_ANON_KEY` stays allowed) | Fix round 1 (QA): the prefix could launder a secret past the check |
 | Secret value matching | Values of every server-only schema var, plus any secret-like name even under `NEXT_PUBLIC_`; explicit non-secret allowlist: `APP_ENV`, `SUPABASE_URL`, `LANGFUSE_HOST`, `SENTRY_DSN` | Those four legitimately appear in bundles (e.g. `production`) and would fail every real build |
+| Server-name twins (fix round 2) | A `NEXT_PUBLIC_` var is forbidden when its prefix-stripped name is in `SERVER_ONLY_ENV_NAMES` minus the non-secret allowlist, in addition to the secret-keyword rule; names are compared case-insensitively; the allowlist lives in `@ago/shared` (`NON_SECRET_SERVER_ENV_NAMES`) and the bundle check reuses it | `NEXT_PUBLIC_DATABASE_URL` carries credentials but has no secret keyword |
+| Credential URLs (defence in depth) | The bundle check flags any `scheme://user:password@host` string whatever the variable name | Catches secrets exposed under names no rule anticipated |
 | Startup rejection | `parseServerEnv` also rejects any secret-like `NEXT_PUBLIC_*` var, naming it only | Fail fast at startup as well as at build |
 | Local Supabase URL | `http://127.0.0.1:55421` | Matches the API port in AGO-78's `supabase/config.toml` (verified after merging main) |
 | `.env.example` | Write it, blocked by a deny rule on `.env*`; coordinator asked, human lifting the deny | AC3 requires it; no workaround used |
@@ -61,6 +63,7 @@ None. No migration; the schema slot was not needed.
 - Fail-fast: start the web app with `APP_ENV=production` and no keys; startup logs the missing variable names.
 
 ## Follow-up tasks
+- Bundle check does not detect encoded secrets (string concatenation, base64, hex). Judged low risk (the secret would have to be deliberately obfuscated in client code); add detection if a real need appears.
 - Port tests to Vitest after AGO-111.
 - Wire `loadWorkerEnv()` into the worker entrypoint: **known gap, owned by AGO-143** (the worker skeleton). Not fixed in AGO-70; `loadWorkerEnv()` exists and is tested but nothing calls it at process start yet.
 - Human: create hosted preview and production environments and set `APP_ENV` and keys.
