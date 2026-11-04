@@ -39,5 +39,11 @@ Needs AGO-57 (monorepo). AGO-78 also touches root `package.json` and the lockfil
 - `PORT` pass-through in Turbo rather than a custom dev script, so `pnpm dev` stays one command.
 
 ## Follow-up tasks
+- QA (AGO-118 not landed, so no specs written yet). Specs to add once the Playwright harness exists, in the web app E2E folder: `test('AC1: package.json pins next at 16.4.1 or later')` (read apps/web/package.json, assert exact version >= 16.4.1); `test('AC2: / renders a page with Tailwind styles')` (assert h1 "Agent Office" is visible, computed color is not default black, main background is not transparent, no console errors or hydration warnings); `test('AC3: TypeScript strict mode is on and typecheck passes')` (assert tsconfig.base.json strict is true, run pnpm typecheck). No security-relevant AC, so no negative specs apply.
+- QA (AGO-118 has not landed, so no specs are written yet). Specs to add once the Playwright harness exists:
+  - `test('AC1: package.json pins next at 16.4.1 or later')`: read `apps/web/package.json`, assert `next` is an exact version >= 16.4.1.
+  - `test('AC2: / renders a page with Tailwind styles')`: assert the "Agent Office" h1 is visible, its computed colour is not default black, `main` has a non-transparent background, and there are no console errors or hydration warnings.
+  - `test('AC3: TypeScript strict mode is on and typecheck passes')`: assert `strict` is true in `tsconfig.base.json` and `pnpm typecheck` exits 0.
+  - No AC is security-relevant, so no negative specs apply.
 - AGO-111: add lint/format/test scripts. AGO-118: Playwright harness and an E2E for `/` Tailwind rendering.
 - When the app first imports `@ago/*`, configure `transpilePackages` or switch to source exports.
