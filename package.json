@@ -11,9 +11,15 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "typecheck": "turbo run typecheck",
-    "clean": "turbo run clean"
+    "clean": "turbo run clean",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:migration:new": "supabase migration new",
+    "db:types": "node scripts/db-types.mjs"
   },
   "devDependencies": {
+    "supabase": "3.0.0",
     "turbo": "^2.5.0",
     "typescript": "~5.9.3"
   }
