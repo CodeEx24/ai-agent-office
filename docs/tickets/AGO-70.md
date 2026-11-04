@@ -62,3 +62,10 @@ None. No migration; the schema slot was not needed.
 - Port tests to Vitest after AGO-111.
 - Wire `loadWorkerEnv()` into the worker entrypoint (AGO-143).
 - Human: create hosted preview and production environments and set `APP_ENV` and keys.
+- QA (AGO-118 not landed, so no Playwright harness yet). Node-level acceptance tests are in `scripts/ago-70-acceptance.test.mjs`. When AGO-118 lands, add these Playwright specs in the harness:
+  - `AC1: app starts with the local defaults and renders the home page with no env set`
+  - `AC1: production start with keys missing never serves a page` (negative: process exits, port refuses connections)
+  - `AC2: a built client bundle contains no server-only variable name or secret value` (scan `.next/static` after build)
+  - `AC2: a page importing a server env module from a client component fails the build` (negative)
+- QA: add an AC3 content check (every schema variable appears in `.env.example`, values are placeholders) once the owner lifts the deny rule on `.env*`.
+- QA finding (open): the bundle check can be bypassed with a `NEXT_PUBLIC_` prefix on a secret name or value; see the three `AC2 (bypass)` tests, which fail until the check is fixed.
