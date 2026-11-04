@@ -1,0 +1,4 @@
+# Orca repo config. The setup script runs once in every new worktree
+# (one worktree per AGO ticket, created by /run-waves).
+scripts:
+  setup: node scripts/worktree-setup.mjs

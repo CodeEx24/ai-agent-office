@@ -1,0 +1,49 @@
+name: PR conventions
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-conventions:
+    name: pr-conventions
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # Inputs are passed through env, never interpolated into the script (PR titles are untrusted).
+      - name: Check branch name and PR title
+        env:
+          BRANCH: ${{ github.head_ref }}
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          # Conventions live in CLAUDE.md section 5. Ticket keys are never zero-padded.
+          types='feat|fix|chore|refactor|docs|test|perf|build|ci'
+          scopes='web|worker|shared|ui|assets|db|auth|agents|work|vault|control|office|policy|ci|tooling|deps|repo'
+          branch_re="^($types)/ago-[1-9][0-9]*/[a-z0-9]+(-[a-z0-9]+)*$"
+          title_re="^($types)\(($scopes)\): .+ \(AGO-[1-9][0-9]*\)$"
+          ok=true
+          if [[ ! "$BRANCH" =~ $branch_re ]] || (( ${#BRANCH} > 70 )); then
+            echo "::error::Branch must be <type>/ago-<n>/<slug>: unpadded key, lowercase kebab slug, 70 chars max (got: $BRANCH)"
+            ok=false
+          fi
+          if [[ ! "$TITLE" =~ $title_re ]]; then
+            echo "::error::PR title must be 'type(scope): summary (AGO-<n>)' with a scope from CLAUDE.md section 5 (got: $TITLE)"
+            ok=false
+          fi
+          branch_type=${BRANCH%%/*}
+          title_type=${TITLE%%(*}
+          if [[ "$branch_type" != "$title_type" ]]; then
+            echo "::error::Branch type ($branch_type) and title type ($title_type) differ"
+            ok=false
+          fi
+          branch_ticket=$(sed -E 's#^[a-z]+/ago-([0-9]+)/.*#\1#' <<<"$BRANCH")
+          title_ticket=$(sed -E 's#.*\(AGO-([0-9]+)\)$#\1#' <<<"$TITLE")
+          if [[ "$branch_ticket" != "$title_ticket" ]]; then
+            echo "::error::Branch ticket (AGO-$branch_ticket) and title ticket (AGO-$title_ticket) differ"
+            ok=false
+          fi
+          $ok
