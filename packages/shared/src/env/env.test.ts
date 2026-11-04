@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { test } from "node:test";
+import { test } from "vitest";
 
 import {
   CLIENT_ENV_NAMES,
@@ -12,11 +12,13 @@ import {
   parseEnv,
   parseServerEnv,
   serverEnvSchema,
-} from "../dist/index.js";
+} from "./index.js";
 
 const SENTINEL = "sentinel-secret-value-DO-NOT-PRINT";
 
-const deployed = (appEnv, overrides = {}) => ({
+type Source = Record<string, string | undefined>;
+
+const deployed = (appEnv: string, overrides: Source = {}): Source => ({
   APP_ENV: appEnv,
   NEXT_PUBLIC_APP_URL: "https://app.example.test",
   NEXT_PUBLIC_SUPABASE_URL: "https://project.example.test",
@@ -27,7 +29,7 @@ const deployed = (appEnv, overrides = {}) => ({
   ...overrides,
 });
 
-function messageOf(fn) {
+function messageOf(fn: () => unknown): string {
   try {
     fn();
   } catch (error) {
@@ -63,18 +65,26 @@ test("preview and production both enforce required variables and https", () => {
   for (const appEnv of ["preview", "production"]) {
     assert.doesNotThrow(() => parseEnv(serverEnvSchema, deployed(appEnv)));
     const insecure = deployed(appEnv, { NEXT_PUBLIC_APP_URL: "http://app.example.test" });
-    assert.match(messageOf(() => parseEnv(serverEnvSchema, insecure)), /NEXT_PUBLIC_APP_URL: invalid \(must use https/);
+    assert.match(
+      messageOf(() => parseEnv(serverEnvSchema, insecure)),
+      /NEXT_PUBLIC_APP_URL: invalid \(must use https/,
+    );
   }
 });
 
 test("invalid APP_ENV and malformed URL are reported as invalid", () => {
-  const message = messageOf(() => parseEnv(serverEnvSchema, { APP_ENV: "staging", SUPABASE_URL: "not a url" }));
+  const message = messageOf(() =>
+    parseEnv(serverEnvSchema, { APP_ENV: "staging", SUPABASE_URL: "not a url" }),
+  );
   assert.match(message, /APP_ENV: invalid/);
   assert.match(message, /SUPABASE_URL: invalid/);
 });
 
 test("error messages never contain values", () => {
-  const source = deployed("production", { SUPABASE_URL: SENTINEL, NEXT_PUBLIC_APP_URL: `http://${SENTINEL}` });
+  const source = deployed("production", {
+    SUPABASE_URL: SENTINEL,
+    NEXT_PUBLIC_APP_URL: `http://${SENTINEL}`,
+  });
   delete source.DATABASE_URL;
   const message = messageOf(() => parseEnv(serverEnvSchema, source));
   assert.ok(!message.includes(SENTINEL), "message leaked a value");
@@ -85,16 +95,22 @@ test("client schema only knows NEXT_PUBLIC_ names; server-only names never overl
   assert.ok(CLIENT_ENV_NAMES.every((name) => name.startsWith("NEXT_PUBLIC_")));
   assert.ok(SERVER_ONLY_ENV_NAMES.every((name) => !name.startsWith("NEXT_PUBLIC_")));
   const parsed = parseEnv(clientEnvSchema, { SUPABASE_SERVICE_ROLE_KEY: SENTINEL });
-  assert.ok(!JSON.stringify(parsed).includes(SENTINEL), "client env must strip non-public variables");
+  assert.ok(
+    !JSON.stringify(parsed).includes(SENTINEL),
+    "client env must strip non-public variables",
+  );
 });
 
 test("client entry (@ago/shared/client-env) never references a server-only variable name", async () => {
-  const entry = await import("../dist/env/client-entry.js");
+  const entry = await import("./client-entry.js");
   assert.ok("clientEnvSchema" in entry && !("serverEnvSchema" in entry));
   for (const file of ["client-entry", "client-schema", "parse"]) {
-    const text = readFileSync(new URL(`../dist/env/${file}.js`, import.meta.url), "utf8");
+    const text = readFileSync(new URL(`./${file}.ts`, import.meta.url), "utf8");
     for (const name of SERVER_ONLY_ENV_NAMES) {
-      assert.ok(!new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`).test(text), `${file}.js mentions ${name}`);
+      assert.ok(
+        !new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`).test(text),
+        `${file}.js mentions ${name}`,
+      );
     }
   }
 });
@@ -112,14 +128,22 @@ test("isSecretLikeEnvName strips NEXT_PUBLIC_ before classifying", () => {
   ]) {
     assert.equal(isSecretLikeEnvName(name), true, name);
   }
-  for (const name of ["NEXT_PUBLIC_SUPABASE_ANON_KEY", "NEXT_PUBLIC_APP_URL", "APP_ENV", "SUPABASE_URL"]) {
+  for (const name of [
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    "NEXT_PUBLIC_APP_URL",
+    "APP_ENV",
+    "SUPABASE_URL",
+  ]) {
     assert.equal(isSecretLikeEnvName(name), false, name);
   }
 });
 
 test("parseServerEnv rejects a secret-like NEXT_PUBLIC_ variable at startup, naming it but not its value", () => {
   const message = messageOf(() =>
-    parseServerEnv({ NEXT_PUBLIC_ANTHROPIC_API_KEY: SENTINEL, NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY: SENTINEL }),
+    parseServerEnv({
+      NEXT_PUBLIC_ANTHROPIC_API_KEY: SENTINEL,
+      NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY: SENTINEL,
+    }),
   );
   assert.match(message, /NEXT_PUBLIC_ANTHROPIC_API_KEY: invalid/);
   assert.match(message, /NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY: invalid/);
@@ -127,7 +151,9 @@ test("parseServerEnv rejects a secret-like NEXT_PUBLIC_ variable at startup, nam
 });
 
 test("parseServerEnv reports schema problems and secret-like public vars together", () => {
-  const message = messageOf(() => parseServerEnv({ APP_ENV: "staging", NEXT_PUBLIC_API_TOKEN: SENTINEL }));
+  const message = messageOf(() =>
+    parseServerEnv({ APP_ENV: "staging", NEXT_PUBLIC_API_TOKEN: SENTINEL }),
+  );
   assert.match(message, /APP_ENV: invalid/);
   assert.match(message, /NEXT_PUBLIC_API_TOKEN: invalid/);
 });
@@ -152,7 +178,8 @@ test("isForbiddenPublicEnvName denies by default: only NEXT_PUBLIC_ vars declare
   for (const name of CLIENT_ENV_NAMES) assert.equal(isForbiddenPublicEnvName(name), false, name);
   assert.equal(isForbiddenPublicEnvName("next_public_supabase_anon_key"), false);
   // Not public at all: this rule does not apply to server-side names.
-  for (const name of ["DATABASE_URL", "APP_ENV"]) assert.equal(isForbiddenPublicEnvName(name), false, name);
+  for (const name of ["DATABASE_URL", "APP_ENV"])
+    assert.equal(isForbiddenPublicEnvName(name), false, name);
 });
 
 test("isSecretLikeEnvName is broad: fragments, tokens and trailing KEY, with or without the prefix", () => {
@@ -170,14 +197,25 @@ test("isSecretLikeEnvName is broad: fragments, tokens and trailing KEY, with or 
   ]) {
     assert.equal(isSecretLikeEnvName(name), true, name);
   }
-  for (const name of ["APP_ENV", "SUPABASE_URL", "DATABASE_URL", "LANGFUSE_HOST", "SENTRY_DSN", "NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"]) {
+  for (const name of [
+    "APP_ENV",
+    "SUPABASE_URL",
+    "DATABASE_URL",
+    "LANGFUSE_HOST",
+    "SENTRY_DSN",
+    "NEXT_PUBLIC_APP_URL",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+  ]) {
     assert.equal(isSecretLikeEnvName(name), false, name);
   }
 });
 
 test("parseServerEnv rejects undeclared NEXT_PUBLIC_ vars (typo-like APIKEY and REDIS_URL) without printing values", () => {
   const message = messageOf(() =>
-    parseServerEnv({ NEXT_PUBLIC_ANTHROPIC_APIKEY: SENTINEL, NEXT_PUBLIC_REDIS_URL: `redis://:${SENTINEL}@h:6379` }),
+    parseServerEnv({
+      NEXT_PUBLIC_ANTHROPIC_APIKEY: SENTINEL,
+      NEXT_PUBLIC_REDIS_URL: `redis://:${SENTINEL}@h:6379`,
+    }),
   );
   assert.match(message, /NEXT_PUBLIC_ANTHROPIC_APIKEY: invalid/);
   assert.match(message, /NEXT_PUBLIC_REDIS_URL: invalid/);
@@ -195,16 +233,25 @@ test("parseServerEnv rejects NEXT_PUBLIC_DATABASE_URL (any case) and never print
 test("parseServerEnv tells the developer what to do about an undeclared public var", () => {
   const message = messageOf(() => parseServerEnv({ NEXT_PUBLIC_FEATURE_X: SENTINEL }));
   assert.match(message, /NEXT_PUBLIC_FEATURE_X: invalid/);
-  assert.match(message, /NEXT_PUBLIC_FEATURE_X is not declared\. Add it to clientEnvSchema in packages\/shared\/src\/env\/schema\.ts \(public vars are deny-by-default\)/);
-  assert.ok(!/must not be public/.test(message), "undeclared var must not get the secret message");
+  assert.match(
+    message,
+    /NEXT_PUBLIC_FEATURE_X is not declared\. Add it to clientEnvSchema in packages\/shared\/src\/env\/client-schema\.ts \(public vars are deny-by-default\)/,
+  );
+  assert.ok(
+    !message.includes("must not be public"),
+    "undeclared var must not get the secret message",
+  );
   assert.ok(!message.includes(SENTINEL), "message leaked a value");
 });
 
 test("parseServerEnv says secret-like and server-only public names must not be public", () => {
   for (const name of ["NEXT_PUBLIC_ANTHROPIC_APIKEY", "NEXT_PUBLIC_DATABASE_URL"]) {
     const message = messageOf(() => parseServerEnv({ [name]: SENTINEL }));
-    assert.match(message, new RegExp(`${name}: invalid \\(secret-like or server-only names must not be public`));
-    assert.ok(!/is not declared/.test(message), `${name} must not get the undeclared message`);
+    assert.match(
+      message,
+      new RegExp(`${name}: invalid \\(secret-like or server-only names must not be public`),
+    );
+    assert.ok(!message.includes("is not declared"), `${name} must not get the undeclared message`);
     assert.ok(!message.includes(SENTINEL), "message leaked a value");
   }
 });

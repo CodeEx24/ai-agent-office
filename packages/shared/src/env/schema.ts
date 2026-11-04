@@ -52,7 +52,11 @@ const REQUIRED_WHEN_DEPLOYED = [
 ] as const;
 
 /** Variables that additionally require https when deployed. */
-const HTTPS_WHEN_DEPLOYED = ["NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_URL"] as const;
+const HTTPS_WHEN_DEPLOYED = [
+  "NEXT_PUBLIC_APP_URL",
+  "NEXT_PUBLIC_SUPABASE_URL",
+  "SUPABASE_URL",
+] as const;
 
 const serverFullShape = serverOnlyEnvSchema.extend(clientEnvSchema.shape);
 
@@ -96,7 +100,12 @@ export const SERVER_ONLY_ENV_NAMES: readonly string[] = Object.keys(serverOnlyEn
  * Server-only variables whose values are not secret and legitimately appear in bundles
  * (for example `production` or a public URL). Everything else server-only is treated as secret.
  */
-export const NON_SECRET_SERVER_ENV_NAMES: readonly string[] = ["APP_ENV", "SUPABASE_URL", "LANGFUSE_HOST", "SENTRY_DSN"];
+export const NON_SECRET_SERVER_ENV_NAMES: readonly string[] = [
+  "APP_ENV",
+  "SUPABASE_URL",
+  "LANGFUSE_HOST",
+  "SENTRY_DSN",
+];
 
 /**
  * Deny by default: a NEXT_PUBLIC_ variable is forbidden unless it is declared public in
@@ -110,7 +119,10 @@ export function isForbiddenPublicEnvName(name: string): boolean {
 /** Message selection only: a forbidden public name that is secret-like or mirrors a server-only variable. */
 function isSecretOrServerOnlyPublicName(name: string): boolean {
   const stripped = stripPublicPrefix(name);
-  return isSecretLikeEnvName(name) || (stripped !== undefined && SERVER_ONLY_ENV_NAMES.includes(stripped));
+  return (
+    isSecretLikeEnvName(name) ||
+    (stripped !== undefined && SERVER_ONLY_ENV_NAMES.includes(stripped))
+  );
 }
 
 /**
@@ -118,13 +130,15 @@ function isSecretOrServerOnlyPublicName(name: string): boolean {
  * public in `clientEnvSchema` (it would be bundled into the browser), so that fails at startup too.
  */
 export function parseServerEnv(source: EnvSource): ServerEnv {
-  const publicSecrets: EnvIssue[] = Object.keys(source).filter(isForbiddenPublicEnvName).map((name) => ({
-    name,
-    kind: "invalid",
-    reason: isSecretOrServerOnlyPublicName(name)
-      ? "secret-like or server-only names must not be public; NEXT_PUBLIC_ variables are bundled into the browser"
-      : `${name} is not declared. Add it to clientEnvSchema in packages/shared/src/env/schema.ts (public vars are deny-by-default)`,
-  }));
+  const publicSecrets: EnvIssue[] = Object.keys(source)
+    .filter(isForbiddenPublicEnvName)
+    .map((name) => ({
+      name,
+      kind: "invalid",
+      reason: isSecretOrServerOnlyPublicName(name)
+        ? "secret-like or server-only names must not be public; NEXT_PUBLIC_ variables are bundled into the browser"
+        : `${name} is not declared. Add it to clientEnvSchema in packages/shared/src/env/client-schema.ts (public vars are deny-by-default)`,
+    }));
   let env: ServerEnv | undefined;
   let schemaIssues: readonly EnvIssue[] = [];
   try {

@@ -1,0 +1,33 @@
+/*
+ * Raw brand tokens: the ONE place the art direction palette lives.
+ * Source: docs/art/style-guide.md section 4 (v1, revisable). To change the
+ * direction, edit these values (or remap in theme.css); components never use them directly.
+ * Entries marked "derived" are lighter/darker steps made for UI surfaces, not sampled from art.
+ */
+:root {
+  --ao-navy-900: #1b2330; /* derived: darkest UI surface */
+  --ao-navy-800: #232d3c; /* derived */
+  --ao-navy-700: #2e394a;
+  --ao-navy-600: #285771;
+  --ao-blue-500: #225a82;
+  --ao-teal-700: #20545f;
+  --ao-teal-500: #51b6b4;
+  --ao-teal-300: #8fd3d1; /* derived */
+  --ao-teal-glow: #24e7d9;
+  --ao-sky-400: #71c9fd;
+  --ao-peach-300: #eba778;
+  --ao-peach-200: #f3c9a8; /* derived */
+  --ao-orange-500: #db7e43;
+  --ao-charcoal-600: #3e3e3e;
+  --ao-white-soft: #e8e8e5;
+  --ao-cream-100: #ede3d0;
+  --ao-cream-50: #f7f2e8; /* derived: page background */
+  --ao-leaf-green-500: #4e9a4a;
+  /* Status colours: UI only, never character colours (style guide section 4). */
+  --ao-success-600: #2f7d4f;
+  --ao-success-400: #5fbf86;
+  --ao-warning-600: #a8610f;
+  --ao-warning-400: #f0b35a;
+  --ao-danger-600: #b83a2c;
+  --ao-danger-400: #f07a6b;
+}

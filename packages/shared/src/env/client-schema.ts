@@ -21,7 +21,10 @@ export function emptyToUndefined(value: unknown): unknown {
 /** Variables that may be bundled into the browser. Must start with `NEXT_PUBLIC_`. */
 export const clientEnvSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.preprocess(emptyToUndefined, httpUrlString.default(LOCAL_APP_URL)),
-  NEXT_PUBLIC_SUPABASE_URL: z.preprocess(emptyToUndefined, httpUrlString.default(LOCAL_SUPABASE_URL)),
+  NEXT_PUBLIC_SUPABASE_URL: z.preprocess(
+    emptyToUndefined,
+    httpUrlString.default(LOCAL_SUPABASE_URL),
+  ),
   /** Anon key is public by design; RLS is the protection. Required outside local. */
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.preprocess(emptyToUndefined, optionalString),
 });
@@ -69,6 +72,10 @@ export function stripPublicPrefix(name: string): string | undefined {
 }
 
 /** Names of NEXT_PUBLIC_ variables in `source` whose stripped name is secret-like. */
-export function findSecretLikePublicVars(source: Readonly<Record<string, string | undefined>>): string[] {
-  return Object.keys(source).filter((name) => stripPublicPrefix(name) !== undefined && isSecretLikeEnvName(name));
+export function findSecretLikePublicVars(
+  source: Readonly<Record<string, string | undefined>>,
+): string[] {
+  return Object.keys(source).filter(
+    (name) => stripPublicPrefix(name) !== undefined && isSecretLikeEnvName(name),
+  );
 }

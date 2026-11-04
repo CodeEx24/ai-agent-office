@@ -1,6 +1,6 @@
 /**
  * AGO-70 acceptance tests (QA). One test per acceptance criterion, plus negative cases.
- * Run with `node --test scripts/ago-70-acceptance.test.mjs` (also part of `pnpm test`).
+ * Run with `vitest run scripts/ago-70-acceptance.test.mjs` (also part of `pnpm test`).
  *
  * Needs `packages/shared/dist` and `apps/worker/dist` (pnpm build). No `.env*` file is read or
  * written: every environment is passed on the child process command line.
@@ -11,7 +11,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { test } from "node:test";
+import { test } from "vitest";
 import { fileURLToPath } from "node:url";
 
 import { scanBundle } from "./check-client-bundle.mjs";

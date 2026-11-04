@@ -13,7 +13,7 @@ Acceptance criteria (verbatim):
 Risk tier: medium (touches the secrets surface; no auth, data model or agent runtime).
 
 ## Implementation details
-- `packages/shared/src/env/schema.ts`: Zod schemas. `clientEnvSchema` (`NEXT_PUBLIC_*` only), `serverOnlyEnvSchema`, `serverEnvSchema` (server plus public, with per-environment rules in `superRefine`), `workerEnvSchema`. Exports `SERVER_ONLY_ENV_NAMES` and `CLIENT_ENV_NAMES`.
+- `packages/shared/src/env/schema.ts` (and `client-schema.ts` for `clientEnvSchema`): Zod schemas. `clientEnvSchema` (`NEXT_PUBLIC_*` only), `serverOnlyEnvSchema`, `serverEnvSchema` (server plus public, with per-environment rules in `superRefine`), `workerEnvSchema`. Exports `SERVER_ONLY_ENV_NAMES` and `CLIENT_ENV_NAMES`.
 - `packages/shared/src/env/parse.ts`: `parseEnv(schema, source)` throws `EnvValidationError`. The message names each missing or invalid variable and never prints values.
 - `apps/web/src/lib/env/server.ts` (`import "server-only"`, `getServerEnv()`), `client.ts` (`getClientEnv()`, literal `process.env.NEXT_PUBLIC_*` reads so Next inlines them).
 - `apps/web/src/instrumentation.ts`: validates the server env at server start (fail fast).

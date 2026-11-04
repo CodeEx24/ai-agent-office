@@ -1,0 +1,86 @@
+/* Semantic shadcn tokens mapped from the raw --ao-* palette (see tokens.css). */
+:root {
+  --radius: 0.75rem;
+  --background: var(--ao-cream-50);
+  --foreground: var(--ao-navy-700);
+  --card: #fffdf8;
+  --card-foreground: var(--ao-navy-700);
+  --popover: #fffdf8;
+  --popover-foreground: var(--ao-navy-700);
+  --primary: var(--ao-teal-700);
+  --primary-foreground: var(--ao-cream-50);
+  --secondary: var(--ao-cream-100);
+  --secondary-foreground: var(--ao-navy-700);
+  --muted: var(--ao-cream-100);
+  --muted-foreground: #5b6573;
+  --accent: var(--ao-peach-200);
+  --accent-foreground: var(--ao-navy-800);
+  --destructive: var(--ao-danger-600);
+  --destructive-foreground: var(--ao-cream-50);
+  --success: var(--ao-success-600);
+  --warning: var(--ao-warning-600);
+  --border: #dcd0b8;
+  --input: #dcd0b8;
+  --ring: var(--ao-teal-500);
+}
+
+.dark {
+  --background: var(--ao-navy-900);
+  --foreground: var(--ao-cream-100);
+  --card: var(--ao-navy-800);
+  --card-foreground: var(--ao-cream-100);
+  --popover: var(--ao-navy-800);
+  --popover-foreground: var(--ao-cream-100);
+  --primary: var(--ao-teal-500);
+  --primary-foreground: var(--ao-navy-900);
+  --secondary: var(--ao-navy-700);
+  --secondary-foreground: var(--ao-cream-100);
+  --muted: var(--ao-navy-700);
+  --muted-foreground: #a9b2bf;
+  --accent: var(--ao-orange-500);
+  --accent-foreground: var(--ao-navy-900);
+  --destructive: var(--ao-danger-400);
+  --destructive-foreground: var(--ao-navy-900);
+  --success: var(--ao-success-400);
+  --warning: var(--ao-warning-400);
+  --border: #38455a;
+  --input: #38455a;
+  --ring: var(--ao-teal-500);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
