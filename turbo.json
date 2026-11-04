@@ -20,7 +20,9 @@
     "clean": {
       "cache": false
     },
-    "lint": {},
+    "lint": {
+      "dependsOn": ["^build"]
+    },
     "test:e2e": {
       "dependsOn": ["build"],
       "cache": false,
