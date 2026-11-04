@@ -1,6 +1,6 @@
 import "server-only";
 
-import { parseEnv, serverEnvSchema, type ServerEnv } from "@ago/shared";
+import { parseServerEnv, type ServerEnv } from "@ago/shared";
 
 let cached: ServerEnv | undefined;
 
@@ -10,6 +10,6 @@ let cached: ServerEnv | undefined;
  * (never their values).
  */
 export function getServerEnv(): ServerEnv {
-  cached ??= parseEnv(serverEnvSchema, process.env);
+  cached ??= parseServerEnv(process.env);
   return cached;
 }

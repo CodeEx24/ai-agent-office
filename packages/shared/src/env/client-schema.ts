@@ -29,3 +29,26 @@ export type ClientEnv = z.infer<typeof clientEnvSchema>;
 
 /** Names of the variables allowed in a client bundle. */
 export const CLIENT_ENV_NAMES: readonly string[] = Object.keys(clientEnvSchema.shape);
+
+const PUBLIC_PREFIX = "NEXT_PUBLIC_";
+/** Never allowed to be public, with or without the NEXT_PUBLIC_ prefix. */
+const ALWAYS_SECRET = /(SECRET|PRIVATE|TOKEN|PASSWORD|SERVICE_ROLE|API_KEY)/;
+/** Server-side names ending in _KEY are treated as secret too (public keys use the prefix + ANON). */
+const SECRET_KEY_SUFFIX = /_KEY$/;
+
+/**
+ * True when an env var name looks like a secret. The NEXT_PUBLIC_ prefix is stripped before
+ * classifying, so it cannot launder a secret into the browser. A prefixed `..._ANON_KEY` stays
+ * allowed because it is public by design; any other prefixed name needs ALWAYS_SECRET to match.
+ */
+export function isSecretLikeEnvName(name: string): boolean {
+  const isPublic = name.startsWith(PUBLIC_PREFIX);
+  const stripped = isPublic ? name.slice(PUBLIC_PREFIX.length) : name;
+  if (ALWAYS_SECRET.test(stripped)) return true;
+  return !isPublic && SECRET_KEY_SUFFIX.test(stripped);
+}
+
+/** Names of NEXT_PUBLIC_ variables in `source` whose stripped name is secret-like. */
+export function findSecretLikePublicVars(source: Readonly<Record<string, string | undefined>>): string[] {
+  return Object.keys(source).filter((name) => name.startsWith(PUBLIC_PREFIX) && isSecretLikeEnvName(name));
+}

@@ -6,7 +6,9 @@ import {
   emptyToUndefined,
   httpUrlString,
   optionalString,
+  findSecretLikePublicVars,
 } from "./client-schema.js";
+import { EnvValidationError, parseEnv, type EnvIssue, type EnvSource } from "./parse.js";
 
 /**
  * Environment model for Agent Office (AGO-70).
@@ -88,3 +90,26 @@ export type WorkerEnv = ServerEnv;
 /** Names of every variable that must stay server-side. Used by the client bundle check. */
 export const SERVER_ONLY_ENV_NAMES: readonly string[] = Object.keys(serverOnlyEnvSchema.shape);
 
+
+/**
+ * Validate a server-side env source. Also rejects any NEXT_PUBLIC_ variable whose stripped
+ * name is secret-like (it would be bundled into the browser), so that fails at startup too.
+ */
+export function parseServerEnv(source: EnvSource): ServerEnv {
+  const publicSecrets: EnvIssue[] = findSecretLikePublicVars(source).map((name) => ({
+    name,
+    kind: "invalid",
+    reason: "NEXT_PUBLIC_ variables are bundled into the browser; secret-like names are not allowed",
+  }));
+  let env: ServerEnv | undefined;
+  let schemaIssues: readonly EnvIssue[] = [];
+  try {
+    env = parseEnv(serverEnvSchema, source);
+  } catch (error) {
+    if (!(error instanceof EnvValidationError)) throw error;
+    schemaIssues = error.issues;
+  }
+  const issues = [...schemaIssues, ...publicSecrets];
+  if (issues.length > 0 || env === undefined) throw new EnvValidationError(issues);
+  return env;
+}

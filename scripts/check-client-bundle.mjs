@@ -16,14 +16,22 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const SECRET_NAME = /(SECRET|TOKEN|PASSWORD|SERVICE_ROLE|PRIVATE_KEY|_KEY$)/;
 const PROCESS_ENV_REF = /process\.env\.([A-Za-z_][A-Za-z0-9_]*)|process\.env\[\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]/g;
 const MIN_SECRET_VALUE_LENGTH = 8;
 const TEXT_EXTENSIONS = new Set([".js", ".mjs", ".cjs", ".css", ".html", ".json", ".map", ".txt"]);
 
-export function isSecretName(name) {
-  return !name.startsWith("NEXT_PUBLIC_") && SECRET_NAME.test(name);
-}
+const shared = await import(
+  pathToFileURL(resolve(dirname(fileURLToPath(import.meta.url)), "../packages/shared/dist/index.js")).href
+).catch(() => {
+  console.error("check-client-bundle: build @ago/shared first (packages/shared/dist is missing).");
+  process.exit(2);
+});
+
+/** Secret-like names, with the NEXT_PUBLIC_ prefix stripped first (see @ago/shared). */
+export const isSecretName = shared.isSecretLikeEnvName;
+
+/** Server-only vars whose values are legitimately public-ish and appear in bundles (APP_ENV=production, URLs). */
+const NON_SECRET_VALUE_NAMES = new Set(["APP_ENV", "SUPABASE_URL", "LANGFUSE_HOST", "SENTRY_DSN"]);
 
 function* walk(dir) {
   for (const entry of readdirSync(dir)) {
@@ -46,9 +54,9 @@ function extensionOf(file) {
 export function scanBundle(bundleDir, { serverNames = [], env = process.env } = {}) {
   const secretValues = new Map();
   for (const [name, value] of Object.entries(env)) {
-    // Only genuinely secret values: not every server-only var (APP_ENV, SUPABASE_URL are not secret
-    // and legitimately appear in bundles). DATABASE_URL embeds credentials, so it is listed explicitly.
-    const isSecretVar = isSecretName(name) || name === "DATABASE_URL";
+    // Every server-only var's value is matched unless explicitly non-secret; secret-like names are
+    // matched even under a NEXT_PUBLIC_ prefix. DATABASE_URL embeds credentials, so it stays matched.
+    const isSecretVar = isSecretName(name) || (serverNames.includes(name) && !NON_SECRET_VALUE_NAMES.has(name));
     if (isSecretVar && value && value.length >= MIN_SECRET_VALUE_LENGTH) secretValues.set(name, value);
   }
 
@@ -80,15 +88,8 @@ export function scanBundle(bundleDir, { serverNames = [], env = process.env } = 
   return findings;
 }
 
-async function loadServerNames() {
-  const sharedEntry = resolve(dirname(fileURLToPath(import.meta.url)), "../packages/shared/dist/index.js");
-  try {
-    const shared = await import(pathToFileURL(sharedEntry).href);
-    return shared.SERVER_ONLY_ENV_NAMES;
-  } catch {
-    console.error("check-client-bundle: build @ago/shared first (packages/shared/dist is missing).");
-    process.exit(2);
-  }
+function loadServerNames() {
+  return shared.SERVER_ONLY_ENV_NAMES;
 }
 
 async function main() {
@@ -101,7 +102,7 @@ async function main() {
     process.exit(2);
   }
 
-  const findings = scanBundle(bundleDir, { serverNames: await loadServerNames() });
+  const findings = scanBundle(bundleDir, { serverNames: loadServerNames() });
   if (findings.length === 0) {
     console.log("check-client-bundle: OK, no secrets found in the client bundle.");
     return;

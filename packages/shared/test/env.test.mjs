@@ -7,7 +7,9 @@ import {
   EnvValidationError,
   SERVER_ONLY_ENV_NAMES,
   clientEnvSchema,
+  isSecretLikeEnvName,
   parseEnv,
+  parseServerEnv,
   serverEnvSchema,
 } from "../dist/index.js";
 
@@ -94,4 +96,41 @@ test("client entry (@ago/shared/client-env) never references a server-only varia
       assert.ok(!new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`).test(text), `${file}.js mentions ${name}`);
     }
   }
+});
+
+test("isSecretLikeEnvName strips NEXT_PUBLIC_ before classifying", () => {
+  for (const name of [
+    "NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY",
+    "NEXT_PUBLIC_ANTHROPIC_API_KEY",
+    "NEXT_PUBLIC_TELEGRAM_BOT_TOKEN",
+    "NEXT_PUBLIC_LANGFUSE_SECRET_KEY",
+    "NEXT_PUBLIC_DB_PASSWORD",
+    "NEXT_PUBLIC_SIGNING_PRIVATE_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SOME_VENDOR_KEY",
+  ]) {
+    assert.equal(isSecretLikeEnvName(name), true, name);
+  }
+  for (const name of ["NEXT_PUBLIC_SUPABASE_ANON_KEY", "NEXT_PUBLIC_APP_URL", "APP_ENV", "SUPABASE_URL"]) {
+    assert.equal(isSecretLikeEnvName(name), false, name);
+  }
+});
+
+test("parseServerEnv rejects a secret-like NEXT_PUBLIC_ variable at startup, naming it but not its value", () => {
+  const message = messageOf(() =>
+    parseServerEnv({ NEXT_PUBLIC_ANTHROPIC_API_KEY: SENTINEL, NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY: SENTINEL }),
+  );
+  assert.match(message, /NEXT_PUBLIC_ANTHROPIC_API_KEY: invalid/);
+  assert.match(message, /NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY: invalid/);
+  assert.ok(!message.includes(SENTINEL), "message leaked a value");
+});
+
+test("parseServerEnv reports schema problems and secret-like public vars together", () => {
+  const message = messageOf(() => parseServerEnv({ APP_ENV: "staging", NEXT_PUBLIC_API_TOKEN: SENTINEL }));
+  assert.match(message, /APP_ENV: invalid/);
+  assert.match(message, /NEXT_PUBLIC_API_TOKEN: invalid/);
+});
+
+test("parseServerEnv accepts the allowed public variables", () => {
+  assert.doesNotThrow(() => parseServerEnv({ NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-placeholder" }));
 });

@@ -43,7 +43,9 @@ None. No migration; the schema slot was not needed.
 | Build check wiring | `&&` after `next build` in the web `build` script | pnpm 10 does not run `postbuild` hooks automatically |
 | Bundle check detection | Server variable names, secret-named `process.env` references, and secret values | Names catch accidental references; values catch inlined secrets |
 | Client import path | `@ago/shared/client-env` subpath, not the barrel | The barrel carries server variable names; a real client build tripped the bundle check |
-| Secret value matching | Only secret-named vars plus `DATABASE_URL` | `APP_ENV`/`SUPABASE_URL` values legitimately appear in bundles |
+| Secret classification | One shared `isSecretLikeEnvName` that strips `NEXT_PUBLIC_` first; SECRET, PRIVATE, TOKEN, PASSWORD, SERVICE_ROLE and API_KEY are never public; other `*_KEY` is secret unless prefixed (so `NEXT_PUBLIC_SUPABASE_ANON_KEY` stays allowed) | Fix round 1 (QA): the prefix could launder a secret past the check |
+| Secret value matching | Values of every server-only schema var, plus any secret-like name even under `NEXT_PUBLIC_`; explicit non-secret allowlist: `APP_ENV`, `SUPABASE_URL`, `LANGFUSE_HOST`, `SENTRY_DSN` | Those four legitimately appear in bundles (e.g. `production`) and would fail every real build |
+| Startup rejection | `parseServerEnv` also rejects any secret-like `NEXT_PUBLIC_*` var, naming it only | Fail fast at startup as well as at build |
 | Local Supabase URL | `http://127.0.0.1:55421` | Matches the API port in AGO-78's `supabase/config.toml` (verified after merging main) |
 | `.env.example` | Write it, blocked by a deny rule on `.env*`; coordinator asked, human lifting the deny | AC3 requires it; no workaround used |
 
@@ -60,7 +62,7 @@ None. No migration; the schema slot was not needed.
 
 ## Follow-up tasks
 - Port tests to Vitest after AGO-111.
-- Wire `loadWorkerEnv()` into the worker entrypoint (AGO-143).
+- Wire `loadWorkerEnv()` into the worker entrypoint: **known gap, owned by AGO-143** (the worker skeleton). Not fixed in AGO-70; `loadWorkerEnv()` exists and is tested but nothing calls it at process start yet.
 - Human: create hosted preview and production environments and set `APP_ENV` and keys.
 - QA (AGO-118 not landed, so no Playwright harness yet). Node-level acceptance tests are in `scripts/ago-70-acceptance.test.mjs`. When AGO-118 lands, add these Playwright specs in the harness:
   - `AC1: app starts with the local defaults and renders the home page with no env set`
