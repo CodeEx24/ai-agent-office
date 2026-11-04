@@ -50,6 +50,10 @@ node scripts/db-lock.mjs release AGO-<n>
 
 Only one schema-changing ticket is in flight at a time.
 
+## Database tests (pgTAP)
+
+SQL tests live in `supabase/tests/*.sql` and run with `pnpm exec supabase test db` (inside the db lock, like a reset). `core_schema.test.sql` is catalog-driven: every table in `public` must have RLS enabled, a uuid primary key and (except `workspaces`) a `workspace_id uuid not null`, so a new table that breaks the invariants fails the suite.
+
 ## Rollback
 
 Local database: run `pnpm db:reset` on the previous commit, which rebuilds it from that commit's migrations. This is the normal path.

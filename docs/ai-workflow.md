@@ -75,7 +75,7 @@ Every other decision is made by the agent, which picks the recommended option an
 - **Hook** `.claude/hooks/guard.mjs` (PreToolUse) blocks: force pushes, pushes to `main`, non-squash or `--admin` merges, `--no-verify`, remote Supabase commands, repo deletion or visibility changes, branch-protection edits, writes to `.env*`, and commits whose staged diff contains a secret.
 - **Permissions** in `.claude/settings.json` stop agents reading `.env`, `.env.local`, `.env.test` and other secret files. `.env.example` stays readable.
 - **GitHub**: public repo, squash-only, branches auto-deleted after merge, secret scanning with push protection, Dependabot alerts. `main` is protected: PR required, `gitleaks` + `pr-conventions` checks required, branch up to date, linear history, no force pushes.
-- **CI**: `secret-scan.yml` (gitleaks) and `pr-conventions.yml` (branch and title format). The build/test pipeline comes with AGO-92 and the Playwright harness with AGO-118. When they land, add the unit and **E2E** jobs to the required checks, so a feature can't merge unless its end-to-end tests pass in CI as well as locally.
+- **CI**: `secret-scan.yml` (gitleaks) and `pr-conventions.yml` (branch and title format). The build/test pipeline (AGO-92) and the Playwright harness (AGO-118, see `docs/testing.md`) are in place. Add the unit and **E2E** (`test-e2e`) jobs to the required checks, so a feature can't merge unless its end-to-end tests pass in CI as well as locally.
 - **Testing**: every ticket gets an independent tester after the implementer. The tester proves each AC in a real browser and adds a test per AC. The gate requires that evidence for the current commit and always runs `pnpm test:e2e`.
 
 ## Parallel worktrees

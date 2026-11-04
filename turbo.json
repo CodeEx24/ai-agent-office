@@ -20,6 +20,11 @@
     "clean": {
       "cache": false
     },
-    "lint": {}
+    "lint": {},
+    "test:e2e": {
+      "dependsOn": ["build"],
+      "cache": false,
+      "passThroughEnv": ["CI", "PORT", "E2E_BROWSER_CHANNEL", "GITHUB_ACTIONS"]
+    }
   }
 }
