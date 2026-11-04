@@ -46,12 +46,17 @@ It also escalates PRs that add a paid service or SDK requiring billing, or that 
 - Wait for checks: `gh pr checks <n> --required --watch --interval 30` (cap ~20 min). Still pending → `WAITING`. Any failure: read the log (`gh run view <id> --log-failed`) and return `CHANGES_REQUESTED` with the failing step and the error lines.
 
 ### 4. Local gates (on the PR head)
-`pnpm install --frozen-lockfile`, then `pnpm lint`, `pnpm typecheck`, `pnpm test`. Add `pnpm test:e2e` when the diff touches a critical path (auth, approvals, policy, agent runtime, data layer) or the AC asks for it. Use `PORT=$(node scripts/free-port.mjs)`. Wrap DB work in `node scripts/db-lock.mjs acquire <KEY>-gate` … `release <KEY>-gate`, and run `supabase db reset` so migrations apply from scratch. A script that doesn't exist yet is "n/a", not a failure. A red gate → `CHANGES_REQUESTED` with the output.
+`pnpm install --frozen-lockfile`, then `pnpm lint`, `pnpm typecheck`, `pnpm test`, and **always** `pnpm test:e2e` once the Playwright harness exists (AGO-118). Use `PORT=$(node scripts/free-port.mjs)`. Wrap DB work in `node scripts/db-lock.mjs acquire <KEY>-gate` … `release <KEY>-gate`, and run `supabase db reset` so migrations apply from scratch. A script that doesn't exist yet is "n/a", not a failure. A red gate → `CHANGES_REQUESTED` with the output.
 
 `pnpm audit --audit-level high`, when a lockfile exists: any high or critical advisory introduced by this PR is blocking.
 
 ### 5. Acceptance criteria
-List every AC from the Jira ticket and find the evidence for each: a test that asserts it, a command output, or a browser check. For anything user-facing, run `/verify-ticket <KEY>` against the PR head (dev server on a free port, `playwright` MCP). An AC with no evidence is blocking.
+List every AC from the Jira ticket and find the evidence for each: a test that asserts it, a command output, or a browser check.
+- **Tester evidence is required.** The PR must carry the tester's `QA: PASS` comment for the current head SHA. If it is missing, or the head moved after it, return `CHANGES_REQUESTED: run the tester again`.
+- **Test coverage per AC.** Once AGO-118 has landed, every user-facing AC has an E2E spec named `AC<n>: …` and every non-UI AC has an integration test. Security-relevant ACs also need a negative test. A missing test is blocking.
+- Spot-check with `/verify-ticket <KEY>` yourself for anything user-facing (dev server on a free port, `playwright` MCP). Don't just trust the tester.
+
+An AC with no evidence is blocking.
 
 ### 6. Review lenses (run in parallel as subagents)
 Always:

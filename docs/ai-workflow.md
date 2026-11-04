@@ -11,6 +11,9 @@ How AGO tickets go from Jira to `main` with AI agents doing the work and a human
      ├─► Orca worktree ago-<n>-<slug>  ──► implementer: /implement-ticket AGO-<n>
      │                                      branch <type>/ago-<n>/<slug>, gates, PR
      ├─► Jira: In Review
+     ├─► same worktree, fresh agent    ──► tester: /verify-ticket in a real browser
+     │        + Playwright E2E (or integration) test per AC, incl. negative/security cases
+     │        ├─ QA: PASS → gate          └─ QA: FAIL → back to implementer → test again
      ├─► same worktree, fresh agent    ──► gatekeeper: /pr-gate <PR>
      │        CI ✓ · local gates ✓ · AC evidence ✓ · review lenses ✓ (verified findings only)
      │        ├─ clean        → squash merge → Jira comment with PR link → Done
@@ -72,7 +75,8 @@ Every other decision is made by the agent, which picks the recommended option an
 - **Hook** `.claude/hooks/guard.mjs` (PreToolUse) blocks: force pushes, pushes to `main`, non-squash or `--admin` merges, `--no-verify`, remote Supabase commands, repo deletion or visibility changes, branch-protection edits, writes to `.env*`, and commits whose staged diff contains a secret.
 - **Permissions** in `.claude/settings.json` stop agents reading `.env`, `.env.local`, `.env.test` and other secret files. `.env.example` stays readable.
 - **GitHub**: public repo, squash-only, branches auto-deleted after merge, secret scanning with push protection, Dependabot alerts. `main` is protected: PR required, `gitleaks` + `pr-conventions` checks required, branch up to date, linear history, no force pushes.
-- **CI**: `secret-scan.yml` (gitleaks) and `pr-conventions.yml` (branch and title format). The build/test pipeline comes with AGO-92, so add its jobs to the required checks then.
+- **CI**: `secret-scan.yml` (gitleaks) and `pr-conventions.yml` (branch and title format). The build/test pipeline comes with AGO-92 and the Playwright harness with AGO-118. When they land, add the unit and **E2E** jobs to the required checks, so a feature can't merge unless its end-to-end tests pass in CI as well as locally.
+- **Testing**: every ticket gets an independent tester after the implementer. The tester proves each AC in a real browser and adds a test per AC. The gate requires that evidence for the current commit and always runs `pnpm test:e2e`.
 
 ## Parallel worktrees
 - Each new worktree runs `orca.yaml` → `scripts/worktree-setup.mjs`, which copies your untracked `.env*` files from the main checkout and runs `pnpm install`.

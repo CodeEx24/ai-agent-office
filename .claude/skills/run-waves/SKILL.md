@@ -19,7 +19,10 @@ You are the **coordinator**. You never write product code, never review code you
 | Role | Where | Skill it runs |
 |---|---|---|
 | Implementer | its own new Orca worktree, one per ticket | `/implement-ticket AGO-###` (user skill) |
-| Gatekeeper | a fresh agent in the same worktree, after the PR exists | `/pr-gate <PR#>` (project skill) |
+| Tester | a fresh agent in the same worktree, right after the PR exists | `references/tester-brief.md`: `/verify-ticket` in a real browser, then E2E/integration tests for every AC |
+| Gatekeeper | a fresh agent in the same worktree, after the tester passes | `/pr-gate <PR#>` (project skill) |
+
+Flow per ticket: **implement → test → gate → merge**. The tester never fixes product code, and the implementer never grades its own work.
 
 Read `docs/ai-workflow.md` once for the overall flow, the escalation rules and the DB/port conventions.
 
@@ -94,10 +97,18 @@ Process every message in the delivery, then `--ack` it. Follow the orchestration
 - **Everything else.** Answer it yourself with the recommended option: the one the worker marked recommended, or else the one that best fits the AC, CLAUDE.md and the reuse-first rule. Say why in one line. Never leave a worker blocked on a question you can answer.
 
 **Implementer `worker_done`.**
-- `--outcome succeeded` with a PR URL: transition Jira to **In Review** (`31`), then `worker-retain` the implementer (it may get fixes). Dispatch the gate into the **same worktree** with a fresh agent:
+- `--outcome succeeded` with a PR URL: transition Jira to **In Review** (`31`), then `worker-retain` the implementer (it may get fixes). Dispatch the **tester** into the same worktree with a fresh agent:
+  ```
+  orca orchestration worker-start --spec "<filled references/tester-brief.md>" --worktree id:<that worktree id> --agent claude --json
+  ```
+
+**Tester `worker_done`.** The first line is the result:
+- `QA: PASS`: release the tester, then dispatch the gate into the same worktree with a fresh agent:
   ```
   orca orchestration worker-start --spec "<filled references/review-brief.md, including the assigned branch>" --worktree id:<that worktree id> --agent claude --json
   ```
+- `QA: FAIL`: send the failures to the retained implementer as a fix task, the same way as gate findings. Each failure counts as a fix round. After the fix, run the tester again, not the gate.
+- `QA: BLOCKED`: a missing env value or secret is human-only (`PushNotification` + ask). A broken harness goes back to the implementer if this ticket broke it; otherwise escalate.
 - `failed`, or no PR: read its summary. A missing env var or secret is human-only (escalate). Otherwise retry once with a fresh implementer in the same worktree, adding the failure summary to the brief. A second failure escalates to the user. Leave the ticket In Progress with a Jira comment that names the blocker.
 
 **Gate `worker_done`.** The first line of the summary is the verdict:
@@ -107,7 +118,7 @@ Process every message in the delivery, then `--ack` it. Follow the orchestration
   orca orchestration task-create --spec "Fix round <k> for AGO-<n>, PR #<pr>: <findings verbatim>. Push to the same branch, re-run the gates, reply with worker_done." --json
   orca orchestration worker-start --task <task_id> --terminal <implementer handle> --json
   ```
-  Release the gate worker. When the fix is done, dispatch a fresh gate. After **3** fix rounds without a clean gate, escalate to the user.
+  Release the gate worker. When the fix is done, dispatch a fresh tester (behaviour may have changed), then the gate. After **3** fix rounds without a clean gate, escalate to the user.
 - `VERDICT: WAITING`: CI is still running or GitHub is slow. Re-dispatch the gate after 10 minutes.
 - `VERDICT: ESCALATE`: `PushNotification` (`PR #<n> AGO-<n> needs your merge: <reason>`), relay the reason to the user verbatim, and pause that ticket.
 
