@@ -441,3 +441,68 @@ test("AC2 (false positive): a production client bundle with the anon key and pub
     assert.equal(runBundleCheck(dir, env).status, 0);
   });
 });
+
+// ---- Round 3 re-test (deny-by-default): innocent-looking undeclared public variables ----
+
+const b64url = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+const jwtWithRole = (role) => `${b64url({ alg: "HS256", typ: "JWT" })}.${b64url({ role, iss: "supabase-demo" })}.qa-signature-0123456789`;
+
+test("AC1 (deny by default): an undeclared NEXT_PUBLIC_ variable with an innocent name is rejected at startup, naming it but not its value", () => {
+  const value = "qa-feature-value-9d41c7";
+  const result = runWorkerEnv({ NEXT_PUBLIC_FEATURE_X: value });
+  assert.notEqual(result.status, 0, "an undeclared public variable would be bundled into the browser unreviewed");
+  assert.ok(result.stderr.includes("NEXT_PUBLIC_FEATURE_X"), result.stderr);
+  assert.ok(!(result.stdout + result.stderr).includes(value), "the value must never be printed");
+});
+
+test("AC1 (deny by default): the same rejection applies in production alongside the other missing variables", () => {
+  const result = runWorkerEnv({ APP_ENV: "production", NEXT_PUBLIC_FEATURE_X: "1" });
+  assert.notEqual(result.status, 0);
+  assert.ok(result.stderr.includes("NEXT_PUBLIC_FEATURE_X"));
+  assert.ok(result.stderr.includes("SUPABASE_SERVICE_ROLE_KEY"), "the missing production variables are still reported together");
+});
+
+test("AC2 (deny by default): a reference to an undeclared innocent NEXT_PUBLIC_ variable fails the bundle check CLI, in any case", () => {
+  for (const reference of ["process.env.NEXT_PUBLIC_FEATURE_X", "process.env.next_public_feature_x", 'process.env["Next_Public_Feature_X"]']) {
+    withBundle({ "chunks/a.js": `x(${reference})` }, (dir) => {
+      const result = runBundleCheck(dir);
+      assert.equal(result.status, 1, `${reference} must fail the build check`);
+      assert.match(result.stderr.toUpperCase(), /NEXT_PUBLIC_FEATURE_X/);
+    });
+  }
+});
+
+test("AC2 (deny by default): an inlined value of an undeclared NEXT_PUBLIC_ variable fails the CLI, and the report never contains it", () => {
+  const value = "enabled-for-everyone-7c2e";
+  withBundle({ "chunks/a.js": `var f="${value}";` }, (dir) => {
+    const result = runBundleCheck(dir, { NEXT_PUBLIC_FEATURE_X: value });
+    assert.equal(result.status, 1);
+    assert.ok(result.stderr.includes("NEXT_PUBLIC_FEATURE_X"));
+    assert.ok(!(result.stdout + result.stderr).includes(value));
+  });
+});
+
+test("AC2 (bypass): mixed-case NEXT_PUBLIC_ service-role names are flagged by reference and by value through the CLI", () => {
+  const key = jwtWithRole("service_role");
+  withBundle({ "chunks/a.js": `x(process.env.NEXT_PUBLIC_Supabase_Service_Role_Key);x("${key}")` }, (dir) => {
+    const result = runBundleCheck(dir, { NEXT_PUBLIC_Supabase_Service_Role_Key: key });
+    assert.equal(result.status, 1);
+    assert.ok(!(result.stdout + result.stderr).includes(key));
+  });
+});
+
+test("AC2 (false positive): an anon-role JWT in the bundle passes while a service_role JWT is set on the server; swapping the roles fails", () => {
+  const anon = jwtWithRole("anon");
+  const service = jwtWithRole("service_role");
+  const env = { NEXT_PUBLIC_SUPABASE_ANON_KEY: anon, SUPABASE_SERVICE_ROLE_KEY: service };
+  withBundle({ "chunks/a.js": `x("${anon}")` }, (dir) => assert.equal(runBundleCheck(dir, env).status, 0));
+  withBundle({ "chunks/a.js": `x("${service}")` }, (dir) => assert.equal(runBundleCheck(dir, env).status, 1));
+});
+
+test("AC2 (bypass): an empty-username credential URL (redis://:pw@host) fails the CLI whatever the variable is called", () => {
+  withBundle({ "chunks/a.js": 'x("redis://:s3cretpw@cache.example.test:6379")' }, (dir) => {
+    const result = runBundleCheck(dir);
+    assert.equal(result.status, 1);
+    assert.ok(!(result.stdout + result.stderr).includes("s3cretpw"));
+  });
+});
