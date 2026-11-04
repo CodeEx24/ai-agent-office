@@ -2,25 +2,19 @@
   "$schema": "https://turbo.build/schema.json",
   "tasks": {
     "build": {
-      "dependsOn": [
-        "^build"
-      ],
-      "outputs": [
-        "dist/**",
-        ".next/**",
-        "!.next/cache/**"
-      ]
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
     "typecheck": {},
     "dev": {
       "cache": false,
       "persistent": true,
-      "passThroughEnv": [
-        "PORT"
-      ]
+      "passThroughEnv": ["PORT"]
     },
     "clean": {
       "cache": false
-    }
+    },
+    "lint": {},
+    "test": {}
   }
 }

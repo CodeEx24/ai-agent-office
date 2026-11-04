@@ -46,9 +46,21 @@ const AGENTS = [
   { name: "Ledger", role: "Bookkeeper", state: "Waiting for approval" },
 ] as const;
 
-function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
+function Section({
+  id,
+  title,
+  children,
+}: {
+  id: string;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
-    <section aria-labelledby={`${id}-title`} data-testid={`gallery-${id}`} className="flex flex-col gap-4">
+    <section
+      aria-labelledby={`${id}-title`}
+      data-testid={`gallery-${id}`}
+      className="flex flex-col gap-4"
+    >
       <h2 id={`${id}-title`} className="text-xl font-semibold">
         {title}
       </h2>
@@ -107,7 +119,9 @@ export function UiGallery() {
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Approve this action?</DialogTitle>
-                <DialogDescription>A human decides. Agents cannot approve their own requests.</DialogDescription>
+                <DialogDescription>
+                  A human decides. Agents cannot approve their own requests.
+                </DialogDescription>
               </DialogHeader>
               <DialogFooter>
                 <DialogClose asChild>
@@ -154,7 +168,12 @@ export function UiGallery() {
           </CommandList>
         </Command>
         <div>
-          <Button variant="outline" onClick={() => setIsPaletteOpen(true)}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setIsPaletteOpen(true);
+            }}
+          >
             Open command dialog
           </Button>
           <CommandDialog open={isPaletteOpen} onOpenChange={setIsPaletteOpen}>
