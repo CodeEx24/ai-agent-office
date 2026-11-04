@@ -364,10 +364,7 @@ test("AC2 (allowlist): only APP_ENV, SUPABASE_URL, LANGFUSE_HOST and SENTRY_DSN 
   }
 });
 
-// Known open defect found by QA (head b3268f8): DATABASE_URL carries credentials but has no
-// secret keyword in its name, so a NEXT_PUBLIC_ twin is neither rejected at startup nor caught
-// in the bundle when the server-side DATABASE_URL is not also set. These two tests fail until
-// the prefix-stripped name is also compared with SERVER_ONLY_ENV_NAMES.
+// Round 2 (head 8fa43c6): a server-only variable under a NEXT_PUBLIC_ name is rejected by classification.
 test("AC2 (bypass): startup rejects NEXT_PUBLIC_DATABASE_URL (a server-only variable under a public name)", () => {
   const result = runWorkerEnv({ NEXT_PUBLIC_DATABASE_URL: `postgres://user:${SECRET}@db.example.test:5432/app` });
   assert.notEqual(result.status, 0, "NEXT_PUBLIC_DATABASE_URL would put database credentials in the browser");
@@ -380,5 +377,67 @@ test("AC2 (bypass): a database URL value exposed under NEXT_PUBLIC_DATABASE_URL 
   withBundle({ "a.js": `x("${url}")` }, (dir) => {
     const findings = scanBundle(dir, { serverNames: SERVER_ONLY_ENV_NAMES, env: { NEXT_PUBLIC_DATABASE_URL: url } });
     assert.ok(findings.length > 0, "database credentials must not reach the client bundle under a public name");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Round 3 (head 8fa43c6): further bypasses of the same class, found by building a client page that
+// reads each NEXT_PUBLIC_ name and running the real `next build` + check.
+// ---------------------------------------------------------------------------------------------
+
+const PG_URL = `postgresql://postgres:${SECRET}@db.example.test:5432/postgres`;
+
+test("AC2 (bypass): a credential URL under a NEXT_PUBLIC_ twin name (SUPABASE_DB_URL, POSTGRES_URL) is flagged in the bundle", () => {
+  for (const name of ["NEXT_PUBLIC_SUPABASE_DB_URL", "NEXT_PUBLIC_POSTGRES_URL"]) {
+    withBundle({ "a.js": `x("${PG_URL}")` }, (dir) => {
+      const findings = scanBundle(dir, { serverNames: SERVER_ONLY_ENV_NAMES, env: { [name]: PG_URL } });
+      assert.ok(findings.length > 0, `${name}: database credentials must not reach the client bundle`);
+      assert.ok(!JSON.stringify(findings).includes(SECRET), "report must not contain the value");
+    });
+  }
+});
+
+test("AC2 (bypass): a credential URL with an empty username (redis://:password@host) is flagged in the bundle", () => {
+  const url = `redis://:${SECRET}@cache.example.test:6379`;
+  withBundle({ "a.js": `x("${url}")` }, (dir) => {
+    const findings = scanBundle(dir, { serverNames: SERVER_ONLY_ENV_NAMES, env: { NEXT_PUBLIC_REDIS_URL: url } });
+    assert.ok(findings.length > 0, "a password-only connection URL must not reach the client bundle");
+    assert.ok(!JSON.stringify(findings).includes(SECRET), "report must not contain the value");
+  });
+});
+
+test("AC2 (bypass): a typo-like twin of a server-only name (NEXT_PUBLIC_ANTHROPIC_APIKEY) is rejected at startup", () => {
+  const result = runWorkerEnv({ NEXT_PUBLIC_ANTHROPIC_APIKEY: SECRET });
+  assert.notEqual(result.status, 0, "an API key under a NEXT_PUBLIC_ name would ship to the browser");
+  assert.ok(result.stderr.includes("NEXT_PUBLIC_ANTHROPIC_APIKEY"));
+  assert.ok(!(result.stdout + result.stderr).includes(SECRET));
+});
+
+test("AC2 (bypass): a typo-like twin of a server-only name (NEXT_PUBLIC_ANTHROPIC_APIKEY) is flagged in the bundle", () => {
+  withBundle({ "a.js": `x("${SECRET}")` }, (dir) => {
+    const findings = scanBundle(dir, { serverNames: SERVER_ONLY_ENV_NAMES, env: { NEXT_PUBLIC_ANTHROPIC_APIKEY: SECRET } });
+    assert.ok(findings.length > 0, "an API key value must not reach the client bundle under an unusual public name");
+  });
+});
+
+test("AC2 (false positive): a production client bundle with the anon key and public URLs passes while server secrets are set", () => {
+  const env = {
+    APP_ENV: "production",
+    NEXT_PUBLIC_APP_URL: "https://office.example.test",
+    NEXT_PUBLIC_SUPABASE_URL: "https://project.example.test",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: "eyJanon-public-key-0123456789",
+    SUPABASE_URL: "https://project.example.test",
+    SUPABASE_SERVICE_ROLE_KEY: "eyJservice-role-secret-0123456789",
+    DATABASE_URL: PG_URL,
+    ANTHROPIC_API_KEY: "sk-ant-api03-qa0123456789abcdefghij",
+  };
+  const bundle = [
+    env.NEXT_PUBLIC_APP_URL,
+    env.NEXT_PUBLIC_SUPABASE_URL,
+    env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    env.APP_ENV,
+  ].map((v) => `x("${v}");`).join("");
+  withBundle({ "a.js": bundle }, (dir) => {
+    assert.equal(runBundleCheck(dir, env).status, 0);
   });
 });
