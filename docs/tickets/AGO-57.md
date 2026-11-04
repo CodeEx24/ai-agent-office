@@ -35,3 +35,11 @@ Blocks AGO-61, AGO-78, AGO-111, AGO-143. No blockers.
 ## Follow-up tasks
 - AGO-111: add lint/format/test and root scripts.
 - Revisit the TypeScript major once the Next.js app lands (AGO-61).
+
+### QA follow-up tests (tester, no harness yet)
+AGO-57 has no UI, so there are no Playwright specs to write. AC1 to AC3 were proven by hand from a clean clone (`pnpm install --frozen-lockfile`, `pnpm build`, `pnpm typecheck`, `pnpm dev`, `pnpm clean`). To lock them in once AGO-111 (Vitest) and AGO-92 (CI) land, add:
+- `AC1: clean clone installs and builds` - CI job: fresh checkout, `pnpm install --frozen-lockfile && pnpm build` exits 0 (AGO-92).
+- `AC2: workspace packages import each other through the @ago aliases` - Vitest in `apps/worker`: `WORKER_NAME` equals `"@ago/worker (Agent Office)"`, which exercises `@ago/shared`. Compile-level negative: typecheck fails when an `@ago/shared` export is renamed.
+- `AC3: README layout matches the repo` - Vitest: every path in the README Layout table exists, and every command listed under Commands is a root `package.json` script.
+- `AC3: pnpm clean removes build output` - after `pnpm clean`, no package has a `dist/`.
+- Note for the implementer: `pnpm dev` is a no-op (no package defines a `dev` task); the README says it runs every package's dev task.
