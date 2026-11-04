@@ -38,7 +38,25 @@
       "Bash(orca orchestration*)",
       "Bash(orca worktree list*)",
       "Bash(docker ps*)",
-      "mcp__playwright"
+      "mcp__playwright",
+      "Bash(npm:*)",
+      "Bash(yarn:*)",
+      "Bash(node:*)",
+      "Bash(git:*)",
+      "Bash(docker:*)",
+      "Bash(python:*)",
+      "Bash(pip:*)",
+      "Read(**/*.json)",
+      "Read(**/*.js)",
+      "Read(**/*.ts)",
+      "Read(**/*.py)",
+      "Edit(**/*.js)",
+      "Edit(**/*.ts)",
+      "Edit(**/*.py)",
+      "Edit(**/*.json)",
+      "Write(**/*.js)",
+      "Write(**/*.ts)",
+      "Write(**/*.py)"
     ],
     "deny": [
       "Read(./.env)",
@@ -51,7 +69,10 @@
       "Read(./**/.env.local)",
       "Read(./**/.env.*.local)",
       "Read(./secrets/**)",
-      "Read(./config/credentials.json)"
+      "Read(./config/credentials.json)",
+      "Read(./.env*)",
+      "Bash(rm -rf:*)",
+      "Bash(sudo:*)"
     ]
   },
   "hooks": {
@@ -75,9 +96,7 @@
   "env": {
     "USE_BUILTIN_RIPGREP": "1",
     "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1",
-    "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "0",
-    "CLAUDE_CODE_SUBAGENT_MODEL": "haiku",
-    "CLAUDE_CODE_SUBAGENT_MODEL_FORCE": "1"
+    "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "0"
   },
   "model": "sonnet",
   "advisorModel": "opus"
