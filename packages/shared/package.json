@@ -14,6 +14,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
+    "test": "tsc -p tsconfig.build.json && node --test \"test/*.test.mjs\"",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
   }
 }

@@ -1,0 +1,85 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import {
+  CLIENT_ENV_NAMES,
+  EnvValidationError,
+  SERVER_ONLY_ENV_NAMES,
+  clientEnvSchema,
+  parseEnv,
+  serverEnvSchema,
+} from "../dist/index.js";
+
+const SENTINEL = "sentinel-secret-value-DO-NOT-PRINT";
+
+const deployed = (appEnv, overrides = {}) => ({
+  APP_ENV: appEnv,
+  NEXT_PUBLIC_APP_URL: "https://app.example.test",
+  NEXT_PUBLIC_SUPABASE_URL: "https://project.example.test",
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-placeholder",
+  SUPABASE_URL: "https://project.example.test",
+  SUPABASE_SERVICE_ROLE_KEY: SENTINEL,
+  DATABASE_URL: "postgres://placeholder",
+  ...overrides,
+});
+
+function messageOf(fn) {
+  try {
+    fn();
+  } catch (error) {
+    assert.ok(error instanceof EnvValidationError, "expected EnvValidationError");
+    return error.message;
+  }
+  assert.fail("expected parseEnv to throw");
+}
+
+test("local environment starts with no variables set (safe dev defaults)", () => {
+  const env = parseEnv(serverEnvSchema, {});
+  assert.equal(env.APP_ENV, "local");
+  assert.equal(env.NEXT_PUBLIC_SUPABASE_URL, "http://127.0.0.1:55421");
+});
+
+test("empty string counts as unset", () => {
+  const env = parseEnv(serverEnvSchema, { APP_ENV: "", ANTHROPIC_API_KEY: "" });
+  assert.equal(env.APP_ENV, "local");
+  assert.equal(env.ANTHROPIC_API_KEY, undefined);
+});
+
+test("AC1: missing required variable fails with a clear message naming it", () => {
+  const source = deployed("production");
+  delete source.SUPABASE_SERVICE_ROLE_KEY;
+  delete source.DATABASE_URL;
+  const message = messageOf(() => parseEnv(serverEnvSchema, source));
+  assert.match(message, /SUPABASE_SERVICE_ROLE_KEY: missing/);
+  assert.match(message, /DATABASE_URL: missing/);
+  assert.match(message, /\.env\.example/);
+});
+
+test("preview and production both enforce required variables and https", () => {
+  for (const appEnv of ["preview", "production"]) {
+    assert.doesNotThrow(() => parseEnv(serverEnvSchema, deployed(appEnv)));
+    const insecure = deployed(appEnv, { NEXT_PUBLIC_APP_URL: "http://app.example.test" });
+    assert.match(messageOf(() => parseEnv(serverEnvSchema, insecure)), /NEXT_PUBLIC_APP_URL: invalid \(must use https/);
+  }
+});
+
+test("invalid APP_ENV and malformed URL are reported as invalid", () => {
+  const message = messageOf(() => parseEnv(serverEnvSchema, { APP_ENV: "staging", SUPABASE_URL: "not a url" }));
+  assert.match(message, /APP_ENV: invalid/);
+  assert.match(message, /SUPABASE_URL: invalid/);
+});
+
+test("error messages never contain values", () => {
+  const source = deployed("production", { SUPABASE_URL: SENTINEL, NEXT_PUBLIC_APP_URL: `http://${SENTINEL}` });
+  delete source.DATABASE_URL;
+  const message = messageOf(() => parseEnv(serverEnvSchema, source));
+  assert.ok(!message.includes(SENTINEL), "message leaked a value");
+  assert.match(message, /SUPABASE_URL/);
+});
+
+test("client schema only knows NEXT_PUBLIC_ names; server-only names never overlap", () => {
+  assert.ok(CLIENT_ENV_NAMES.every((name) => name.startsWith("NEXT_PUBLIC_")));
+  assert.ok(SERVER_ONLY_ENV_NAMES.every((name) => !name.startsWith("NEXT_PUBLIC_")));
+  const parsed = parseEnv(clientEnvSchema, { SUPABASE_SERVICE_ROLE_KEY: SENTINEL });
+  assert.ok(!JSON.stringify(parsed).includes(SENTINEL), "client env must strip non-public variables");
+});
