@@ -22,6 +22,7 @@
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset",
     "db:migration:new": "supabase migration new",
+    "db:seed": "node scripts/db-seed.mjs",
     "db:types": "node scripts/db-types.mjs",
     "prepare": "simple-git-hooks"
   },

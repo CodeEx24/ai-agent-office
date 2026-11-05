@@ -1,5 +1,6 @@
 export * from "./env/index.js";
 export * from "./workspace/roles.js";
+export * from "./seed/seed-ids.js";
 
 /** Project name shared by every workspace package. Placeholder until AGO-61+ add real schemas. */
 export const PROJECT_NAME = "Agent Office";
