@@ -39,3 +39,6 @@ Thumbs.db
 
 # E2E auth state written by Playwright setup (AGO-67); never commit
 apps/web/e2e/.auth/
+
+# Synced from packages/assets/models by apps/web/scripts/sync-models.mjs (AGO-49)
+apps/web/public/models/
