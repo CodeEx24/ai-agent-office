@@ -8,14 +8,14 @@ This project has its own block so it can run beside other Supabase stacks (which
 
 | Service | Port | URL |
 |---|---|---|
-| API (Kong) and local MCP | 55421 | `http://127.0.0.1:55421` (`/mcp`) |
-| Postgres | 55422 | `postgresql://postgres:postgres@127.0.0.1:55422/postgres` |
-| Studio | 55423 | `http://127.0.0.1:55423` |
-| Inbucket (test email) | 55424 | `http://127.0.0.1:55424` |
-| Analytics | 55427 | |
-| Edge runtime inspector | 55428 | |
-| Pooler (disabled by default) | 55429 | |
-| Shadow DB (`db diff`) | 55420 | |
+| API (Kong) and local MCP | 44321 | `http://127.0.0.1:44321` (`/mcp`) |
+| Postgres | 44322 | `postgresql://postgres:postgres@127.0.0.1:44322/postgres` |
+| Studio | 44323 | `http://127.0.0.1:44323` |
+| Inbucket (test email) | 44324 | `http://127.0.0.1:44324` |
+| Analytics | 44327 | |
+| Edge runtime inspector | 44328 | |
+| Pooler (disabled by default) | 44329 | |
+| Shadow DB (`db diff`) | 44320 | |
 
 Ports live in `supabase/config.toml`. Local keys and URLs: `pnpm exec supabase status` (demo keys only). They go in untracked `.env.local` files, never in git.
 

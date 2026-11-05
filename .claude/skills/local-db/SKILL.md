@@ -42,9 +42,10 @@ Once the monorepo exists (AGO-57), the Supabase CLI is a root dev dependency, so
 Local URLs and keys come from `supabase status`. They go in the untracked `.env.local` / `apps/web/.env.local`, which the human creates once in the main checkout and `scripts/worktree-setup.mjs` copies into every new worktree. Agents never write `.env*` files (hook-enforced). If a value is missing, say which one and use the `setup-env` skill.
 
 ## Local MCP
-`.mcp.json` registers `supabase-local` at `http://127.0.0.1:55421/mcp`. It only connects while the stack is running. Use it to inspect tables, policies and logs, and run `get_advisors` after a migration. It is local only and never points at a hosted project.
+`.mcp.json` registers `supabase-local` at `http://127.0.0.1:44321/mcp`. It only connects while the stack is running. Use it to inspect tables, policies and logs, and run `get_advisors` after a migration. It is local only and never points at a hosted project.
 
 ## Troubleshooting
-- Port already in use (55420–55429, this project's block; see docs/database.md): another stack with a different `project_id` is running. Check with `docker ps` and stop it.
+- Port already in use (44320–44329, this project's block; see docs/database.md): another stack with a different `project_id` is running. Check with `docker ps` and stop it.
+- `bind: An attempt was made to access a socket in a way forbidden by its access permissions`: Windows (WinNAT/Hyper-V) reserved the port range. Check with `netsh interface ipv4 show excludedportrange protocol=tcp`. Our block 44320–44329 sits below the dynamic range (49152+) so this should not recur; if it does, an admin can run `net stop winnat; net start winnat`.
 - `supabase start` hangs: Docker Desktop isn't running, or it is out of memory (the stack needs ~4 GB).
 - Lock stuck: `node scripts/db-lock.mjs status`. Only the owner can release it, and it is auto-broken after 60 min.

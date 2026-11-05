@@ -15,7 +15,7 @@
     "lint:fix": "turbo run lint -- --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "turbo run test",
+    "test": "turbo run test && turbo run build --filter=@ago/worker && vitest run --config vitest.scripts.config.mjs",
     "test:e2e": "turbo run test:e2e",
     "clean": "turbo run clean",
     "db:start": "supabase start",
