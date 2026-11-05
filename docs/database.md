@@ -54,6 +54,10 @@ Only one schema-changing ticket is in flight at a time.
 
 SQL tests live in `supabase/tests/*.sql` and run with `pnpm exec supabase test db` (inside the db lock, like a reset). `core_schema.test.sql` is catalog-driven: every table in `public` must have RLS enabled, a uuid primary key and (except `workspaces`) a `workspace_id uuid not null`, so a new table that breaks the invariants fails the suite.
 
+`run_events_append_only.test.sql` proves `run_events` rejects UPDATE, DELETE and TRUNCATE for `anon`, `authenticated`, `service_role` and the owner, and that `seq` must increase per run. The concurrent-insert check is `scripts/run-events-concurrency.test.mjs` (`RUN_DB_TESTS=1`, inside the db lock). `run_events` is append-only by privileges and triggers (AGO-102): never grant UPDATE/DELETE/TRUNCATE on it, and change its schema through migrations only (a superuser migration is the one way to alter it).
+
+**No cascade into `run_events`.** Its foreign keys to `workspaces` and `runs` are `ON DELETE RESTRICT` (forward migration `20261105100001_ago_102_run_events_restrict_delete.sql`), and the block trigger has no exception. A workspace or run that has events cannot be removed, not even by `service_role` or the owner; every other table still cascades from `workspaces`. Erasing events is a deliberate, human-only path deferred to AGO-147. The integration scripts (`scripts/run-events-*.test.mjs`) clean up with the test-only `scripts/run-events-teardown.mjs`, a single owner transaction that is never used by the app.
+
 ## Rollback
 
 Local database: run `pnpm db:reset` on the previous commit, which rebuilds it from that commit's migrations. This is the normal path.

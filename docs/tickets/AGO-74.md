@@ -26,14 +26,14 @@ Conventions applied to every table:
 ### Foreign keys and `on delete`
 | FK | On delete | Why |
 |---|---|---|
-| every `workspace_id` -> `workspaces.id` | cascade | deleting a workspace removes all its data (tested) |
+| every `workspace_id` -> `workspaces.id` | cascade (except `run_events`: restrict) | a workspace's data goes with it; **since AGO-102 `run_events.workspace_id` is `ON DELETE RESTRICT`**, so a workspace that has events cannot be removed (erasure is a human-only path, AGO-147) |
 | `members.user_id` -> `auth.users` | cascade | membership dies with the account |
 | `agent_skills` -> `agents`, `skills` | cascade | a link row is meaningless without either side |
 | `agent_capabilities.agent_id` -> `agents` | cascade | capabilities belong to the agent |
 | `agent_capabilities.granted_by` -> `members` | no action | keep who granted a capability (audit); see follow-ups |
 | `tasks.agent_id`, `tasks.created_by` | set null (column only) | task survives losing its assignee/creator; column-list form so `workspace_id` is never nulled |
 | `runs.task_id`, `runs.agent_id` | no action | run history is kept; an agent/task with runs cannot be deleted (tested). Retire with `agents.archived_at` |
-| `run_events.run_id` -> `runs` | no action | the log is never silently dropped (workspace cascade still works: checked at end of statement) |
+| `run_events.run_id` -> `runs` | no action (restrict since AGO-102) | the log is never silently dropped |
 | `approvals.run_id`, `agent_id`, `decided_by` | no action | approval history and the human decision are kept |
 | `claims.task_id`, `agent_id` | cascade | a claim is transient |
 | `claims.run_id` | set null (column only) | the claim outlives a run reference |
@@ -80,7 +80,7 @@ All run locally inside `node scripts/db-lock.mjs acquire AGO-74` ... `release AG
 
 ## Follow-up tasks
 - AGO-107: policies plus per-table grants; never grant UPDATE/DELETE/TRUNCATE on `run_events`; separate human-only vs runtime-written columns.
-- AGO-102: append-only trigger must not break the workspace-delete cascade (e.g. `pg_trigger_depth()` or a purge path) and needs an actor column decision.
+- AGO-102 (done): append-only wins over the workspace cascade; `run_events` FKs became RESTRICT in a forward migration and the erasure path is deferred to AGO-147. Still open: an actor column decision.
 - AGO-82: role CHECK/enum; soft-remove members (the `no action` actor FKs block hard user deletion).
 - Approvals ticket: status allow-list and coupling CHECKs, `expires_at > created_at`; render the payload for the human from another source (hash only is stored).
 - CHECKs for `agents.mode/status`, `tasks.status`, `runs.status` with their feature tickets.
