@@ -62,8 +62,10 @@ export default defineConfig({
     env: {
       // Minimal safe env so the production server boots (no secrets; placeholder public URLs).
       APP_ENV: "local",
+      // The dev-only 3D test page is off in production builds unless this is set (AGO-49).
+      ENABLE_DEV_3D: "1",
       NEXT_PUBLIC_APP_URL: baseURL,
-      NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:55421",
+      NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:44321",
       // Placeholder unless a live stack is used: stack-free specs never reach Supabase.
       NEXT_PUBLIC_SUPABASE_ANON_KEY:
         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "placeholder-anon-key-no-stack",

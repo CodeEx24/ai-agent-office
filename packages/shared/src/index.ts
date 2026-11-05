@@ -1,3 +1,5 @@
+export * from "./env/index.js";
+
 /** Project name shared by every workspace package. Placeholder until AGO-61+ add real schemas. */
 export const PROJECT_NAME = "Agent Office";
 

@@ -28,7 +28,7 @@ Read through `apps/web/src/lib/env.ts` (to be replaced by the validated env conf
 
 | Variable | Where | Value locally |
 |---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | `apps/web/.env.local` | `http://127.0.0.1:55421` |
+| `NEXT_PUBLIC_SUPABASE_URL` | `apps/web/.env.local` | `http://127.0.0.1:44321` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `apps/web/.env.local` | the `ANON_KEY` from `pnpm exec supabase status -o env` (a local demo key) |
 | `NEXT_PUBLIC_APP_URL` | `apps/web/.env.local` | the origin you run on, e.g. `http://127.0.0.1:3000`. Used for the email link and OAuth `redirectTo` sent to Supabase, so it must match your `PORT`. |
 
@@ -38,7 +38,7 @@ Read through `apps/web/src/lib/env.ts` (to be replaced by the validated env conf
 
 1. Start the stack: `pnpm db:start`.
 2. Open `/sign-in`, enter any address, press **Email me a sign-in code**.
-3. Open the local mail catcher at <http://127.0.0.1:55424> (Mailpit). The email has a 6-digit code and a magic link.
+3. Open the local mail catcher at <http://127.0.0.1:44324> (Mailpit). The email has a 6-digit code and a magic link.
 4. Enter the code (or open the link in the same browser). You land on `/app`.
 
 The email templates are `supabase/templates/magic_link.html` and `confirmation.html` (new users get the second). Restart the stack after editing them or `supabase/config.toml`: `pnpm db:stop && pnpm db:start`.
@@ -50,21 +50,21 @@ Agents cannot create these apps or hold their secrets. Until the owner does this
 The callback URL for both is Supabase's own endpoint:
 
 ```
-http://127.0.0.1:55421/auth/v1/callback
+http://127.0.0.1:44321/auth/v1/callback
 ```
 
 ### GitHub
 
 1. GitHub → Settings → Developer settings → OAuth Apps → **New OAuth App**.
 2. Application name: `Agent Office (local)`. Homepage URL: `http://127.0.0.1:3000`.
-3. Authorization callback URL: `http://127.0.0.1:55421/auth/v1/callback`.
+3. Authorization callback URL: `http://127.0.0.1:44321/auth/v1/callback`.
 4. Register, then **Generate a new client secret**. Copy the Client ID and the secret.
 
 ### Google
 
 1. Google Cloud Console → create or pick a project → APIs & Services → **OAuth consent screen** (External, add yourself as a test user).
 2. Credentials → **Create credentials → OAuth client ID** → type **Web application**.
-3. Authorized redirect URI: `http://127.0.0.1:55421/auth/v1/callback`.
+3. Authorized redirect URI: `http://127.0.0.1:44321/auth/v1/callback`.
 4. Create, then copy the Client ID and Client secret.
 
 ### Wire them in
@@ -93,7 +93,7 @@ For a hosted project the same two redirect URLs become `https://<project-ref>.su
 ```sh
 ANON=$(pnpm exec supabase status -o env | grep '^ANON_KEY=' | cut -d= -f2 | tr -d '"')
 node scripts/db-lock.mjs acquire AGO-<n>
-PORT=$(node scripts/free-port.mjs) E2E_SUPABASE=1 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:55421 NEXT_PUBLIC_SUPABASE_ANON_KEY="$ANON" pnpm test:e2e
+PORT=$(node scripts/free-port.mjs) E2E_SUPABASE=1 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:44321 NEXT_PUBLIC_SUPABASE_ANON_KEY="$ANON" pnpm test:e2e
 node scripts/db-lock.mjs release AGO-<n>
 ```
 

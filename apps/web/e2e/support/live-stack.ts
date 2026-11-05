@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 /** True when the shared local Supabase stack is available (set E2E_SUPABASE=1). */
 export const isLiveStack = process.env.E2E_SUPABASE === "1";
 
-/** Local mail catcher (Mailpit) from supabase/config.toml: http://127.0.0.1:55424. */
-const MAILPIT_URL = process.env.E2E_MAILPIT_URL ?? "http://127.0.0.1:55424";
+/** Local mail catcher (Mailpit) from supabase/config.toml: http://127.0.0.1:44324. */
+const MAILPIT_URL = process.env.E2E_MAILPIT_URL ?? "http://127.0.0.1:44324";
 
 /** Saved session for specs that start signed in. Git-ignored; written by auth.setup.ts. */
 export const AUTH_STATE_PATH = fileURLToPath(new URL("../.auth/user.json", import.meta.url));
