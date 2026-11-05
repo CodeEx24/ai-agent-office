@@ -8,7 +8,7 @@ resources: Vercel and hosted Supabase are set up by a human.
 
 | | local | preview | production |
 |---|---|---|---|
-| `APP_ENV` | `local` (default when unset, except on a deployed process, see below) | `preview` (required) | `production` (required) |
+| `APP_ENV` | `local` (default only when `NODE_ENV` is not `production`, see below) | `preview` (required) | `production` (required) |
 | Where it runs | developer machine, local Supabase in Docker (ports 55420-55429) | per-PR hosted preview | hosted |
 | Supabase | local stack | hosted preview project (human-created) | hosted production project (human-created) |
 | Required variables | none (safe dev defaults) | `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL` | same as preview |
@@ -29,9 +29,13 @@ resources: Vercel and hosted Supabase are set up by a human.
 - Web: `apps/web/src/instrumentation.ts` validates the server env when the server starts.
 - Worker: call `loadWorkerEnv()` at process start.
 - Errors name each missing or invalid variable and never print values.
-- `APP_ENV` is required on a deployed process: if it is unset while `NODE_ENV=production` and `VERCEL` or
-  `VERCEL_ENV` is set (Vercel sets both), startup fails with an error naming `APP_ENV`. Local `next build`,
-  `next start` and CI also run with `NODE_ENV=production` but set no Vercel variable (and set `APP_ENV=local`), so they are unaffected.
+- `APP_ENV` is required whenever `NODE_ENV=production`, on any host (Vercel, Docker, plain Node) and in the
+  worker. If it is unset, startup fails with an error naming `APP_ENV` and how to set it (never a value). It
+  defaults to `local` only when `NODE_ENV` is not `production`. Set `APP_ENV=preview` or `production` on a
+  deployment. A production build that runs locally (`next start`, CI, Playwright) must set `APP_ENV=local`:
+  `.env.example` does, `ci.yml` does, and `apps/web/playwright.config.ts` sets it in `webServer.env`. `turbo.json`
+  passes `APP_ENV` through to the `build`, `dev` and `test:e2e` tasks.
+  Both the web app and the worker use one helper, `isAppEnvMissingInProduction`, via `parseServerEnv`.
 
 ## Build check
 

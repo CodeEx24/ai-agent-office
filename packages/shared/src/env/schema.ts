@@ -130,18 +130,17 @@ function hasValue(value: string | undefined): boolean {
 }
 
 /**
- * A deploy marker is `NODE_ENV=production` together with `VERCEL` or `VERCEL_ENV` (Vercel sets
- * both on every build and runtime). `next build`/`next start` and CI run with NODE_ENV=production
- * but without a Vercel variable, so they are not treated as deployed and still default to local.
+ * `APP_ENV` is required whenever `NODE_ENV=production`, on any host (Vercel, Docker, plain Node,
+ * the worker). It defaults to local only when NODE_ENV is not production. A production build that
+ * legitimately runs locally (`next start`, CI, Playwright) must set `APP_ENV=local` explicitly.
+ * Shared by the web app and the worker, which both validate through `parseServerEnv`.
  */
-function looksDeployed(source: EnvSource): boolean {
-  return (
-    source.NODE_ENV === "production" && (hasValue(source.VERCEL) || hasValue(source.VERCEL_ENV))
-  );
+export function isAppEnvMissingInProduction(source: EnvSource): boolean {
+  return source.NODE_ENV === "production" && !hasValue(source.APP_ENV);
 }
 
 /**
- * Validate a server-side env source. Fails fast when `APP_ENV` is unset on a deployed process
+ * Validate a server-side env source. Fails fast when `NODE_ENV=production` and `APP_ENV` is unset
  * (it would otherwise default to local and skip the required-key and https checks).
  * Also rejects any NEXT_PUBLIC_ variable that is not declared
  * public in `clientEnvSchema` (it would be bundled into the browser), so that fails at startup too.
@@ -156,12 +155,12 @@ export function parseServerEnv(source: EnvSource): ServerEnv {
         ? "secret-like or server-only names must not be public; NEXT_PUBLIC_ variables are bundled into the browser"
         : `${name} is not declared. Add it to clientEnvSchema in packages/shared/src/env/client-schema.ts (public vars are deny-by-default)`,
     }));
-  if (!hasValue(source.APP_ENV) && looksDeployed(source)) {
+  if (isAppEnvMissingInProduction(source)) {
     publicSecrets.push({
       name: "APP_ENV",
       kind: "missing",
       reason:
-        "required on a deployed process (NODE_ENV=production with VERCEL set); set it to preview or production",
+        "required when NODE_ENV=production; set APP_ENV to preview or production on a deployment, or to local for a local production build",
     });
   }
   let env: ServerEnv | undefined;

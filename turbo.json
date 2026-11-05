@@ -3,7 +3,8 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "passThroughEnv": ["APP_ENV"]
     },
     "typecheck": {
       "dependsOn": ["^build"]
@@ -15,7 +16,7 @@
       "dependsOn": ["^build"],
       "cache": false,
       "persistent": true,
-      "passThroughEnv": ["PORT"]
+      "passThroughEnv": ["PORT", "APP_ENV"]
     },
     "clean": {
       "cache": false
@@ -26,7 +27,7 @@
     "test:e2e": {
       "dependsOn": ["build"],
       "cache": false,
-      "passThroughEnv": ["CI", "PORT", "E2E_BROWSER_CHANNEL", "GITHUB_ACTIONS"]
+      "passThroughEnv": ["APP_ENV", "CI", "PORT", "E2E_BROWSER_CHANNEL", "GITHUB_ACTIONS"]
     }
   }
 }
