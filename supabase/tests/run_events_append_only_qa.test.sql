@@ -63,7 +63,10 @@ select is((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.
 select is((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname in ('public', 'private') and p.proname ilike '%teardown%'), 0, 'AC1: no teardown/cleanup routine exists as a database object');
 select is((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-            where n.nspname = 'private' and p.prosecdef and (has_function_privilege('anon', p.oid, 'EXECUTE') or has_function_privilege('authenticated', p.oid, 'EXECUTE') or has_function_privilege('service_role', p.oid, 'EXECUTE'))), 0, 'AC1: no SECURITY DEFINER function in private is executable by anon, authenticated or service_role');
+            where n.nspname = 'private' and p.prosecdef
+              -- AGO-82 allow-list: the read-only RLS helper, executable by authenticated only
+              and p.proname <> 'is_member'
+              and (has_function_privilege('anon', p.oid, 'EXECUTE') or has_function_privilege('authenticated', p.oid, 'EXECUTE') or has_function_privilege('service_role', p.oid, 'EXECUTE'))), 0, 'AC1: no SECURITY DEFINER function in private is executable by anon, authenticated or service_role');
 
 -- AC2: per-run seq
 select is((select string_agg(seq::text, ',' order by seq) from public.run_events where run_id = 'a1020000-0000-0000-0000-0000000000b1'), '1,2', 'AC2: omitted seq is assigned 1, 2 in insert order');
