@@ -7,7 +7,7 @@
 --        no secret-bearing columns
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(45);
+select plan(46);
 
 -- ---------------------------------------------------------------------------------------------
 -- AC1: schema shape
@@ -76,13 +76,17 @@ select is(
   0, 'AC2: workspace_id is the leading column of an index on every table');
 
 select is(
-  (select count(*)::int from pg_class c
+  (select string_agg(c.relname::text, ',' order by c.relname) from pg_class c
     where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p') and c.relname <> 'workspaces'
       and not exists (
         select 1 from pg_constraint k
         where k.conrelid = c.oid and k.contype = 'f' and k.confrelid = 'public.workspaces'::regclass
           and k.confdeltype = 'c')),
-  0, 'AC2: deleting a workspace cascades from every table');
+  'run_events', 'AC2: deleting a workspace cascades from every table except run_events (the only table without a cascade FK)');
+select is(
+  (select k.confdeltype::text from pg_constraint k
+    where k.conrelid = 'public.run_events'::regclass and k.contype = 'f' and k.confrelid = 'public.workspaces'::regclass),
+  'r', 'AC2: run_events -> workspaces is ON DELETE RESTRICT (append-only; erasure is human-only, AGO-147)');
 
 select is(
   (select count(*)::int from pg_constraint k

@@ -3,7 +3,7 @@
 -- tables added by later tickets, so a new table without RLS or workspace_id fails here.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(35);
+select plan(36);
 
 -- 1. the 13 core tables exist
 select has_table('public', t, t || ' exists')
@@ -93,8 +93,6 @@ insert into public.tasks (id, workspace_id, title, agent_id, created_by) values
 insert into public.runs (id, workspace_id, task_id, agent_id) values
   ('aaaaaaaa-0000-0000-0000-000000000006', 'aaaaaaaa-0000-0000-0000-000000000001',
    'aaaaaaaa-0000-0000-0000-000000000005', 'aaaaaaaa-0000-0000-0000-000000000003');
-insert into public.run_events (workspace_id, run_id, type) values
-  ('aaaaaaaa-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000006', 'run.started');
 insert into public.approvals (workspace_id, run_id, agent_id, action, payload_hash, expires_at, decided_by) values
   ('aaaaaaaa-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000006',
    'aaaaaaaa-0000-0000-0000-000000000003', 'send_email', repeat('a', 64), now() + interval '1 hour',
@@ -161,20 +159,32 @@ select throws_ok(
   $$delete from public.agents where id = 'aaaaaaaa-0000-0000-0000-000000000003'$$,
   '23503', null, 'agent with runs cannot be deleted');
 
--- 15. deleting the workspace cascades to every table (no NO ACTION blocker, nothing left behind)
+-- 15. deleting a workspace cascades to every table except run_events (nothing left behind). A has no
+-- events here: run_events is append-only and its workspace FK is ON DELETE RESTRICT (AGO-102).
 delete from public.workspaces where id = 'aaaaaaaa-0000-0000-0000-000000000001';
 select is(
   (select count(*)::int from (
      select workspace_id from public.members union all select workspace_id from public.agents
      union all select workspace_id from public.skills union all select workspace_id from public.agent_skills
      union all select workspace_id from public.agent_capabilities union all select workspace_id from public.tasks
-     union all select workspace_id from public.runs union all select workspace_id from public.run_events
+     union all select workspace_id from public.runs
      union all select workspace_id from public.approvals union all select workspace_id from public.claims
      union all select workspace_id from public.budgets_usage union all select workspace_id from public.notes_index
    ) x where x.workspace_id = 'aaaaaaaa-0000-0000-0000-000000000001'),
-  0, 'deleting a workspace removes its rows from all 12 child tables');
-select is((select count(*)::int from public.agents where workspace_id = 'bbbbbbbb-0000-0000-0000-000000000001'),
-  1, 'other workspaces are untouched');
+  0, 'deleting a workspace without events removes its rows from all 11 other child tables');
+
+-- 16. a workspace that has run events cannot be deleted (erasure of events is human-only: AGO-147)
+insert into public.runs (id, workspace_id, agent_id) values
+  ('bbbbbbbb-0000-0000-0000-000000000006', 'bbbbbbbb-0000-0000-0000-000000000001', 'bbbbbbbb-0000-0000-0000-000000000003');
+insert into public.run_events (workspace_id, run_id, type) values
+  ('bbbbbbbb-0000-0000-0000-000000000001', 'bbbbbbbb-0000-0000-0000-000000000006', 'run.started');
+select throws_ok(
+  $$delete from public.workspaces where id = 'bbbbbbbb-0000-0000-0000-000000000001'$$,
+  '23503', null, 'deleting a workspace that has run_events is refused (ON DELETE RESTRICT)');
+select is(
+  (select count(*)::int from public.agents where workspace_id = 'bbbbbbbb-0000-0000-0000-000000000001')
+  + (select count(*)::int from public.run_events where workspace_id = 'bbbbbbbb-0000-0000-0000-000000000001'),
+  2, 'the refused delete left the workspace data and its events untouched');
 
 select * from finish();
 rollback;

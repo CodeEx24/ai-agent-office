@@ -11,6 +11,7 @@
 import { execFile, execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
+import { teardownRunEventsSql } from './run-events-teardown.mjs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const run = promisify(execFile);
@@ -69,8 +70,8 @@ describe.skipIf(!enabled)('AGO-102 run_events (QA)', () => {
 
   afterAll(async () => {
     if (!enabled) return;
-    // Deleting the whole workspace is the one delete the guard lets through (tenant erasure).
-    await psql(`delete from public.workspaces where id in ('${workspaceId}', '${otherWorkspaceId}')`);
+    // Workspace delete is refused while events exist (RESTRICT), so use the test-only teardown.
+    await psql(teardownRunEventsSql([workspaceId, otherWorkspaceId]));
   });
 
   describe('AC1: update/delete/truncate on run_events is rejected for any role', () => {

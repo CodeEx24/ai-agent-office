@@ -3,9 +3,9 @@
 -- scripts/run-events-concurrency.test.mjs (needs several connections).
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(31);
+select plan(42);
 
--- Fixtures (as postgres): one workspace, one agent, two runs, two workspaces for the cascade check.
+-- Fixtures (as postgres): one workspace, one agent, two runs, two workspaces (A has events, B has none) for the delete checks.
 insert into public.workspaces (id, name) values
   ('cccccccc-0000-0000-0000-000000000001', 'AGO-102 A'),
   ('dddddddd-0000-0000-0000-000000000001', 'AGO-102 B');
@@ -130,13 +130,44 @@ select is(
     {"seq":5,"type":"step","payload":{}}]'::jsonb,
   'after all attempts the events are exactly as inserted');
 
--- 30. the only delete path: removing the whole workspace still cascades (AGO-74 behaviour kept)
-insert into public.run_events (workspace_id, run_id, type) values
-  ('dddddddd-0000-0000-0000-000000000001', 'dddddddd-0000-0000-0000-000000000006', 'run.started');
-delete from public.workspaces where id = 'dddddddd-0000-0000-0000-000000000001';
+-- 30. no delete path at all: a workspace or run that has events cannot be deleted (ON DELETE RESTRICT),
+-- not even by service_role or the owner. Erasure of events is a deliberate human-only path (AGO-147).
+grant delete on public.workspaces, public.runs to service_role; -- rolled back with the test; proves RESTRICT, not privileges
+select throws_ok($$delete from public.workspaces where id = 'cccccccc-0000-0000-0000-000000000001'$$,
+  '23503', null, 'postgres (owner) cannot delete a workspace that has events');
+select throws_ok($$set local role service_role; delete from public.workspaces where id = 'cccccccc-0000-0000-0000-000000000001'$$,
+  '23503', null, 'service_role cannot delete a workspace that has events');
+select throws_ok($$set local role anon; delete from public.workspaces where id = 'cccccccc-0000-0000-0000-000000000001'$$,
+  '42501', null, 'anon cannot delete a workspace');
+select throws_ok($$set local role authenticated; delete from public.workspaces where id = 'cccccccc-0000-0000-0000-000000000001'$$,
+  '42501', null, 'authenticated cannot delete a workspace');
+select throws_ok($$delete from public.runs where id = 'cccccccc-0000-0000-0000-000000000006'$$,
+  '23503', null, 'postgres (owner) cannot delete a run that has events');
+select throws_ok($$set local role service_role; delete from public.runs where id = 'cccccccc-0000-0000-0000-000000000006'$$,
+  '23503', null, 'service_role cannot delete a run that has events');
 select is(
-  (select count(*)::int from public.run_events where workspace_id = 'dddddddd-0000-0000-0000-000000000001'),
-  0, 'deleting a workspace still removes its run_events (tenant erasure)');
+  (select count(*)::int from public.run_events where run_id = 'cccccccc-0000-0000-0000-000000000006'),
+  5, 'the refused deletes left the events untouched');
+select is(
+  (select count(*)::int from pg_constraint
+    where conrelid = 'public.run_events'::regclass and contype = 'f' and confdeltype = 'r'),
+  2, 'both run_events foreign keys (workspace, run) are ON DELETE RESTRICT');
+select is(
+  (select count(*)::int from pg_proc
+    where oid = 'private.run_events_block_change()'::regprocedure and prosrc like '%workspaces%'),
+  0, 'the block trigger has no "workspace gone" exception any more');
+
+-- deleting a run or workspace that has no events still works
+insert into public.runs (id, workspace_id, agent_id) values
+  ('cccccccc-0000-0000-0000-000000000008', 'cccccccc-0000-0000-0000-000000000001', 'cccccccc-0000-0000-0000-000000000003');
+select lives_ok($$delete from public.runs where id = 'cccccccc-0000-0000-0000-000000000008'$$,
+  'a run without events can still be deleted');
+select lives_ok($$set local role service_role; delete from public.workspaces where id = 'dddddddd-0000-0000-0000-000000000001'$$,
+  'a workspace without events can still be deleted (its other data cascades)');
+reset role;
+select is(
+  (select count(*)::int from public.runs where workspace_id = 'dddddddd-0000-0000-0000-000000000001'),
+  0, 'the events-free workspace took its runs with it');
 
 select * from finish();
 rollback;

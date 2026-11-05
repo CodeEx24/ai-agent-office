@@ -4,11 +4,12 @@
 //   RUN_DB_TESTS=1 pnpm exec vitest run --config vitest.scripts.config.mjs scripts/run-events-concurrency.test.mjs
 //   node scripts/db-lock.mjs release AGO-102
 // Each insert is its own `psql` process inside the DB container = its own connection, so the inserts
-// really race. All rows are removed at the end by deleting the test workspace (the one allowed delete).
+// really race. Rows are removed at the end by the test-only teardown (scripts/run-events-teardown.mjs); the app has no delete path.
 
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
+import { teardownRunEventsSql } from './run-events-teardown.mjs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const run = promisify(execFile);
@@ -42,7 +43,7 @@ describe.skipIf(!enabled)('run_events per-run sequence under concurrency', () =>
   });
 
   afterAll(async () => {
-    if (enabled) await psql(`delete from public.workspaces where id = '${workspaceId}'`);
+    if (enabled) await psql(teardownRunEventsSql([workspaceId]));
   });
 
   it('assigns distinct, gap-free seq 1..N to parallel inserts on one run, and numbers runs independently', async () => {
