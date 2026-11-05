@@ -1,9 +1,14 @@
-import { z } from "zod";
+import { getAppUrl } from "../../lib/env";
 
 export const DEFAULT_SIGNED_IN_PATH = "/app";
 
-// Placeholder origin used only to prove a value stays on our own origin once resolved.
-const PROBE_ORIGIN = "http://ago.invalid";
+/** Only these route prefixes (whole path segments) may be a post-sign-in destination. */
+const ALLOWED_PREFIXES = ["/app", "/approvals"] as const;
+
+const MAX_LENGTH = 2048;
+// Encoded slash or backslash: never legitimate in a redirect target, and the usual way to smuggle
+// `//host` past a check that only looks at the raw string.
+const ENCODED_SEPARATOR = /%(?:2f|5c)/i;
 
 function hasControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
@@ -13,35 +18,48 @@ function hasControlCharacter(value: string): boolean {
   return false;
 }
 
-/**
- * A same-origin, path-only redirect target. Rejects anything a browser could read as another
- * origin: absolute URLs, protocol-relative `//host`, backslash tricks (`/\host`), control
- * characters, and encoded variants of those.
- */
-const safeNextPathSchema = z
-  .string()
-  .max(2048)
-  .refine((value) => value.startsWith("/") && !value.startsWith("//"), "must be a local path")
-  .refine((value) => !value.includes("\\"), "must not contain backslashes")
-  .refine((value) => !hasControlCharacter(value), "must not contain control characters")
-  .refine((value) => {
-    try {
-      // Browsers treat `%2F`/`%5C` after the first slash as path data, but decode once to be
-      // strict: a decoded `//` or `\` would be a host in disguise if something decodes twice.
-      const decoded = decodeURIComponent(value);
-      if (decoded.startsWith("//") || decoded.includes("\\")) return false;
-      return new URL(value, PROBE_ORIGIN).origin === PROBE_ORIGIN;
-    } catch {
-      return false;
-    }
-  }, "must resolve to the same origin");
+function isAllowedPath(pathname: string): boolean {
+  return ALLOWED_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
 
-/** Returns `next` when it is a safe local path, otherwise the default landing page. */
+function isSinglePathSyntax(value: string): boolean {
+  if (value.length > MAX_LENGTH || !value.startsWith("/") || value.startsWith("//")) return false;
+  if (value.includes("\\") || hasControlCharacter(value) || ENCODED_SEPARATOR.test(value)) {
+    return false;
+  }
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value); // decode exactly once
+  } catch {
+    return false;
+  }
+  if (!decoded.startsWith("/") || decoded.startsWith("//")) return false;
+  if (decoded.includes("\\") || hasControlCharacter(decoded)) return false;
+  const pathOnly = decoded.split(/[?#]/, 1)[0] ?? "";
+  return !pathOnly.split("/").includes("..");
+}
+
+/**
+ * Validates a post-sign-in redirect target and returns a normalized same-origin path
+ * (`/path?query#hash`), or `fallback`. It must be a single-leading-slash path with no `..`
+ * segments, backslashes, control characters or encoded separators; it is then resolved against
+ * the configured app origin, which must be unchanged, and the path must be on the allowlist.
+ */
 export function safeNextPath(
   next: string | string[] | null | undefined,
   fallback: string = DEFAULT_SIGNED_IN_PATH,
 ): string {
   const candidate = Array.isArray(next) ? next[0] : next;
-  const parsed = safeNextPathSchema.safeParse(candidate);
-  return parsed.success ? parsed.data : fallback;
+  if (typeof candidate !== "string" || !isSinglePathSyntax(candidate)) return fallback;
+
+  try {
+    const base = new URL(getAppUrl());
+    const resolved = new URL(candidate, base);
+    if (resolved.origin !== base.origin || !isAllowedPath(resolved.pathname)) return fallback;
+    return `${resolved.pathname}${resolved.search}${resolved.hash}`;
+  } catch {
+    return fallback;
+  }
 }

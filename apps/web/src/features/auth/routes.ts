@@ -1,3 +1,5 @@
+import { safeNextPath } from "./safe-next-path";
+
 export const SIGN_IN_PATH = "/sign-in";
 
 /** Route prefixes that need a signed-in user. Everything else is public. */
@@ -11,5 +13,5 @@ export function isProtectedPath(pathname: string): boolean {
 
 /** Sign-in URL path that brings the user back to `target` afterwards. */
 export function signInPathFor(target: string): string {
-  return `${SIGN_IN_PATH}?next=${encodeURIComponent(target)}`;
+  return `${SIGN_IN_PATH}?next=${encodeURIComponent(safeNextPath(target))}`;
 }

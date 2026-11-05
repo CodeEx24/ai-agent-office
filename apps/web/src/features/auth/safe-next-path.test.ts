@@ -24,6 +24,17 @@ describe("safeNextPath", () => {
     ["tab inside the host", "/\t/evil.com"],
     ["newline", "/app\n//evil.com"],
     ["empty", ""],
+    ["dot-dot then double slash", "/..//evil.example"],
+    ["double slash host", "//evil.example"],
+    ["backslash host", "/\\evil.example"],
+    ["encoded double slash", "%2F%2Fevil.example"],
+    ["absolute https host", "https://evil.example"],
+    ["javascript scheme void", "javascript:void(0)"],
+    ["encoded dot-dot double slash", "/%2e%2e//evil"],
+    ["encoded dot-dot segments", "/app/%2e%2e/%2e%2e/x"],
+    ["dot-dot inside app", "/app/../settings"],
+    ["path outside the allowlist", "/sign-in"],
+    ["allowlist prefix without segment boundary", "/application"],
   ])("falls back for %s", (_label, value) => {
     expect(safeNextPath(value)).toBe(DEFAULT_SIGNED_IN_PATH);
   });

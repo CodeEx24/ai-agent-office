@@ -18,6 +18,7 @@ import {
   verifyCodeAction,
   type SignInState,
 } from "./actions";
+import type { OAuthProvider } from "./schemas";
 
 const INITIAL_STATE: SignInState = { step: "email" };
 
@@ -31,6 +32,8 @@ interface SignInFormProps {
   next: string;
   /** Message for a failed callback or provider start, shown above the form. */
   notice?: string;
+  /** Providers the Auth server has enabled; the rest render disabled with a hint. */
+  providers: Record<OAuthProvider, boolean>;
 }
 
 function EmailStep({ next }: { next: string }) {
@@ -100,7 +103,7 @@ function CodeStep({ email, next }: { email: string; next: string }) {
   );
 }
 
-export function SignInForm({ next, notice }: SignInFormProps) {
+export function SignInForm({ next, notice, providers }: SignInFormProps) {
   return (
     <Card className="w-full max-w-sm">
       <CardHeader>
@@ -118,9 +121,17 @@ export function SignInForm({ next, notice }: SignInFormProps) {
             <form key={provider} action={signInWithOAuthAction}>
               <input type="hidden" name="provider" value={provider} />
               <input type="hidden" name="next" value={next} />
-              <Button type="submit" variant="outline" className="w-full">
+              <Button
+                type="submit"
+                variant="outline"
+                className="w-full"
+                disabled={!providers[provider]}
+              >
                 {label}
               </Button>
+              {providers[provider] ? null : (
+                <p className="mt-1 text-xs text-muted-foreground">Not configured</p>
+              )}
             </form>
           ))}
         </div>

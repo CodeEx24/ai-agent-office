@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
 import { getCurrentUser } from "../../features/auth/current-user";
+import { getEnabledOAuthProviders } from "../../features/auth/enabled-providers";
 import { safeNextPath } from "../../features/auth/safe-next-path";
 import { SignInForm } from "../../features/auth/SignInForm";
 
@@ -26,9 +27,11 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
   // hasOwn: `?error=__proto__` must not resolve to an Object.prototype member.
   const notice = errorKey && Object.hasOwn(NOTICES, errorKey) ? NOTICES[errorKey] : undefined;
 
+  const providers = await getEnabledOAuthProviders();
+
   return (
     <main className="flex min-h-screen items-center justify-center p-8">
-      <SignInForm next={next} notice={notice} />
+      <SignInForm next={next} notice={notice} providers={providers} />
     </main>
   );
 }
