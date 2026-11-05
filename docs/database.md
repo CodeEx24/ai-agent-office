@@ -54,6 +54,8 @@ Only one schema-changing ticket is in flight at a time.
 
 SQL tests live in `supabase/tests/*.sql` and run with `pnpm exec supabase test db` (inside the db lock, like a reset). `core_schema.test.sql` is catalog-driven: every table in `public` must have RLS enabled, a uuid primary key and (except `workspaces`) a `workspace_id uuid not null`, so a new table that breaks the invariants fails the suite.
 
+`run_events_append_only.test.sql` proves `run_events` rejects UPDATE, DELETE and TRUNCATE for `anon`, `authenticated`, `service_role` and the owner, and that `seq` must increase per run. The concurrent-insert check is `scripts/run-events-concurrency.test.mjs` (`RUN_DB_TESTS=1`, inside the db lock). `run_events` is append-only by privileges and triggers (AGO-102): never grant UPDATE/DELETE/TRUNCATE on it, and change its schema through migrations only (a superuser migration is the one way to alter it).
+
 ## Rollback
 
 Local database: run `pnpm db:reset` on the previous commit, which rebuilds it from that commit's migrations. This is the normal path.

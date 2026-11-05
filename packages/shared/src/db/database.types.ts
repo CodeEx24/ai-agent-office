@@ -237,10 +237,10 @@ isOneToOne: false
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"id"?: string,"payload"?: NonNullable<Json>,"run_id": string,"seq"?: never,"type": string,"workspace_id": string
+                    "created_at"?: string,"id"?: string,"payload"?: NonNullable<Json>,"run_id": string,"seq"?: number,"type": string,"workspace_id": string
                   }
                   Update: {
-                    "created_at"?: string,"id"?: string,"payload"?: NonNullable<Json>,"run_id"?: string,"seq"?: never,"type"?: string,"workspace_id"?: string
+                    "created_at"?: string,"id"?: string,"payload"?: NonNullable<Json>,"run_id"?: string,"seq"?: number,"type"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
