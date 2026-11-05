@@ -94,9 +94,18 @@ function checkGitPush(args) {
 
 function checkGitCommit(args, cwd) {
   if (args.includes('--no-verify') || args.includes('-n')) deny('Skipping git hooks (--no-verify) is blocked.');
+  // During a merge, compare the index with MERGE_HEAD (the branch being merged in) so only
+  // this branch's own changes are scanned, not content that already passed review on that branch.
+  let base = [];
+  try {
+    execFileSync('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd, stdio: 'ignore' });
+    base = ['MERGE_HEAD'];
+  } catch {
+    /* not merging */
+  }
   let diff = '';
   try {
-    diff = execFileSync('git', ['diff', '--cached', '-U0', '--no-color'], {
+    diff = execFileSync('git', ['diff', '--cached', '-U0', '--no-color', ...base], {
       cwd,
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
