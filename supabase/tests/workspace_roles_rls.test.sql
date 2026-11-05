@@ -2,7 +2,7 @@
 -- Run: pnpm exec supabase test db (inside the db lock).
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(26);
+select plan(35);
 
 -- fixtures (as postgres): a = owner of A, c = member of A, d = viewer of A, e = removed from A,
 -- b = owner of B, f = no workspace yet
@@ -93,6 +93,28 @@ select is((select first_id = second_id from onboard_ids), true, 'AC1: onboarding
 select is((select count(*)::int from public.members where user_id = '82000000-0000-0000-0000-00000000000f' and role = 'owner'), 1, 'AC1: exactly one owner membership exists');
 select is((select name from public.workspaces where id = (select first_id from onboard_ids)), 'My Office', 'AC1: workspace created with the trimmed name');
 
+-- onboarding input and identity checks (f already has a workspace; validation runs first)
+select throws_ok($$select public.onboard_current_user('   ')$$, '22023', null, 'onboarding rejects a blank name');
+select throws_ok($$select public.onboard_current_user(repeat('x', 121))$$, '22023', null, 'onboarding rejects a 121-character name');
+select set_config('request.jwt.claims', '{"role":"authenticated"}', true);
+select throws_ok($$select public.onboard_current_user('No Sub')$$, '28000', null, 'onboarding without a user identity is refused');
+
+-- cross-tenant write: owner of B cannot rename A
+select set_config('request.jwt.claims', '{"sub":"82000000-0000-0000-0000-00000000000b","role":"authenticated"}', true);
+with u as (update public.workspaces set name = 'cross' where id = '82aaaaaa-0000-0000-0000-000000000001' returning 1)
+select is((select count(*)::int from u), 0, 'owner of B cannot rename workspace A (0 rows)');
+
+-- removed member e sees no members; non-owner member c does not see the removed row
+select set_config('request.jwt.claims', '{"sub":"82000000-0000-0000-0000-00000000000e","role":"authenticated"}', true);
+select is((select count(*)::int from public.members), 0, 'a soft-removed member sees no members');
+select set_config('request.jwt.claims', '{"sub":"82000000-0000-0000-0000-00000000000c","role":"authenticated"}', true);
+select is((select count(*)::int from public.members where removed_at is not null), 0, 'a non-owner member does not see removed rows');
+
 reset role;
+
+-- function privileges: the helper is authenticated-only, the RPC is authenticated-only
+select is(has_function_privilege('anon', 'private.is_member(uuid,text)', 'EXECUTE'), false, 'anon cannot execute private.is_member');
+select is(has_function_privilege('authenticated', 'public.onboard_current_user(text)', 'EXECUTE'), true, 'authenticated can execute the onboarding RPC');
+select is(has_function_privilege('anon', 'public.onboard_current_user(text)', 'EXECUTE'), false, 'anon cannot execute the onboarding RPC');
 select * from finish();
 rollback;

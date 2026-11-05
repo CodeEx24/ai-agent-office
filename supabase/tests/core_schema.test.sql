@@ -133,8 +133,8 @@ select is(
     where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
       and has_table_privilege(r, c.oid, p)
       -- AGO-82 grants authenticated read (and rename) on these two, behind membership RLS policies
-      and not (r = 'authenticated' and c.relname in ('workspaces', 'members'))),
-  0, 'anon/authenticated have no table privileges yet, except authenticated on workspaces/members (AGO-82)');
+      and not (r = 'authenticated' and c.relname in ('workspaces', 'members') and p = 'SELECT')),
+  0, 'anon/authenticated have no table privileges yet, except authenticated SELECT on workspaces/members (AGO-82)');
 
 -- 12. tenancy: a child cannot reference another workspace's parent
 select throws_ok(

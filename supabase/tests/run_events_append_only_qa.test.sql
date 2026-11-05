@@ -65,7 +65,8 @@ select is((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.
 select is((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'private' and p.prosecdef
               -- AGO-82 allow-list: the read-only RLS helper, executable by authenticated only
-              and p.proname <> 'is_member'
+              and not (p.proname = 'is_member'
+                       and pg_get_function_identity_arguments(p.oid) = 'p_workspace_id uuid, p_min_role text')
               and (has_function_privilege('anon', p.oid, 'EXECUTE') or has_function_privilege('authenticated', p.oid, 'EXECUTE') or has_function_privilege('service_role', p.oid, 'EXECUTE'))), 0, 'AC1: no SECURITY DEFINER function in private is executable by anon, authenticated or service_role');
 
 -- AC2: per-run seq
