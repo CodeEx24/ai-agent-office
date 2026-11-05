@@ -49,7 +49,7 @@ test.use({ allowedConsoleErrors: [/Failed to load resource.*\/api\/flaky/] });
 
 ### Signed-in tests
 
-Auth state arrives with AGO-67. The plan: a Playwright setup project signs in once per role and saves `storageState` under `apps/web/e2e/.auth/` (git-ignored); a fixture in `e2e/fixtures/` then loads it and is re-exported from `e2e/fixtures/index.ts`. Never commit credentials or saved state.
+Auth state exists (AGO-67). With `E2E_SUPABASE=1` a Playwright `setup` project (`e2e/auth.setup.ts`) signs in once through the real email flow (code read from the local Mailpit catcher) and saves `storageState` to `apps/web/e2e/.auth/user.json` (git-ignored). A spec starts signed in with `test.use({ storageState: AUTH_STATE_PATH })`; `AUTH_STATE_PATH` and `isLiveStack` are exported from `e2e/fixtures/index.ts`. Guard such specs with `test.skip(!isLiveStack, "needs the local Supabase stack")`, because CI has no Supabase stack. Never commit credentials or saved state. How to run the live specs, and how auth works, is in [auth.md](auth.md).
 
 ## Failure evidence
 

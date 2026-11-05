@@ -6,11 +6,22 @@ import { defineConfig, devices } from "@playwright/test";
 const isCI = Boolean(process.env.CI);
 const port = String(Number(process.env.PORT ?? 3100));
 const baseURL = `http://127.0.0.1:${port}`;
+const stubAuthPort = String(Number(port) + 500);
 
 // CI uses Playwright's bundled Chromium. Locally the default is Microsoft Edge (Chrome is not
 // installed on the Windows dev machine). Override with E2E_BROWSER_CHANNEL (e.g. `chrome`),
 // or set it to an empty string to use bundled Chromium after `playwright install chromium`.
 const channel = process.env.E2E_BROWSER_CHANNEL ?? (isCI ? "" : "msedge");
+
+// Specs that need a real Auth server and mail catcher (email sign-in, sessions, sign-out) run only
+// with the shared local Supabase stack up. Run them with:
+//   E2E_SUPABASE=1 NEXT_PUBLIC_SUPABASE_URL=... NEXT_PUBLIC_SUPABASE_ANON_KEY=... pnpm test:e2e
+// (URL and anon key from `pnpm exec supabase status`; local demo keys only, never committed.)
+const isLiveStack = process.env.E2E_SUPABASE === "1";
+
+// Stack-free runs point the app at a stub Auth settings server (both providers enabled) so the
+// provider buttons never depend on whatever happens to listen on the default Supabase port.
+const stubAuthURL = `http://127.0.0.1:${stubAuthPort}`;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -28,24 +39,56 @@ export default defineConfig({
     video: "retain-on-failure",
   },
   projects: [
+    // Signs in once through the real email flow and saves the session (e2e/.auth/, git-ignored)
+    // for specs that start signed in. Needs the local Supabase stack, so it only exists when
+    // E2E_SUPABASE=1 (CI has no stack and runs the stack-free specs only).
+    ...(isLiveStack
+      ? [
+          {
+            name: "setup",
+            testMatch: /auth\.setup\.ts/,
+            use: { ...devices["Desktop Chrome"], ...(channel ? { channel } : {}) },
+          },
+        ]
+      : []),
     {
       name: "chromium",
+      testIgnore: /auth\.setup\.ts/,
+      dependencies: isLiveStack ? ["setup"] : [],
       use: { ...devices["Desktop Chrome"], ...(channel ? { channel } : {}) },
     },
   ],
-  webServer: {
-    command: `pnpm exec next start --hostname 127.0.0.1 --port ${port}`,
-    url: baseURL,
-    // Never attach to a server we did not start: it may belong to another ticket's worktree.
-    reuseExistingServer: false,
-    timeout: 120_000,
-    env: {
-      // Minimal safe env so the production server boots (no secrets; placeholder public URLs).
-      APP_ENV: "local",
-      // The dev-only 3D test page is off in production builds unless this is set (AGO-49).
-      ENABLE_DEV_3D: "1",
-      NEXT_PUBLIC_APP_URL: baseURL,
-      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
+  webServer: [
+    ...(isLiveStack
+      ? []
+      : [
+          {
+            command: "node e2e/support/stub-auth-server.mjs",
+            url: `${stubAuthURL}/auth/v1/settings`,
+            reuseExistingServer: false,
+            timeout: 30_000,
+            env: { E2E_STUB_AUTH_PORT: stubAuthPort },
+          },
+        ]),
+    {
+      command: `pnpm exec next start --hostname 127.0.0.1 --port ${port}`,
+      url: baseURL,
+      // Never attach to a server we did not start: it may belong to another ticket's worktree.
+      reuseExistingServer: false,
+      timeout: 120_000,
+      env: {
+        // Minimal safe env so the production server boots (no secrets; placeholder public URLs).
+        APP_ENV: "local",
+        // The dev-only 3D test page is off in production builds unless this is set (AGO-49).
+        ENABLE_DEV_3D: "1",
+        NEXT_PUBLIC_APP_URL: baseURL,
+        NEXT_PUBLIC_SUPABASE_URL: isLiveStack
+          ? (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:44321")
+          : stubAuthURL,
+        // Placeholder unless a live stack is used: stack-free specs never reach Supabase.
+        NEXT_PUBLIC_SUPABASE_ANON_KEY:
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "placeholder-anon-key-no-stack",
+      },
     },
-  },
+  ],
 });
