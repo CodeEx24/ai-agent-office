@@ -37,16 +37,15 @@ test.describe("/dev/3d/crowd", () => {
   test("AC1: both characters play the same three clips and every character follows the switch", async ({
     page,
   }) => {
+    test.setTimeout(180_000);
     await page.goto("/dev/3d/crowd");
     await page.waitForFunction(() => window.__crowdPerf?.activeClips().length === 8, null, {
       timeout: 30_000,
     });
-    const canvas = page.locator("canvas");
-    const canvasKeepsChanging = async (): Promise<boolean> => {
-      const first = await canvas.screenshot();
-      const second = await canvas.screenshot();
-      return !first.equals(second);
-    };
+    const readRoster = () => page.evaluate(() => window.__crowdPerf?.activeClips() ?? []);
+    // SwiftShader can render only a few frames per second, so budgets are generous. The proof is
+    // state-based (clip names and mixer clocks), never sampled pixels.
+    const budget = 30_000;
 
     for (const clip of CLIPS) {
       const button = page.getByRole("button", { name: clip, exact: true });
@@ -62,13 +61,26 @@ test.describe("/dev/3d/crowd", () => {
       await expect
         .poll(
           async () => {
-            const roster = await page.evaluate(() => window.__crowdPerf?.activeClips() ?? []);
+            const roster = await readRoster();
             return roster.length === 8 && roster.every((m) => m.isRunning && m.clip === clip);
           },
-          { timeout: 10_000, message: `all 8 characters play ${clip}` },
+          { timeout: budget, message: `all 8 characters play ${clip}` },
         )
         .toBe(true);
-      await expect.poll(canvasKeepsChanging, { timeout: 10_000 }).toBe(true);
+      // Every mixer clock keeps advancing, so each character is animating rather than frozen.
+      const before = new Map((await readRoster()).map((m) => [m.id, m.mixerTime]));
+      await expect
+        .poll(
+          async () => {
+            const roster = await readRoster();
+            return (
+              roster.length === 8 &&
+              roster.every((m) => m.clip === clip && m.mixerTime > (before.get(m.id) ?? Infinity))
+            );
+          },
+          { timeout: budget, message: `all 8 mixers advance while playing ${clip}` },
+        )
+        .toBe(true);
     }
   });
 
