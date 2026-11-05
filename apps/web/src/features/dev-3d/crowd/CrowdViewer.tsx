@@ -25,6 +25,8 @@ export interface ActiveClipReport {
   character: CrowdCharacter;
   clip: string | null;
   isRunning: boolean;
+  /** The mixer's own clock in seconds. It only grows while the render loop advances this mixer. */
+  mixerTime: number;
 }
 
 /** Read-only handle for Playwright and the FPS measurement script. */
@@ -61,7 +63,7 @@ function CrowdMember({ slot, clip, reporters }: CrowdMemberProps) {
   const { scene, animations } = useGLTF(MODEL_URLS[slot.character], false);
   // SkeletonUtils.clone gives every member its own skeleton while sharing geometry and materials.
   const instance = useMemo(() => cloneSkinned(scene), [scene]);
-  const { actions } = useAnimations(animations, instance);
+  const { actions, mixer } = useAnimations(animations, instance);
 
   useEffect(() => {
     // Skinned bounds come from the bind pose, so a moving mesh can be culled wrongly.
@@ -88,12 +90,13 @@ function CrowdMember({ slot, clip, reporters }: CrowdMemberProps) {
         character: slot.character,
         clip: running?.[0] ?? null,
         isRunning: running !== undefined,
+        mixerTime: mixer.time,
       };
     });
     return () => {
       reporters.delete(slot.id);
     };
-  }, [actions, reporters, slot.character, slot.id]);
+  }, [actions, mixer, reporters, slot.character, slot.id]);
 
   return <primitive object={instance} position={slot.position} />;
 }
