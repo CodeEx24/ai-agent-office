@@ -6,7 +6,7 @@
 --        cross-workspace insert rejected
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(28);
+select plan(41);
 
 insert into public.workspaces (id, name) values
   ('a1020000-0000-0000-0000-000000000001', 'qa one'), ('a1020000-0000-0000-0000-000000000002', 'qa two');
@@ -14,7 +14,8 @@ insert into public.agents (id, workspace_id, name) values
   ('a1020000-0000-0000-0000-0000000000a1', 'a1020000-0000-0000-0000-000000000001', 'qa agent');
 insert into public.runs (id, workspace_id, agent_id) values
   ('a1020000-0000-0000-0000-0000000000b1', 'a1020000-0000-0000-0000-000000000001', 'a1020000-0000-0000-0000-0000000000a1'),
-  ('a1020000-0000-0000-0000-0000000000b2', 'a1020000-0000-0000-0000-000000000001', 'a1020000-0000-0000-0000-0000000000a1');
+  ('a1020000-0000-0000-0000-0000000000b2', 'a1020000-0000-0000-0000-000000000001', 'a1020000-0000-0000-0000-0000000000a1'),
+  ('a1020000-0000-0000-0000-0000000000b3', 'a1020000-0000-0000-0000-000000000001', 'a1020000-0000-0000-0000-0000000000a1');
 insert into public.run_events (workspace_id, run_id, type) values
   ('a1020000-0000-0000-0000-000000000001', 'a1020000-0000-0000-0000-0000000000b1', 'one'),
   ('a1020000-0000-0000-0000-000000000001', 'a1020000-0000-0000-0000-0000000000b1', 'two'),
@@ -43,6 +44,26 @@ select throws_ok($$set local role service_role; delete from public.runs where id
 select throws_ok($$delete from public.agents where id = 'a1020000-0000-0000-0000-0000000000a1'$$, '23503', null, 'AC1: the owner cannot delete an agent whose runs have events');
 select is((select count(*)::int from public.run_events where workspace_id = 'a1020000-0000-0000-0000-000000000001'), 3, 'AC1: all three events are still there after every rejected attempt');
 select is((select string_agg(type, ',' order by run_id, seq) from public.run_events where workspace_id = 'a1020000-0000-0000-0000-000000000001'), 'one,two,one', 'AC1: no event content changed');
+
+-- AC1 (fix round 1): the workspace cascade used to erase events; now deleting a workspace with events is refused
+select throws_ok($$set local role service_role; delete from public.workspaces where id = 'a1020000-0000-0000-0000-000000000001'$$, '23503', null, 'AC1: service_role cannot delete a workspace that has events');
+select throws_ok($$delete from public.workspaces where id = 'a1020000-0000-0000-0000-000000000001'$$, '23503', null, 'AC1: the owner cannot delete a workspace that has events');
+select throws_ok($$set local role authenticated; delete from public.workspaces where id = 'a1020000-0000-0000-0000-000000000001'$$, '42501', null, 'AC1: authenticated cannot delete a workspace');
+select throws_ok($$set local role anon; delete from public.workspaces where id = 'a1020000-0000-0000-0000-000000000001'$$, '42501', null, 'AC1: anon cannot delete a workspace');
+select throws_ok($$delete from public.workspaces where id = 'a1020000-0000-0000-0000-000000000001' or name like 'qa%'$$, '23503', null, 'AC1: a multi-row workspace delete that includes the one with events is refused as a whole');
+select is((select count(*)::int from public.run_events where workspace_id = 'a1020000-0000-0000-0000-000000000001'), 3, 'AC1: the events survive every workspace delete attempt');
+select lives_ok($$set local role service_role; delete from public.runs where id = 'a1020000-0000-0000-0000-0000000000b3'$$, 'AC1: a run without events can still be deleted');
+select lives_ok($$set local role service_role; delete from public.workspaces where id = 'a1020000-0000-0000-0000-000000000002'$$, 'AC1: a workspace without events can still be deleted');
+select is((select array_agg(confdeltype::text order by conname) from pg_constraint where conrelid = 'public.run_events'::regclass and contype = 'f' and confrelid in ('public.workspaces'::regclass, 'public.runs'::regclass)), array['r', 'r'], 'AC1: both run_events parent FKs (workspace, run) are ON DELETE RESTRICT');
+
+-- AC1 (fix round 1): no bypass shipped in the database; the teardown lives only in scripts/
+select is((select count(*)::int from pg_trigger where tgrelid = 'public.run_events'::regclass and not tgisinternal and tgenabled <> 'A'), 0, 'AC1: every run_events guard trigger is ENABLE ALWAYS');
+select is((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname in ('public', 'private') and p.prosrc ~* '(disable\s+trigger|session_replication_role|delete\s+from\s+public\.run_events|truncate)'), 0, 'AC1: no project function (public, private) can disable the guard or delete events');
+select is((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname in ('public', 'private') and p.proname ilike '%teardown%'), 0, 'AC1: no teardown/cleanup routine exists as a database object');
+select is((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'private' and p.prosecdef and (has_function_privilege('anon', p.oid, 'EXECUTE') or has_function_privilege('authenticated', p.oid, 'EXECUTE') or has_function_privilege('service_role', p.oid, 'EXECUTE'))), 0, 'AC1: no SECURITY DEFINER function in private is executable by anon, authenticated or service_role');
 
 -- AC2: per-run seq
 select is((select string_agg(seq::text, ',' order by seq) from public.run_events where run_id = 'a1020000-0000-0000-0000-0000000000b1'), '1,2', 'AC2: omitted seq is assigned 1, 2 in insert order');

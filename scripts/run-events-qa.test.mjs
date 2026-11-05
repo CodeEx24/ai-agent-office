@@ -158,6 +158,96 @@ describe.skipIf(!enabled)('AGO-102 run_events (QA)', () => {
     });
   });
 
+  describe('AC1 (fix round 1): deleting a workspace or run cannot erase events', () => {
+    it('AC1: service_role over PostgREST cannot DELETE a workspace that has events (23503), events stay intact', async () => {
+      const res = await api(stack.serviceKey, 'DELETE', `workspaces?id=eq.${workspaceId}`);
+      expect(res.ok).toBe(false);
+      expect((await res.json()).code).toBe('23503');
+      expect(await seqs(runId)).toEqual([1, 2]);
+    });
+
+    it('AC1: service_role over PostgREST cannot DELETE a run that has events (23503)', async () => {
+      const res = await api(stack.serviceKey, 'DELETE', `runs?id=eq.${runId}`);
+      expect(res.ok).toBe(false);
+      expect((await res.json()).code).toBe('23503');
+      expect(await seqs(runId)).toEqual([1, 2]);
+    });
+
+    it('AC1: anon cannot DELETE a workspace over PostgREST, events stay intact', async () => {
+      const res = await api(stack.anonKey, 'DELETE', `workspaces?id=eq.${workspaceId}`);
+      expect(res.ok).toBe(false);
+      expect([401, 403]).toContain(res.status);
+      expect(await seqs(runId)).toEqual([1, 2]);
+    });
+
+    it('AC1: the owner (postgres) cannot delete a workspace with events, in one statement or a multi-row delete', async () => {
+      for (const sql of [
+        `delete from public.workspaces where id = '${workspaceId}'`,
+        `delete from public.workspaces where id in ('${workspaceId}', '${otherWorkspaceId}')`,
+      ]) {
+        const result = await attempt(sql);
+        expect(result.ok, sql).toBe(false);
+        expect(result.message).toContain('violates foreign key constraint');
+      }
+      expect(await seqs(runId)).toEqual([1, 2]);
+      expect(await psql(`select count(*) from public.workspaces where id = '${otherWorkspaceId}'`)).toBe('1');
+    });
+
+    it('AC1: a workspace and a run without events can still be deleted over PostgREST', async () => {
+      const emptyWorkspace = randomUUID();
+      const emptyAgent = randomUUID();
+      const emptyRun = randomUUID();
+      await psql(`
+        insert into public.workspaces (id, name) values ('${emptyWorkspace}', 'AGO-102 QA empty');
+        insert into public.agents (id, workspace_id, name) values ('${emptyAgent}', '${emptyWorkspace}', 'empty agent');
+        insert into public.runs (id, workspace_id, agent_id) values ('${emptyRun}', '${emptyWorkspace}', '${emptyAgent}')`);
+      expect((await api(stack.serviceKey, 'DELETE', `runs?id=eq.${emptyRun}`)).ok).toBe(true);
+      expect((await api(stack.serviceKey, 'DELETE', `workspaces?id=eq.${emptyWorkspace}`)).ok).toBe(true);
+      expect(await psql(`select count(*) from public.workspaces where id = '${emptyWorkspace}'`)).toBe('0');
+    });
+
+    it('AC1: no teardown or bypass is reachable through the API (no RPC), and the guard stays ENABLE ALWAYS', async () => {
+      for (const name of ['teardown_run_events', 'run_events_teardown', 'run_events_block_change', 'disable_run_events_guard']) {
+        for (const key of [stack.serviceKey, stack.anonKey]) {
+          const res = await api(key, 'POST', `rpc/${name}`, {});
+          expect(res.ok, name).toBe(false);
+          expect([401, 403, 404], name).toContain(res.status);
+        }
+      }
+      expect(
+        await psql(`select string_agg(tgenabled::text, '') from pg_trigger where tgrelid = 'public.run_events'::regclass and not tgisinternal`),
+      ).toMatch(/^A+$/);
+    });
+
+    it('AC1: the test-only teardown re-enables the guard, and rolls back whole (workspace and events kept) when it fails', async () => {
+      const scratchWorkspace = randomUUID();
+      const scratchAgent = randomUUID();
+      const scratchRun = randomUUID();
+      await psql(`
+        insert into public.workspaces (id, name) values ('${scratchWorkspace}', 'AGO-102 QA scratch');
+        insert into public.agents (id, workspace_id, name) values ('${scratchAgent}', '${scratchWorkspace}', 'scratch agent');
+        insert into public.runs (id, workspace_id, agent_id) values ('${scratchRun}', '${scratchWorkspace}', '${scratchAgent}');
+        insert into public.run_events (workspace_id, run_id, type) values ('${scratchWorkspace}', '${scratchRun}', 'keep')`);
+      const guardStates = () =>
+        psql(`select string_agg(tgenabled::text, '') from pg_trigger where tgrelid = 'public.run_events'::regclass and not tgisinternal`);
+
+      // A failing teardown (invalid uuid as the second id) must not leave the guard off nor remove anything.
+      const failed = await attempt(teardownRunEventsSql([scratchWorkspace, 'not-a-uuid']));
+      expect(failed.ok).toBe(false);
+      expect(await guardStates()).toMatch(/^A+$/);
+      expect(await psql(`select count(*) from public.run_events where workspace_id = '${scratchWorkspace}'`)).toBe('1');
+
+      await psql(teardownRunEventsSql([scratchWorkspace]));
+      expect(await guardStates()).toMatch(/^A+$/);
+      expect(await psql(`select count(*) from public.workspaces where id = '${scratchWorkspace}'`)).toBe('0');
+      // Still append-only afterwards.
+      const after = await attempt(`delete from public.run_events where workspace_id = '${workspaceId}'`);
+      expect(after.ok).toBe(false);
+      expect(after.message).toContain('run_events is append-only');
+      expect(await seqs(runId)).toEqual([1, 2]);
+    });
+  });
+
   describe('AC2: inserts carry a per-run seq that must increase', () => {
     it('AC2: omitting seq over PostgREST (service_role) assigns the next number for the run', async () => {
       const res = await api(
