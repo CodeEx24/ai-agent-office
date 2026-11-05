@@ -5,6 +5,7 @@ import { createServer } from "node:net";
 import path from "node:path";
 
 import { expect, test } from "./fixtures";
+import { countTriangles, parseGlbJson } from "./helpers/glb";
 
 // AGO-49 acceptance criteria, one spec each. The Playwright webServer runs a production build
 // with ENABLE_DEV_3D=1, so /dev/3d is reachable there. The console-error guard in ./fixtures
@@ -15,33 +16,6 @@ const GLB_URL = "/models/pixel-v1.glb";
 const MAX_TRIANGLES = 10_000;
 const MAX_BONES = 40;
 const MAX_TEXTURE_SIDE = 1024;
-
-interface GltfJson {
-  accessors: { count: number }[];
-  meshes: { primitives: { indices?: number; attributes: Record<string, number> }[] }[];
-  skins: { joints: number[] }[];
-  materials: unknown[];
-  animations: { name: string; channels: unknown[] }[];
-}
-
-/** Reads the JSON chunk of a binary glTF (geometry is meshopt-compressed, the JSON is not). */
-function parseGlbJson(buffer: Buffer): GltfJson {
-  expect(buffer.toString("ascii", 0, 4)).toBe("glTF");
-  const jsonLength = buffer.readUInt32LE(12);
-  return JSON.parse(buffer.toString("utf8", 20, 20 + jsonLength)) as GltfJson;
-}
-
-function countTriangles(gltf: GltfJson): number {
-  let indexCount = 0;
-  for (const mesh of gltf.meshes) {
-    for (const primitive of mesh.primitives) {
-      const accessor = primitive.indices ?? primitive.attributes.POSITION;
-      const count = accessor === undefined ? 0 : (gltf.accessors[accessor]?.count ?? 0);
-      indexCount += count;
-    }
-  }
-  return indexCount / 3;
-}
 
 function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
