@@ -1,6 +1,6 @@
 # Authentication
 
-Agent Office signs users in with Supabase Auth: **email** (a one-time code or magic link), **Google** and **GitHub**. After sign-in the user lands on the protected `/app` page. Workspaces and memberships arrive with AGO-82; `/app` shows who is signed in and is where that will plug in.
+Agent Office signs users in with Supabase Auth: **email** (a one-time code or magic link), **Google** and **GitHub**. After sign-in the user lands on the protected `/app` page. `/app` resolves the user's workspace (AGO-82): a first-time user names a workspace and becomes its owner; after that `/app` shows the workspace and their role. Roles, RLS and the `requireWorkspaceRole` helper are described in `docs/tickets/AGO-82.md`.
 
 ## How it works
 

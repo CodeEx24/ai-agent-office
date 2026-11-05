@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 
-import { fetchSignInCode } from "../support/live-stack";
+import { fetchMagicLink, fetchSignInCode } from "../support/live-stack";
 
 /** Page object for `/sign-in`. Selectors live here, assertions stay in the spec. */
 export class SignInPage {
@@ -34,6 +34,15 @@ export class SignInPage {
     await this.emailInput.fill(email);
     await this.sendCodeButton.click();
     await this.codeInput.waitFor();
+  }
+
+  /**
+   * Signs in with the magic link from the same email (same browser context, so the PKCE verifier
+   * cookie is present). Works whichever email template the running Auth server uses.
+   */
+  async signInWithMagicLink(email: string) {
+    await this.requestCode(email);
+    await this.page.goto(await fetchMagicLink(email));
   }
 
   /** The full email flow: request a code, read it from the mail catcher, enter it. */

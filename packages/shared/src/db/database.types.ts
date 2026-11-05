@@ -193,14 +193,14 @@ isOneToOne: false
                   ]
                 },"members": {
                   Row: {
-                    "created_at": string,"id": string,"role": string,"updated_at": string,"user_id": string,"workspace_id": string
+                    "created_at": string,"id": string,"removed_at": string | null,"role": string,"updated_at": string,"user_id": string,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"id"?: string,"role"?: string,"updated_at"?: string,"user_id": string,"workspace_id": string
+                    "created_at"?: string,"id"?: string,"removed_at"?: string | null,"role"?: string,"updated_at"?: string,"user_id": string,"workspace_id": string
                   }
                   Update: {
-                    "created_at"?: string,"id"?: string,"role"?: string,"updated_at"?: string,"user_id"?: string,"workspace_id"?: string
+                    "created_at"?: string,"id"?: string,"removed_at"?: string | null,"role"?: string,"updated_at"?: string,"user_id"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -361,7 +361,9 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            [_ in never]: never
+            "onboard_current_user":
+{ Args: { "p_workspace_name": string }; Returns: string
+                           }
           }
           Enums: {
             [_ in never]: never

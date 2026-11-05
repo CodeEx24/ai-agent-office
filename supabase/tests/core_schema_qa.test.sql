@@ -7,7 +7,7 @@
 --        no secret-bearing columns
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(46);
+select plan(47);
 
 -- ---------------------------------------------------------------------------------------------
 -- AC1: schema shape
@@ -261,8 +261,12 @@ begin
 end $$;
 
 select is((select count(*)::int from qa_results), 52, 'SEC: 2 roles x 13 tables x (select, insert) were attempted');
-select is((select count(*)::int from qa_results where outcome = 'denied'), 52,
-  'SEC: anon and authenticated are denied select and insert on all 13 tables (42501)');
+-- AGO-82: authenticated may SELECT workspaces/members (membership RLS; see workspace_roles_rls.test.sql)
+select is((select count(*)::int from qa_results where outcome = 'denied'), 50,
+  'SEC: anon and authenticated are denied select and insert everywhere except authenticated select on workspaces/members (42501)');
+select is((select count(*)::int from qa_results where outcome = 'allowed'
+    and role_name = 'authenticated' and op = 'select' and table_name in ('workspaces', 'members')), 2,
+  'SEC: the only allowed attempts are authenticated select on workspaces and members');
 
 select lives_ok(
   $$set local role service_role; select count(*) from public.agents; reset role$$,
