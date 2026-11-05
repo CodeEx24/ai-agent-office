@@ -115,11 +115,15 @@ test.describe("/dev/3d/crowd", () => {
     await talk.dblclick();
     await expect(talk).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator('button[aria-pressed="true"]')).toHaveCount(1);
+    // Same generous budget as the clip-switch test: SwiftShader under CI load renders few fps.
     await expect
-      .poll(async () => {
-        const roster = await page.evaluate(() => window.__crowdPerf?.activeClips() ?? []);
-        return roster.length === 8 && roster.every((m) => m.isRunning && m.clip === "Talk");
-      })
+      .poll(
+        async () => {
+          const roster = await page.evaluate(() => window.__crowdPerf?.activeClips() ?? []);
+          return roster.length === 8 && roster.every((m) => m.isRunning && m.clip === "Talk");
+        },
+        { timeout: 30_000, message: "all 8 characters play Talk after a double click" },
+      )
       .toBe(true);
   });
 
