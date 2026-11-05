@@ -25,7 +25,7 @@ function withBundle(files, run) {
 
 test("clean bundle with only NEXT_PUBLIC values passes", () => {
   withBundle(
-    { "chunks/app.js": 'const u="http://127.0.0.1:55421";const k=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;' },
+    { "chunks/app.js": 'const u="http://127.0.0.1:44321";const k=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;' },
     (dir) => assert.deepEqual(scanBundle(dir, { serverNames: SERVER_NAMES, env: {} }), []),
   );
 });

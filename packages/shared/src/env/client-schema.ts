@@ -6,8 +6,8 @@ import { z } from "zod";
  * and everything it imports ends up in the browser bundle.
  */
 
-/** Local Supabase stack ports are reserved as 55420-55429 (see AGO-78); 55421 is the API port. */
-export const LOCAL_SUPABASE_URL = "http://127.0.0.1:55421";
+/** Local Supabase stack ports are reserved as 44320-44329 (see AGO-78); 44321 is the API port. */
+export const LOCAL_SUPABASE_URL = "http://127.0.0.1:44321";
 export const LOCAL_APP_URL = "http://localhost:3000";
 
 export const optionalString = z.string().min(1).optional();

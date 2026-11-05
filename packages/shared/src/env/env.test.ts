@@ -42,7 +42,7 @@ function messageOf(fn: () => unknown): string {
 test("local environment starts with no variables set (safe dev defaults)", () => {
   const env = parseEnv(serverEnvSchema, {});
   assert.equal(env.APP_ENV, "local");
-  assert.equal(env.NEXT_PUBLIC_SUPABASE_URL, "http://127.0.0.1:55421");
+  assert.equal(env.NEXT_PUBLIC_SUPABASE_URL, "http://127.0.0.1:44321");
 });
 
 test("empty string counts as unset", () => {

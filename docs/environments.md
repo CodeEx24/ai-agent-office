@@ -9,7 +9,7 @@ resources: Vercel and hosted Supabase are set up by a human.
 | | local | preview | production |
 |---|---|---|---|
 | `APP_ENV` | `local` (default only when `NODE_ENV` is not `production`, see below) | `preview` (required) | `production` (required) |
-| Where it runs | developer machine, local Supabase in Docker (ports 55420-55429) | per-PR hosted preview | hosted |
+| Where it runs | developer machine, local Supabase in Docker (ports 44320-44329) | per-PR hosted preview | hosted |
 | Supabase | local stack | hosted preview project (human-created) | hosted production project (human-created) |
 | Required variables | none (safe dev defaults) | `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL` | same as preview |
 | URL scheme | http allowed | https required | https required |
