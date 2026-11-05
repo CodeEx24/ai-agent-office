@@ -7,7 +7,7 @@
 --        no secret-bearing columns
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(47);
+select plan(49);
 
 -- ---------------------------------------------------------------------------------------------
 -- AC1: schema shape
@@ -261,22 +261,32 @@ begin
 end $$;
 
 select is((select count(*)::int from qa_results), 52, 'SEC: 2 roles x 13 tables x (select, insert) were attempted');
--- AGO-82: authenticated may SELECT workspaces/members (membership RLS; see workspace_roles_rls.test.sql)
-select is((select count(*)::int from qa_results where outcome = 'denied'), 50,
-  'SEC: anon and authenticated are denied select and insert everywhere except authenticated select on workspaces/members (42501)');
-select is((select count(*)::int from qa_results where outcome = 'allowed'
-    and role_name = 'authenticated' and op = 'select' and table_name in ('workspaces', 'members')), 2,
-  'SEC: the only allowed attempts are authenticated select on workspaces and members');
+-- AGO-107: anon is denied everything (42501). authenticated may SELECT every table (membership RLS
+-- filters the rows; see rls_every_table.test.sql) but a bare `insert ... default values` can never
+-- succeed: it has no workspace_id, so no policy can pass it.
+select is((select count(*)::int from qa_results where role_name = 'anon' and outcome = 'denied'), 26,
+  'SEC: anon is denied select and insert on all 13 tables (42501)');
+select is((select count(*)::int from qa_results where role_name = 'authenticated' and op = 'select' and outcome = 'allowed'), 13,
+  'SEC: authenticated may select all 13 tables (rows are filtered by RLS)');
+select is((select count(*)::int from qa_results where role_name = 'authenticated' and op = 'insert' and outcome = 'allowed'), 0,
+  'SEC: authenticated can never insert a row without a workspace_id');
 
 select lives_ok(
   $$set local role service_role; select count(*) from public.agents; reset role$$,
   'SEC control: service_role can still read');
 
+-- approvals (AGO-107): anon holds nothing; authenticated may only SELECT and UPDATE the decision
+-- columns (no INSERT, DELETE or table-wide UPDATE: payload_hash and expiry stay immutable)
 select is(
-  (select count(*)::int from unnest(array['anon', 'authenticated']) r,
-      unnest(array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
-    where has_table_privilege(r, 'public.approvals'::regclass, p)),
-  0, 'SEC: anon/authenticated hold no privilege at all on approvals');
+  (select count(*)::int from unnest(array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+    where has_table_privilege('anon', 'public.approvals'::regclass, p)),
+  0, 'SEC: anon holds no privilege at all on approvals');
+select is(
+  (select count(*)::int from unnest(array['INSERT', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+    where has_table_privilege('authenticated', 'public.approvals'::regclass, p))
+  + (select count(*)::int from unnest(array['payload_hash', 'action', 'agent_id', 'run_id', 'expires_at', 'consumed_at', 'workspace_id', 'id']) c
+    where has_column_privilege('authenticated', 'public.approvals'::regclass, c, 'UPDATE')),
+  0, 'SEC: authenticated cannot insert/delete approvals or update payload_hash, action, expiry, consumption or workspace_id');
 
 select * from finish();
 rollback;

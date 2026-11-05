@@ -126,15 +126,13 @@ select is(
   (select count(*)::int from unnest(array['anon', 'authenticated']) r, unnest(array['UPDATE', 'DELETE']) p
     where has_table_privilege(r, 'public.run_events'::regclass, p)),
   0, 'anon/authenticated cannot UPDATE or DELETE run_events');
--- (c) AGO-107 relaxes this one when it grants per-table privileges alongside its policies
+-- (c) anon holds nothing on any table. authenticated's exact privileges and policies are asserted by
+-- rls_catalog.test.sql and rls_every_table.test.sql (AGO-107).
 select is(
-  (select count(*)::int from pg_class c, unnest(array['anon', 'authenticated']) r,
-      unnest(array['SELECT', 'INSERT', 'UPDATE', 'DELETE']) p
+  (select count(*)::int from pg_class c, unnest(array['SELECT', 'INSERT', 'UPDATE', 'DELETE']) p
     where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
-      and has_table_privilege(r, c.oid, p)
-      -- AGO-82 grants authenticated read (and rename) on these two, behind membership RLS policies
-      and not (r = 'authenticated' and c.relname in ('workspaces', 'members') and p = 'SELECT')),
-  0, 'anon/authenticated have no table privileges yet, except authenticated SELECT on workspaces/members (AGO-82)');
+      and has_table_privilege('anon', c.oid, p)),
+  0, 'anon has no table privileges at all');
 
 -- 12. tenancy: a child cannot reference another workspace's parent
 select throws_ok(

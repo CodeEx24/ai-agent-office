@@ -52,10 +52,10 @@ select throws_ok($$insert into public.members (workspace_id, user_id, role) valu
 set local request.jwt.claims = '{"sub":"12290000-0000-4000-8000-00000000000b","role":"authenticated"}';
 select is((select count(*)::int from public.workspaces where id = '12200001-0000-4000-8000-000000000001'), 0, 'RLS: another workspace''s owner cannot read the seed workspace');
 select is((select count(*)::int from public.members where workspace_id = '12200001-0000-4000-8000-000000000001'), 0, 'RLS: another workspace''s owner cannot read the seed members');
--- agents, tasks and skills have no policy or authenticated grant until AGO-107, so reads are denied outright
-select throws_ok($$select count(*) from public.agents where workspace_id = '12200001-0000-4000-8000-000000000001'$$, '42501', null, 'RLS: another workspace''s owner cannot read the seed agents');
-select throws_ok($$select count(*) from public.tasks where workspace_id = '12200001-0000-4000-8000-000000000001'$$, '42501', null, 'RLS: another workspace''s owner cannot read the seed tasks');
-select throws_ok($$select count(*) from public.skills where workspace_id = '12200001-0000-4000-8000-000000000001'$$, '42501', null, 'RLS: another workspace''s owner cannot read the seed skills');
+-- AGO-107: agents, tasks and skills are readable by members only, so another workspace sees zero rows
+select is((select count(*)::int from public.agents where workspace_id = '12200001-0000-4000-8000-000000000001'), 0, 'RLS: another workspace''s owner cannot read the seed agents');
+select is((select count(*)::int from public.tasks where workspace_id = '12200001-0000-4000-8000-000000000001'), 0, 'RLS: another workspace''s owner cannot read the seed tasks');
+select is((select count(*)::int from public.skills where workspace_id = '12200001-0000-4000-8000-000000000001'), 0, 'RLS: another workspace''s owner cannot read the seed skills');
 
 -- anon sees nothing at all
 set local role anon;
