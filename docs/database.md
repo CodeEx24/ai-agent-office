@@ -59,6 +59,30 @@ SQL tests live in `supabase/tests/*.sql` and run with `pnpm exec supabase test d
 
 **No cascade into `run_events`.** Its foreign keys to `workspaces` and `runs` are `ON DELETE RESTRICT` (forward migration `20261105100001_ago_102_run_events_restrict_delete.sql`), and the block trigger has no exception. A workspace or run that has events cannot be removed, not even by `service_role` or the owner; every other table still cascades from `workspaces`. Erasing events is a deliberate, human-only path deferred to AGO-147. The integration scripts (`scripts/run-events-*.test.mjs`) clean up with the test-only `scripts/run-events-teardown.mjs`, a single owner transaction that is never used by the app.
 
+## Row-level security: role matrix (AGO-107)
+
+Every table has RLS and per-command policies for `authenticated` built on `private.is_member(workspace_id, min_role)` (AGO-82). `anon` holds no privilege on any table. `service_role` (the runtime) bypasses RLS. Roles: viewer < member < owner. "-" means nobody through the API.
+
+| Table | select | insert | update | delete |
+|---|---|---|---|---|
+| workspaces | viewer | - | owner (`name` only) | - |
+| members | viewer | - | - | - |
+| agents | viewer | member | member (not `mode`/`status`) | owner |
+| skills | viewer | member | member | member |
+| agent_skills | viewer | member | - | member |
+| agent_capabilities | viewer | owner (`granted_by` = caller) | - | owner |
+| tasks | viewer | member (`created_by` null or caller) | member | member |
+| runs | viewer | member (starts `queued`) | - | - |
+| run_events | viewer | - | - | - |
+| approvals | viewer | - | member: decide only (pending, unexpired, as themselves) | - |
+| claims | viewer | - | - | - |
+| budgets_usage | viewer | owner (budget columns) | owner (budget columns) | - |
+| notes_index | viewer | member | member | member |
+
+Rules that hold for every table: policies are `to authenticated`, one per command, named `<table>_<command>_<minimum role>`; `workspace_id` and other ids are never in an UPDATE grant (a row cannot move workspaces); approvals keep their `payload_hash`, `expires_at` and `consumed_at` immutable; `run_events` stays append-only; attribution columns (`granted_by`, `decided_by`, `created_by`) must be the caller's own membership (`private.current_member_id`).
+
+**New table checklist:** enable RLS, `revoke all ... from anon, authenticated`, grant only the privileges needed, add one policy per granted command with `private.is_member`, index `workspace_id`, then add the table to `cases` and `expected` in `supabase/tests/rls_every_table.test.sql`. `rls_catalog.test.sql` enumerates every table in `public` and fails the run for a table without RLS or a policy, a privilege without a matching policy, an `anon` privilege, or a policy that is not `to authenticated` / membership-based. `rls_every_table.test.sql` runs select, insert, update and delete on every table as owner, member, viewer, a removed member and a member of another workspace.
+
 ## Seed data
 
 `supabase/seed.sql` is loaded by `pnpm db:reset` and re-applied to the running local stack by `pnpm db:seed` (local container only, never a URL). It creates one workspace ("Seed Workspace"), an owner member (`seed-owner@agent-office.local`, no password), 3 agents in Strict mode (Scout, Scribe, Reviewer), 3 starter skills, tier 0 capabilities and 5 tasks. It uses fixed ids and `on conflict do nothing`, so running it again changes nothing. It never seeds `run_events`, `runs`, `approvals` or `claims`.
