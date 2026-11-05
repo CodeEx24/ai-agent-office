@@ -245,12 +245,12 @@ test("AC2 (bypass): the value of a secret exposed under a NEXT_PUBLIC_ name is f
 
 test("AC2: allowed NEXT_PUBLIC_ variables and non-secret server values do not trip the check", () => {
   const files = {
-    "a.js": CLIENT_ENV_NAMES.map((name) => `process.env.${name};`).join("") + 'const u="http://127.0.0.1:55421";',
+    "a.js": CLIENT_ENV_NAMES.map((name) => `process.env.${name};`).join("") + 'const u="http://127.0.0.1:44321";',
   };
   withBundle(files, (dir) => {
     const findings = scanBundle(dir, {
       serverNames: SERVER_ONLY_ENV_NAMES,
-      env: { APP_ENV: "local", SUPABASE_URL: "http://127.0.0.1:55421" },
+      env: { APP_ENV: "local", SUPABASE_URL: "http://127.0.0.1:44321" },
     });
     assert.deepEqual(findings, []);
   });

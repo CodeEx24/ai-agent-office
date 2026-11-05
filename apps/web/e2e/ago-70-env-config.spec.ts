@@ -104,7 +104,7 @@ test.describe("AGO-70 environment config", () => {
   test("AC1: production without APP_ENV never serves a page, names APP_ENV and prints no values", async () => {
     const started = await startProduction({
       NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3000",
-      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:55421",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:44321",
       SUPABASE_SERVICE_ROLE_KEY: PLANTED_SECRET,
     });
 
