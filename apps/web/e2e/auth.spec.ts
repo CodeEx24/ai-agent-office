@@ -1,4 +1,4 @@
-import { expect, test } from "./fixtures";
+import { expect, isLiveStack, test } from "./fixtures";
 import { SignInPage } from "./pages/sign-in-page";
 
 // AGO-67 checks that need no Supabase stack, so they also run in CI.
@@ -38,15 +38,31 @@ test.describe("AGO-67 signed-out behaviour", () => {
   });
 });
 
+/**
+ * Whether the Auth server the app talks to has `provider` enabled. Stack-free runs use the stub
+ * from support/stub-auth-server.mjs (both on); live runs ask the real server, the same public
+ * /auth/v1/settings the app reads, so the expectation follows the stack's actual configuration.
+ */
+async function isProviderEnabled(provider: string): Promise<boolean> {
+  if (!isLiveStack) return true;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:44321";
+  const response = await fetch(`${url}/auth/v1/settings`, {
+    headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "" },
+  });
+  const { external } = (await response.json()) as { external?: Record<string, boolean> };
+  return external?.[provider] !== false;
+}
+
 test.describe("AGO-67 provider buttons", () => {
   for (const [provider, button] of [
     ["google", "googleButton"],
     ["github", "githubButton"],
   ] as const) {
-    test(`AC1: the ${provider} button sends the browser to the ${provider} authorize URL`, async ({
+    test(`AC1: the ${provider} button reflects the configured provider state`, async ({
       page,
       baseURL,
     }) => {
+      const isEnabled = await isProviderEnabled(provider);
       // Stub the Auth server's authorize endpoint: without the owner's OAuth credentials it
       // would answer 400, and we only need to see where the browser was sent.
       await page.route("**/auth/v1/authorize**", (route) =>
@@ -55,6 +71,14 @@ test.describe("AGO-67 provider buttons", () => {
       const signIn = new SignInPage(page);
       await signIn.goto("/sign-in?next=%2Fapp");
 
+      if (!isEnabled) {
+        // Provider off on the server: the button is disabled and says why, never a raw 400 page.
+        await expect(signIn[button]).toBeDisabled();
+        await expect(signIn[button].locator("xpath=..")).toContainText("Not configured");
+        return;
+      }
+
+      await expect(signIn[button]).toBeEnabled();
       const authorize = page.waitForRequest("**/auth/v1/authorize**");
       await signIn[button].click();
       const url = new URL((await authorize).url());
