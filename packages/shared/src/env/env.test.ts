@@ -158,6 +158,30 @@ test("parseServerEnv reports schema problems and secret-like public vars togethe
   assert.match(message, /NEXT_PUBLIC_API_TOKEN: invalid/);
 });
 
+test("parseServerEnv fails fast when APP_ENV is unset on a deployed process", () => {
+  for (const marker of [{ VERCEL: "1" }, { VERCEL_ENV: "production" }]) {
+    const message = messageOf(() =>
+      parseServerEnv({ NODE_ENV: "production", ...marker, SUPABASE_SERVICE_ROLE_KEY: SENTINEL }),
+    );
+    assert.match(message, /APP_ENV: missing/);
+    assert.ok(!message.includes(SENTINEL), "message leaked a value");
+  }
+});
+
+test("parseServerEnv still defaults APP_ENV to local without a deploy marker", () => {
+  assert.equal(parseServerEnv({ NODE_ENV: "production" }).APP_ENV, "local");
+  assert.equal(parseServerEnv({ VERCEL: "1" }).APP_ENV, "local");
+  assert.equal(parseServerEnv({}).APP_ENV, "local");
+});
+
+test("parseServerEnv with explicit APP_ENV=production still requires the deployed keys", () => {
+  const message = messageOf(() =>
+    parseServerEnv({ APP_ENV: "production", NODE_ENV: "production", VERCEL: "1" }),
+  );
+  assert.match(message, /SUPABASE_SERVICE_ROLE_KEY: missing/);
+  assert.match(message, /DATABASE_URL: missing/);
+});
+
 test("parseServerEnv accepts the allowed public variables", () => {
   assert.doesNotThrow(() => parseServerEnv({ NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-placeholder" }));
 });

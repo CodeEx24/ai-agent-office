@@ -125,8 +125,25 @@ function isSecretOrServerOnlyPublicName(name: string): boolean {
   );
 }
 
+function hasValue(value: string | undefined): boolean {
+  return value !== undefined && value !== "";
+}
+
 /**
- * Validate a server-side env source. Also rejects any NEXT_PUBLIC_ variable that is not declared
+ * A deploy marker is `NODE_ENV=production` together with `VERCEL` or `VERCEL_ENV` (Vercel sets
+ * both on every build and runtime). `next build`/`next start` and CI run with NODE_ENV=production
+ * but without a Vercel variable, so they are not treated as deployed and still default to local.
+ */
+function looksDeployed(source: EnvSource): boolean {
+  return (
+    source.NODE_ENV === "production" && (hasValue(source.VERCEL) || hasValue(source.VERCEL_ENV))
+  );
+}
+
+/**
+ * Validate a server-side env source. Fails fast when `APP_ENV` is unset on a deployed process
+ * (it would otherwise default to local and skip the required-key and https checks).
+ * Also rejects any NEXT_PUBLIC_ variable that is not declared
  * public in `clientEnvSchema` (it would be bundled into the browser), so that fails at startup too.
  */
 export function parseServerEnv(source: EnvSource): ServerEnv {
@@ -139,6 +156,14 @@ export function parseServerEnv(source: EnvSource): ServerEnv {
         ? "secret-like or server-only names must not be public; NEXT_PUBLIC_ variables are bundled into the browser"
         : `${name} is not declared. Add it to clientEnvSchema in packages/shared/src/env/client-schema.ts (public vars are deny-by-default)`,
     }));
+  if (!hasValue(source.APP_ENV) && looksDeployed(source)) {
+    publicSecrets.push({
+      name: "APP_ENV",
+      kind: "missing",
+      reason:
+        "required on a deployed process (NODE_ENV=production with VERCEL set); set it to preview or production",
+    });
+  }
   let env: ServerEnv | undefined;
   let schemaIssues: readonly EnvIssue[] = [];
   try {
