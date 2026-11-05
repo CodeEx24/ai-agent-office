@@ -29,6 +29,7 @@ Docker Desktop must be running (about 4 GB of memory).
 | Stop (keeps data) | `pnpm db:stop` |
 | Rebuild the DB from the repo's migrations and seed | `pnpm db:reset` |
 | New migration | `pnpm db:migration:new ago_<n>_<what>` |
+| Re-apply the seed without a reset | `pnpm db:seed` |
 | Regenerate TypeScript types | `pnpm db:types` |
 
 The stack is shared by every worktree. `db:reset` rebuilds it from the current worktree, so wrap resets and DB test runs in the file lock:
@@ -57,6 +58,12 @@ SQL tests live in `supabase/tests/*.sql` and run with `pnpm exec supabase test d
 `run_events_append_only.test.sql` proves `run_events` rejects UPDATE, DELETE and TRUNCATE for `anon`, `authenticated`, `service_role` and the owner, and that `seq` must increase per run. The concurrent-insert check is `scripts/run-events-concurrency.test.mjs` (`RUN_DB_TESTS=1`, inside the db lock). `run_events` is append-only by privileges and triggers (AGO-102): never grant UPDATE/DELETE/TRUNCATE on it, and change its schema through migrations only (a superuser migration is the one way to alter it).
 
 **No cascade into `run_events`.** Its foreign keys to `workspaces` and `runs` are `ON DELETE RESTRICT` (forward migration `20261105100001_ago_102_run_events_restrict_delete.sql`), and the block trigger has no exception. A workspace or run that has events cannot be removed, not even by `service_role` or the owner; every other table still cascades from `workspaces`. Erasing events is a deliberate, human-only path deferred to AGO-147. The integration scripts (`scripts/run-events-*.test.mjs`) clean up with the test-only `scripts/run-events-teardown.mjs`, a single owner transaction that is never used by the app.
+
+## Seed data
+
+`supabase/seed.sql` is loaded by `pnpm db:reset` and re-applied to the running local stack by `pnpm db:seed` (local container only, never a URL). It creates one workspace ("Seed Workspace"), an owner member (`seed-owner@agent-office.local`, no password), 3 agents in Strict mode (Scout, Scribe, Reviewer), 3 starter skills, tier 0 capabilities and 5 tasks. It uses fixed ids and `on conflict do nothing`, so running it again changes nothing. It never seeds `run_events`, `runs`, `approvals` or `claims`.
+
+Tests import the ids from `@ago/shared` (`SEED_WORKSPACE_ID`, `SEED_AGENTS`, `SEED_TASKS`, `SEED_COUNTS`, ...) instead of inventing data; a test fails if they drift from `seed.sql`. When you add a table that deserves starter rows, add them to `seed.sql` with a fixed id and the matching constant.
 
 ## Rollback
 
