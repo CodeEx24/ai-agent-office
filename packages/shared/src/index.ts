@@ -10,3 +10,4 @@ export function describeWorkspace(packageName: string): string {
 }
 
 export type { Database, Json } from "./db/database.types.js";
+export * from "./events/index.js";
