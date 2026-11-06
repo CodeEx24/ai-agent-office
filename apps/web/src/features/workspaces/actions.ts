@@ -10,6 +10,8 @@ import { createWorkspaceSchema } from "./schemas";
 
 export interface OnboardingState {
   error?: string;
+  /** What the user typed, handed back after a failed submit so the form keeps their input. */
+  name?: string;
 }
 
 const GENERIC_ERROR = "Something went wrong. Please try again.";
@@ -24,27 +26,25 @@ export async function createWorkspaceAction(
   formData: FormData,
 ): Promise<OnboardingState> {
   const rawName = formData.get("name");
-  const parsed = parseInput(
-    createWorkspaceSchema,
-    { name: typeof rawName === "string" ? rawName : "" },
-    GENERIC_ERROR,
-  );
-  if (!parsed.success) return { error: parsed.message };
+  const name = typeof rawName === "string" ? rawName : "";
+  // Every failure hands the input back (React resets an uncontrolled form after an action).
+  const parsed = parseInput(createWorkspaceSchema, { name }, GENERIC_ERROR);
+  if (!parsed.success) return { error: parsed.message, name };
 
   const user = await getCurrentUser();
-  if (!user) return { error: "Your session has expired. Please sign in again." };
+  if (!user) return { error: "Your session has expired. Please sign in again.", name };
 
   const limit = await limitAction(`user:${user.id}`, RATE_LIMIT_RULES.onboardingUser);
-  if (!limit.allowed) return { error: limit.message };
+  if (!limit.allowed) return { error: limit.message, name };
 
   try {
     const supabase = await createSupabaseServerClient();
     const { error } = await supabase.rpc("onboard_current_user", {
       p_workspace_name: parsed.data.name,
     });
-    if (error) return { error: GENERIC_ERROR };
+    if (error) return { error: GENERIC_ERROR, name };
   } catch {
-    return { error: GENERIC_ERROR };
+    return { error: GENERIC_ERROR, name };
   }
 
   revalidatePath("/app");
