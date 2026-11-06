@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 
 import { getCurrentUser } from "../auth/current-user";
+import { limitAction, RATE_LIMIT_RULES } from "../../lib/rate-limit";
 import { createSupabaseServerClient } from "../../lib/supabase/server";
+import { parseInput } from "../../lib/validation/parse-input";
 import { createWorkspaceSchema } from "./schemas";
 
 export interface OnboardingState {
@@ -22,13 +24,18 @@ export async function createWorkspaceAction(
   formData: FormData,
 ): Promise<OnboardingState> {
   const rawName = formData.get("name");
-  const parsed = createWorkspaceSchema.safeParse({
-    name: typeof rawName === "string" ? rawName : "",
-  });
-  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? GENERIC_ERROR };
+  const parsed = parseInput(
+    createWorkspaceSchema,
+    { name: typeof rawName === "string" ? rawName : "" },
+    GENERIC_ERROR,
+  );
+  if (!parsed.success) return { error: parsed.message };
 
   const user = await getCurrentUser();
   if (!user) return { error: "Your session has expired. Please sign in again." };
+
+  const limit = await limitAction(`user:${user.id}`, RATE_LIMIT_RULES.onboardingUser);
+  if (!limit.allowed) return { error: limit.message };
 
   try {
     const supabase = await createSupabaseServerClient();

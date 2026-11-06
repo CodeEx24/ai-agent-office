@@ -6,6 +6,8 @@ import { getSupabasePublicEnv } from "../env";
 export interface SessionResult {
   /** True only when the session cookie holds a verified, unexpired token. */
   isSignedIn: boolean;
+  /** The verified user id (`sub` claim) when signed in; used to key per-user rate limits. */
+  userId?: string;
   /** The response that carries any refreshed session cookies. Return it (or copy its cookies). */
   response: NextResponse;
 }
@@ -44,7 +46,8 @@ export async function updateSession(request: NextRequest): Promise<SessionResult
 
     // Nothing may run between createServerClient and getClaims: it is what refreshes the token.
     const { data, error } = await supabase.auth.getClaims();
-    return { isSignedIn: !error && Boolean(data?.claims.sub), response };
+    const userId = error ? undefined : data?.claims.sub;
+    return { isSignedIn: Boolean(userId), userId, response };
   } catch {
     return { isSignedIn: false, response };
   }

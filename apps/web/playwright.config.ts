@@ -81,6 +81,8 @@ export default defineConfig({
         APP_ENV: "local",
         // The dev-only 3D test page is off in production builds unless this is set (AGO-49).
         ENABLE_DEV_3D: "1",
+        // Same for the component gallery, so the CSP spec can cover /dev/ui (AGO-66).
+        ENABLE_UI_GALLERY: "1",
         NEXT_PUBLIC_APP_URL: baseURL,
         NEXT_PUBLIC_SUPABASE_URL: isLiveStack
           ? (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:44321")
