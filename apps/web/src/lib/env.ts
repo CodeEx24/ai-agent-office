@@ -56,6 +56,17 @@ export function getSentryDsn(): string | undefined {
 }
 
 /**
+ * Whether `X-Forwarded-For` / `X-Real-IP` may be trusted as the client address (AGO-201).
+ * Only `TRUST_PROXY_HEADERS=true` turns it on; anything else (unset, `false`) keeps it off. The
+ * server env check in `instrumentation.ts` rejects any other value at startup. Read at request
+ * time, like the public settings above, so the same build runs behind or without a proxy.
+ */
+export function shouldTrustProxyHeaders(): boolean {
+  const source = process.env;
+  return source.TRUST_PROXY_HEADERS === "true";
+}
+
+/**
  * Configured public origin of this app. Used for every URL sent to Supabase or emailed
  * (never derived from request headers). Set NEXT_PUBLIC_APP_URL to match the port you run on.
  */

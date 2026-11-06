@@ -17,7 +17,9 @@ export function OnboardingForm({ defaultName }: { defaultName: string }) {
       <Input
         id="workspace-name"
         name="name"
-        defaultValue={defaultName}
+        // After a failed submit the action returns what the user typed; React resets the form to
+        // its defaultValue, so this keeps their input instead of the suggested name (AGO-201).
+        defaultValue={state.name ?? defaultName}
         maxLength={120}
         required
         aria-invalid={Boolean(state.error)}

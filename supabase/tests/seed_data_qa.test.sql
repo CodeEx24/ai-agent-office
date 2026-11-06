@@ -12,7 +12,7 @@ insert into public.members (workspace_id, user_id, role) values
   ('12290000-0000-4000-8000-0000000000b1', '12290000-0000-4000-8000-00000000000b', 'owner');
 
 -- AC1: exact contents, owner membership, safe defaults
-select is((select count(*)::int from public.workspaces where name = 'Seed Workspace'), 1, 'AC1: exactly one seed workspace');
+select is((select count(*)::int from public.workspaces where id = '12200001-0000-4000-8000-000000000001' and name = 'Seed Workspace'), 1, 'AC1: exactly one seed workspace, by its fixed id (other workspaces from E2E or other suites may exist)');
 select is((select count(*)::int from public.skills where workspace_id = '12200001-0000-4000-8000-000000000001'), 3, 'AC1: exactly 3 starter skills');
 select is(
   (select role from public.members where workspace_id = '12200001-0000-4000-8000-000000000001' and user_id = '12200010-0000-4000-8000-000000000001' and removed_at is null),

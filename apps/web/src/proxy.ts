@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { isProtectedPath, signInPathFor } from "./features/auth/routes";
-import { getSentryDsn, getSupabaseUrl } from "./lib/env";
+import { getSentryDsn, getSupabaseUrl, shouldTrustProxyHeaders } from "./lib/env";
 import {
   getClientIp,
   getRateLimiter,
@@ -78,7 +78,7 @@ async function applyRateLimit(
   const match = matchRouteRateLimit(request.method, request.nextUrl.pathname);
   if (!match) return undefined;
 
-  const ip = getClientIp(request.headers);
+  const ip = getClientIp(request.headers, { trustProxy: shouldTrustProxyHeaders() });
   const key = match.scope === "user" && userId ? `user:${userId}` : `ip:${ip}`;
 
   try {

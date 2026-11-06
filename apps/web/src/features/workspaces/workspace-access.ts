@@ -30,6 +30,18 @@ export class WorkspaceAccessError extends Error {
   }
 }
 
+/**
+ * Thrown when the workspace lookup itself fails (query error, unreadable row). Distinct from "no
+ * workspace yet" (null), so an outage is never mistaken for a new user and shown the onboarding
+ * form. The message is generic; the underlying error stays on `cause` for logs and Sentry.
+ */
+export class WorkspaceLookupError extends Error {
+  constructor(cause?: unknown) {
+    super("Could not load your workspace.", { cause });
+    this.name = "WorkspaceLookupError";
+  }
+}
+
 const workspaceIdSchema = z.uuid();
 
 /**
@@ -72,6 +84,8 @@ export async function requireWorkspaceRole(
 /**
  * The signed-in user's workspace (their oldest active membership), or null before onboarding.
  * RLS already limits rows to workspaces the user belongs to; the user_id filter picks their own.
+ * A failed query or an unknown stored role throws `WorkspaceLookupError` instead of returning
+ * null, so the caller can tell "not onboarded" from "could not check" (AGO-201).
  */
 export async function getActiveWorkspace(userId: string): Promise<ActiveWorkspace | null> {
   const supabase = await createSupabaseServerClient();
@@ -83,9 +97,10 @@ export async function getActiveWorkspace(userId: string): Promise<ActiveWorkspac
     .order("created_at", { ascending: true })
     .limit(1)
     .maybeSingle();
-  if (error || !data) return null;
+  if (error) throw new WorkspaceLookupError(error);
+  if (!data) return null;
 
   const role = workspaceRoleSchema.safeParse(data.role);
-  if (!role.success) return null;
+  if (!role.success) throw new WorkspaceLookupError(role.error);
   return { id: data.workspaces.id, name: data.workspaces.name, role: role.data };
 }

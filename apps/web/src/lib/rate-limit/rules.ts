@@ -14,6 +14,8 @@ export const RATE_LIMIT_RULES = {
   authCallbackIp: { name: "auth-callback-ip", limit: 30, windowMs: MINUTE },
   /** Authenticated mutations under /app (onboarding, future agent and approval routes): per user. */
   appMutationUser: { name: "app-mutation-user", limit: 60, windowMs: MINUTE },
+  /** Authenticated reads of workspace catalogs under /api (AGO-125 capabilities): per user. */
+  apiReadUser: { name: "api-read-user", limit: 120, windowMs: MINUTE },
   /** Emailing a sign-in code to one address. */
   sendCodeEmail: { name: "send-code-email", limit: 5, windowMs: 10 * MINUTE },
   /** Guessing the 6-digit code for one address. */
@@ -38,6 +40,9 @@ export function matchRouteRateLimit(method: string, pathname: string): RouteRate
   const verb = method.toUpperCase();
   if (pathname === "/auth/callback" && verb === "GET") {
     return { rule: RATE_LIMIT_RULES.authCallbackIp, scope: "ip" };
+  }
+  if (pathname === "/api/capabilities" && verb === "GET") {
+    return { rule: RATE_LIMIT_RULES.apiReadUser, scope: "user" };
   }
   if (verb !== "POST") return undefined;
   if (pathname === "/sign-in") return { rule: RATE_LIMIT_RULES.signInIp, scope: "ip" };

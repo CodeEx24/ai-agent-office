@@ -22,6 +22,7 @@ const WS = "'12200001-0000-4000-8000-000000000001'";
 const SCOUT = "'12200020-0000-4000-8000-000000000001'";
 const TASK_1 = "'12200060-0000-4000-8000-000000000001'";
 const TASK_5 = "'12200060-0000-4000-8000-000000000005'";
+const SEED_USER = "'12200010-0000-4000-8000-000000000001'";
 const TABLES = ['members', 'agents', 'skills', 'agent_skills', 'agent_capabilities', 'tasks'];
 
 function psql(sql) {
@@ -35,19 +36,25 @@ function snapshot() {
   const parts = [
     `(select coalesce(md5(string_agg(row_to_json(w)::text, '' order by id)), '') from public.workspaces w where id = ${WS})`,
     ...TABLES.map((t) => `(select coalesce(md5(string_agg(row_to_json(x)::text, '' order by id)), '') from public.${t} x where workspace_id = ${WS})`),
-    `(select coalesce(md5(string_agg(email || id::text, '' order by id)), '') from auth.users where email like '%@agent-office.local')`,
+    `(select coalesce(md5(string_agg(email || id::text, '' order by id)), '') from auth.users where id = ${SEED_USER})`,
   ];
   return psql(`select ${parts.join(" || '|' || ")}`);
 }
 
+/**
+ * History rows in the SEED workspace only (AGO-201). The table-wide count failed after a live E2E run and
+ * raced the run_events suites, which write their own rows (in their own workspaces) while this runs. The seed
+ * must create none in its own workspace, which is what this proves.
+ */
 function historyRows() {
-  return Number(psql(`select (select count(*) from public.run_events) + (select count(*) from public.runs) + (select count(*) from public.approvals)`));
+  const own = (table) => `(select count(*) from public.${table} where workspace_id = ${WS})`;
+  return Number(psql(`select ${own('run_events')} + ${own('runs')} + ${own('approvals')}`));
 }
 
 describe.skipIf(!enabled)('AC1: db:seed gives the documented data', () => {
   it('AC1: one workspace, three strict idle agents, three skills, five tasks and the owner membership', () => {
     runSeed({});
-    expect(psql(`select count(*) from public.workspaces where name = 'Seed Workspace'`)).toBe('1');
+    expect(psql(`select count(*) from public.workspaces where id = ${WS} and name = 'Seed Workspace'`)).toBe('1');
     expect(psql(`select string_agg(name || ':' || mode || ':' || status, ',' order by name) from public.agents where workspace_id = ${WS}`)).toBe(
       'Reviewer:strict:idle,Scout:strict:idle,Scribe:strict:idle',
     );

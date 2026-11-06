@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   MemoryRateLimiter,
+  RATE_LIMIT_RULES,
   getClientIp,
   limitAction,
   matchRouteRateLimit,
@@ -18,22 +19,31 @@ afterEach(() => {
 describe("getClientIp", () => {
   const headers = (init: Record<string, string>) => new Headers(init);
 
-  it("uses the first x-forwarded-for hop", () => {
-    expect(getClientIp(headers({ "x-forwarded-for": "203.0.113.7, 10.0.0.1" }))).toBe(
+  const trusted = { trustProxy: true };
+
+  it("does not trust x-forwarded-for or x-real-ip by default (AGO-201)", () => {
+    const spoofed = headers({ "x-forwarded-for": "203.0.113.7", "x-real-ip": "198.51.100.2" });
+    expect(getClientIp(spoofed)).toBe("unknown");
+    expect(getClientIp(spoofed, {})).toBe("unknown");
+    expect(getClientIp(spoofed, { trustProxy: false })).toBe("unknown");
+  });
+
+  it("uses the first x-forwarded-for hop behind a trusted proxy", () => {
+    expect(getClientIp(headers({ "x-forwarded-for": "203.0.113.7, 10.0.0.1" }), trusted)).toBe(
       "203.0.113.7",
     );
   });
 
-  it("falls back to x-real-ip, then to a shared 'unknown' bucket", () => {
-    expect(getClientIp(headers({ "x-real-ip": "198.51.100.2" }))).toBe("198.51.100.2");
-    expect(getClientIp(headers({}))).toBe("unknown");
+  it("falls back to x-real-ip, then to a shared 'unknown' bucket, behind a trusted proxy", () => {
+    expect(getClientIp(headers({ "x-real-ip": "198.51.100.2" }), trusted)).toBe("198.51.100.2");
+    expect(getClientIp(headers({}), trusted)).toBe("unknown");
   });
 
   it("ignores values that are not IP literals", () => {
-    expect(getClientIp(headers({ "x-forwarded-for": "<script>alert(1)</script>" }))).toBe(
+    expect(getClientIp(headers({ "x-forwarded-for": "<script>alert(1)</script>" }), trusted)).toBe(
       "unknown",
     );
-    expect(getClientIp(headers({ "x-forwarded-for": "a".repeat(200) }))).toBe("unknown");
+    expect(getClientIp(headers({ "x-forwarded-for": "a".repeat(200) }), trusted)).toBe("unknown");
   });
 });
 
@@ -43,6 +53,15 @@ describe("matchRouteRateLimit", () => {
     expect(matchRouteRateLimit("GET", "/auth/callback")).toMatchObject({ scope: "ip" });
     expect(matchRouteRateLimit("POST", "/app")).toMatchObject({ scope: "user" });
     expect(matchRouteRateLimit("POST", "/app/agents")).toMatchObject({ scope: "user" });
+  });
+
+  it("limits GET /api/capabilities per user with the AGO-66 limiter (AGO-201)", () => {
+    expect(matchRouteRateLimit("GET", "/api/capabilities")).toEqual({
+      rule: RATE_LIMIT_RULES.apiReadUser,
+      scope: "user",
+    });
+    expect(matchRouteRateLimit("get", "/api/capabilities")).toMatchObject({ scope: "user" });
+    expect(matchRouteRateLimit("GET", "/api/capabilities/extra")).toBeUndefined();
   });
 
   it("does not limit page views or unrelated routes", () => {

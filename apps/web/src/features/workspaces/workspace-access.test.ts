@@ -10,12 +10,19 @@ vi.mock("../../lib/supabase/server", () => {
     select: () => chain,
     eq: () => chain,
     is: () => chain,
+    order: () => chain,
+    limit: () => chain,
     maybeSingle: () => maybeSingle() as unknown,
   };
   return { createSupabaseServerClient: () => Promise.resolve({ from: () => chain }) };
 });
 
-import { WorkspaceAccessError, requireWorkspaceRole } from "./workspace-access";
+import {
+  WorkspaceAccessError,
+  WorkspaceLookupError,
+  getActiveWorkspace,
+  requireWorkspaceRole,
+} from "./workspace-access";
 
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -84,5 +91,38 @@ describe("requireWorkspaceRole", () => {
     getCurrentUser.mockResolvedValue(null);
     expect(await outcome(requireWorkspaceRole(WORKSPACE_ID, "viewer"))).toBe("unauthenticated");
     expect(maybeSingle).not.toHaveBeenCalled();
+  });
+});
+
+describe("getActiveWorkspace", () => {
+  const row = { role: "owner", workspaces: { id: WORKSPACE_ID, name: "Acme" } };
+
+  it("returns the workspace and role", async () => {
+    maybeSingle.mockResolvedValue({ data: row, error: null });
+    await expect(getActiveWorkspace("user-1")).resolves.toEqual({
+      id: WORKSPACE_ID,
+      name: "Acme",
+      role: "owner",
+    });
+  });
+
+  it("returns null for a user with no membership yet (onboarding)", async () => {
+    maybeSingle.mockResolvedValue({ data: null, error: null });
+    await expect(getActiveWorkspace("user-1")).resolves.toBeNull();
+  });
+
+  it("surfaces a query error instead of reading as 'not onboarded' (AGO-201)", async () => {
+    const dbError = { message: "connection refused" };
+    maybeSingle.mockResolvedValue({ data: null, error: dbError });
+    const failure = await getActiveWorkspace("user-1").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(WorkspaceLookupError);
+    expect((failure as WorkspaceLookupError).cause).toBe(dbError);
+    // Generic message: nothing from the database reaches a page.
+    expect((failure as WorkspaceLookupError).message).not.toContain("connection refused");
+  });
+
+  it("surfaces an unknown stored role instead of guessing", async () => {
+    maybeSingle.mockResolvedValue({ data: { ...row, role: "superadmin" }, error: null });
+    await expect(getActiveWorkspace("user-1")).rejects.toBeInstanceOf(WorkspaceLookupError);
   });
 });

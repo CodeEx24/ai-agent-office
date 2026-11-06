@@ -124,6 +124,8 @@ export interface AppServer {
 export async function startAppServer(
   sentryEnv: { SENTRY_DSN?: string; NEXT_PUBLIC_SENTRY_DSN?: string },
   isReady: (baseUrl: string) => Promise<boolean>,
+  /** Extra variables for the server (AGO-201 QA: a Supabase URL behind a fault proxy, the proxy-trust switch). */
+  extraEnv: Readonly<Record<string, string>> = {},
 ): Promise<AppServer> {
   const port = await getFreePort();
   const baseUrl = `http://127.0.0.1:${String(port)}`;
@@ -139,7 +141,9 @@ export async function startAppServer(
   };
   delete env.SENTRY_DSN;
   delete env.NEXT_PUBLIC_SENTRY_DSN;
-  Object.assign(env, sentryEnv);
+  // Unset unless a test asks: the proxy-trust switch defaults to off (AGO-201).
+  delete env.TRUST_PROXY_HEADERS;
+  Object.assign(env, sentryEnv, extraEnv);
 
   const child: ChildProcess = spawn(
     process.execPath,

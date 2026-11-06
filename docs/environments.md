@@ -37,6 +37,19 @@ resources: Vercel and hosted Supabase are set up by a human.
   passes `APP_ENV` through to the `build`, `dev` and `test:e2e` tasks.
   Both the web app and the worker use one helper, `isAppEnvMissingInProduction`, via `parseServerEnv`.
 
+## Rate limiter and proxy headers (AGO-201)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TRUST_PROXY_HEADERS` | `false` | `true` or `false`. Set `true` only when the app runs behind a reverse proxy that **overwrites** `X-Forwarded-For` / `X-Real-IP` (Vercel does). The rate limiter then uses the first hop as the client address. |
+
+By default the forwarding headers are ignored, because without a trusted proxy a caller can set them to
+anything and get a fresh per-IP bucket on every request. With the switch off, every caller shares one
+`unknown` per-IP bucket (fails closed). Per-user and per-email limits never read these headers and are
+unchanged. Set it to `true` in preview and production on Vercel; Playwright sets it for the rate-limit
+specs. Not secret (the value may appear in a bundle); `.env.example` is protected by a deny rule, so the
+variable is documented here only (see `docs/tickets/AGO-201.md`).
+
 ## Worker variables (AGO-143)
 
 Beyond the shared server variables, the worker reads (all optional, validated in `apps/worker/src/config.ts`):

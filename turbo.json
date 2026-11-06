@@ -16,7 +16,7 @@
       "dependsOn": ["^build"],
       "cache": false,
       "persistent": true,
-      "passThroughEnv": ["PORT", "APP_ENV"]
+      "passThroughEnv": ["PORT", "APP_ENV", "TRUST_PROXY_HEADERS"]
     },
     "clean": {
       "cache": false
