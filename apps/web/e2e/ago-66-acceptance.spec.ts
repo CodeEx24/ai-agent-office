@@ -193,8 +193,6 @@ test.describe("AC1: every route validates input with Zod", () => {
       const page = await user.context.newPage();
       await page.goto("/app");
       const name = page.getByLabel("Workspace name");
-      // The form is prefilled; React resets it to that default after every action.
-      const defaultName = await name.inputValue();
       // Remove the client-side limits: the server must enforce its own.
       await name.evaluate((input: HTMLInputElement) => {
         input.removeAttribute("maxlength");
@@ -216,8 +214,9 @@ test.describe("AC1: every route validates input with Zod", () => {
         await page.getByRole("button", { name: "Create workspace" }).click();
         await responded;
         await expect(page.getByRole("main").getByRole("alert")).toContainText(message);
-        // React resets the form once the action settles; typing before that would be wiped.
-        await expect(name).toHaveValue(defaultName);
+        // AGO-201: a rejected submit hands the typed value back, so the form keeps it (it used to
+        // reset to the suggested name). Waiting for the value also outlasts React's form reset.
+        await expect(name).toHaveValue(value);
         expect(await page.content()).not.toMatch(STACK_TRACE);
       }
 
