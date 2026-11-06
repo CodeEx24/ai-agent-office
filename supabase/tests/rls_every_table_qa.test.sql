@@ -38,7 +38,8 @@ select is(
      'runs.workspace_id', 'runs.task_id', 'runs.agent_id',
      'budgets_usage.workspace_id', 'budgets_usage.agent_id', 'budgets_usage.period_start',
      'budgets_usage.period_end', 'budgets_usage.token_budget', 'budgets_usage.cost_budget_cents',
-     'notes_index.workspace_id', 'notes_index.path', 'notes_index.title', 'notes_index.content_hash', 'notes_index.metadata'
+     'notes_index.workspace_id', 'notes_index.path', 'notes_index.title', 'notes_index.content_hash', 'notes_index.metadata',
+     'policies.workspace_id', 'policies.level', 'policies.scope_id', 'policies.rule', 'policies.created_by', 'policies.updated_by'
    ]) e),
   'authenticated can INSERT exactly the ticket''s columns (no id, mode, status, version, hash, usage counters)'
 );
@@ -57,7 +58,8 @@ select is(
      'tasks.title', 'tasks.description', 'tasks.status', 'tasks.agent_id',
      'approvals.status', 'approvals.decided_by', 'approvals.decided_at',
      'budgets_usage.period_end', 'budgets_usage.token_budget', 'budgets_usage.cost_budget_cents',
-     'notes_index.title', 'notes_index.content_hash', 'notes_index.metadata', 'notes_index.indexed_at'
+     'notes_index.title', 'notes_index.content_hash', 'notes_index.metadata', 'notes_index.indexed_at',
+     'policies.rule', 'policies.archived_at', 'policies.updated_by'
    ]) e),
   'authenticated can UPDATE exactly the ticket''s columns'
 );
@@ -73,8 +75,8 @@ select is(
 select is(
   (select count(*)::int from pg_class t where t.relnamespace = 'public'::regnamespace and t.relkind = 'r'
      and has_table_privilege('authenticated', t.oid, 'SELECT')),
-  13,
-  'authenticated can SELECT all 13 tables (membership RLS filters the rows)'
+  14,
+  'authenticated can SELECT all 14 tables (membership RLS filters the rows)'
 );
 select is(
   (select count(*)::int from pg_class t where t.relnamespace = 'public'::regnamespace and t.relkind = 'r'
