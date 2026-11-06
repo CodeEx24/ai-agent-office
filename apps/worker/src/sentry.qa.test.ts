@@ -135,6 +135,10 @@ let tracker: ErrorTracker | undefined;
 let worker: WorkerHandle | undefined;
 
 afterEach(async () => {
+  // Breadcrumbs live on Sentry's global scopes and would otherwise ride along into the next test's
+  // events, so one leaking shape would make later, clean shapes look like leaks too.
+  Sentry.getIsolationScope().clearBreadcrumbs();
+  Sentry.getCurrentScope().clearBreadcrumbs();
   await tracker?.close();
   await worker?.stop();
   await ingest?.close();
@@ -283,8 +287,7 @@ describe("AC2: secrets are scrubbed from error payloads (every byte sent to the 
   });
 });
 
-// Shapes found missing during QA (AGO-104 AC2). Each is its own test so a failure names the shape.
-// These FAIL today: the free-text scrubber has no rule for them. They are findings for the implementer.
+// Further shapes probed during QA (AGO-104 AC2). Each is its own test so a failure names the shape.
 describe("AC2: further secret shapes must not reach the ingest", () => {
   const BODY = "Zk4m".repeat(12);
   const SHORT_BODY = "Zk4m".repeat(8);
@@ -293,6 +296,39 @@ describe("AC2: further secret shapes must not reach the ingest", () => {
     ["OpenAI admin key (sk-admin-)", `key sk-admin-${BODY}`, BODY],
     ["plain sk- key shorter than 48 characters", `key sk-${SHORT_BODY}`, SHORT_BODY],
     ["Set-Cookie header written into free text", `Set-Cookie: session=${BODY}; Path=/`, BODY],
+    [
+      "sk- key containing dots and underscores (up to the dot)",
+      `key sk-${BODY.slice(0, 20)}.${BODY.slice(20, 30)}_${BODY.slice(30)}`,
+      BODY.slice(0, 20),
+    ],
+    [
+      "sk-proj- key with an underscore",
+      `key sk-proj-${BODY.slice(0, 24)}_${BODY.slice(24)}`,
+      BODY.slice(24),
+    ],
+    [
+      "Authorization: Basic header",
+      `Authorization: Basic ${Buffer.from(`svc:${BODY}`).toString("base64")}`,
+      Buffer.from(`svc:${BODY}`).toString("base64").slice(0, 24),
+    ],
+    ["x-api-key header in free text", `request failed x-api-key: ${BODY} status=500`, BODY],
+    ["X-Api-Key header written with =", `X-Api-Key=${BODY}`, BODY],
+    [
+      "access_token in a URL query",
+      `GET https://api.example.test/cb?access_token=${BODY}&x=1`,
+      BODY,
+    ],
+    [
+      "access_token in a URL fragment",
+      `redirect https://app.example.test/cb#access_token=${BODY}&type=bearer`,
+      BODY,
+    ],
+    [
+      "Supabase sb_secret_ key with an underscore",
+      `key sb_secret_${BODY.slice(0, 20)}_${BODY.slice(20)}`,
+      BODY.slice(20),
+    ],
+    ["Cookie request header in free text", `Cookie: sb-access-token=${BODY}; theme=dark`, BODY],
   ];
 
   for (const [label, text, fragment] of shapes) {
