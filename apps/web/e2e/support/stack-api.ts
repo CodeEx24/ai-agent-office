@@ -44,6 +44,7 @@ export interface TestUser {
   id: string;
   email: string;
   accessToken: string;
+  refreshToken: string;
 }
 
 export interface ApiResult<T = unknown> {
@@ -84,14 +85,19 @@ async function call<T>(
 export async function createUser(label: string): Promise<TestUser> {
   const { anon } = stackKeys();
   const email = `${label}-${randomUUID().slice(0, 8)}@example.test`;
-  const result = await call<{ access_token: string; user: { id: string } }>(
+  const result = await call<{ access_token: string; refresh_token: string; user: { id: string } }>(
     "/auth/v1/signup",
     anon,
     anon,
     { method: "POST", body: { email, password: `Pw-${randomUUID()}` } },
   );
   if (result.status !== 200) throw new Error(`sign-up failed: ${String(result.status)}`);
-  return { id: result.body.user.id, email, accessToken: result.body.access_token };
+  return {
+    id: result.body.user.id,
+    email,
+    accessToken: result.body.access_token,
+    refreshToken: result.body.refresh_token,
+  };
 }
 
 /** A request made as `user` (their JWT with the anon key), exactly like a browser client. */

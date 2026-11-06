@@ -1,8 +1,8 @@
 import type { Page } from "@playwright/test";
 
 import { expect, isLiveStack, test } from "./fixtures";
-import { SignInPage } from "./pages/sign-in-page";
 import { svcRows } from "./support/rls-world";
+import { signInWithSessionCookie } from "./support/session-cookie";
 import {
   addMember,
   asServiceRole,
@@ -49,11 +49,11 @@ test.describe("AGO-125: capability catalog (local stack)", () => {
     "data.delete_irreversible": 4,
   };
 
-  async function signIn(page: Page, user: TestUser) {
-    const signInPage = new SignInPage(page);
-    await signInPage.goto("/sign-in?next=%2Fapp");
-    await signInPage.signInWithMagicLink(user.email);
-    await page.waitForURL(/\/app/);
+  // Writes the session cookie instead of going through the magic link: `/auth/callback` is rate
+  // limited per IP and the rest of the suite already uses most of that budget.
+  async function signIn(page: Page, baseURL: string | undefined, user: TestUser) {
+    if (!baseURL) throw new Error("baseURL is not configured");
+    await signInWithSessionCookie(page.context(), baseURL, user);
   }
 
   async function world() {
@@ -82,9 +82,10 @@ test.describe("AGO-125: capability catalog (local stack)", () => {
   for (const role of ["member", "viewer"] as const) {
     test(`AC3: a ${role} gets the whole catalog from the read API, lowest tier first`, async ({
       page,
+      baseURL,
     }) => {
       const w = await world();
-      await signIn(page, w[role]);
+      await signIn(page, baseURL, w[role]);
 
       const response = await page.request.get(`/api/capabilities?workspace_id=${w.workspaceId}`);
       expect(response.status()).toBe(200);
@@ -133,9 +134,12 @@ test.describe("AGO-125: capability catalog (local stack)", () => {
     expect(await response.json()).toEqual({ error: "unauthenticated" });
   });
 
-  test("AC3 (negative): a member of another workspace gets 403 and no data", async ({ page }) => {
+  test("AC3 (negative): a member of another workspace gets 403 and no data", async ({
+    page,
+    baseURL,
+  }) => {
     const w = await world();
-    await signIn(page, w.stranger);
+    await signIn(page, baseURL, w.stranger);
 
     const own = await page.request.get(`/api/capabilities?workspace_id=${w.otherWorkspaceId}`);
     expect(own.status(), "positive control: the stranger can read their own catalog").toBe(200);

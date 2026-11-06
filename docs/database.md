@@ -109,7 +109,7 @@ Rules that hold for every table: policies are `to authenticated`, one per comman
 
 ## Seed data
 
-`supabase/seed.sql` is loaded by `pnpm db:reset` and re-applied to the running local stack by `pnpm db:seed` (local container only, never a URL). It creates one workspace ("Seed Workspace"), an owner member (`seed-owner@agent-office.local`, no password), 3 agents in Strict mode (Scout, Scribe, Reviewer), 3 starter skills, tier 0 capabilities and 5 tasks. It uses fixed ids and `on conflict do nothing`, so running it again changes nothing. It never seeds `run_events`, `runs`, `approvals` or `claims`.
+`supabase/seed.sql` is loaded by `pnpm db:reset` and re-applied to the running local stack by `pnpm db:seed` (local container only, never a URL). It creates one workspace ("Seed Workspace"), an owner member (`seed-owner@agent-office.local`, no password), 3 agents in Strict mode (Scout, Scribe, Reviewer), 3 starter skills, tier 0 capabilities and 5 tasks. It uses fixed ids and `on conflict do nothing`, so running it again changes nothing. It never seeds `run_events`, `runs`, `approvals` or `claims`. The seed workspace also gets the 12 starter rows of the capability catalog (tiers 0 to 4, tier 3 and 4 default to approval) from the `workspaces` insert trigger (AGO-125); "tier 0 capabilities only" describes the capabilities granted to the seeded agents, not the catalog.
 
 Tests import the ids from `@ago/shared` (`SEED_WORKSPACE_ID`, `SEED_AGENTS`, `SEED_TASKS`, `SEED_COUNTS`, ...) instead of inventing data; a test fails if they drift from `seed.sql`. When you add a table that deserves starter rows, add them to `seed.sql` with a fixed id and the matching constant.
 

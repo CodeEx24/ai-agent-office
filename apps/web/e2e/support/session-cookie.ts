@@ -33,6 +33,38 @@ export async function writeSessionCookie(
 }
 
 /**
+ * Signs `user` in to the app by writing the session cookie directly, the same shape @supabase/ssr
+ * stores (`sb-<project ref>-auth-token`, base64url JSON). It skips the magic-link round trip, which
+ * is rate limited per IP at `/auth/callback`: a spec that needs several signed-in roles should use
+ * this instead of signing in through the UI. The tokens come from a real sign-up on the local stack,
+ * so the server still verifies them with the Auth server on every request.
+ */
+export async function signInWithSessionCookie(
+  context: BrowserContext,
+  baseURL: string,
+  user: { id: string; email: string; accessToken: string; refreshToken: string },
+  supabaseUrl: string = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://127.0.0.1:44321",
+): Promise<void> {
+  const projectRef = new URL(supabaseUrl).hostname.split(".")[0] ?? "";
+  const expiresIn = 3600;
+  const session = {
+    access_token: user.accessToken,
+    refresh_token: user.refreshToken,
+    token_type: "bearer",
+    expires_in: expiresIn,
+    expires_at: Math.floor(Date.now() / 1000) + expiresIn,
+    user: { id: user.id, email: user.email },
+  };
+  await context.addCookies([
+    {
+      name: `sb-${projectRef}-auth-token`,
+      value: BASE64_PREFIX + Buffer.from(JSON.stringify(session), "utf8").toString("base64url"),
+      url: baseURL,
+    },
+  ]);
+}
+
+/**
  * Changes a character in the middle of the token's last segment (the signature of a JWT, or the
  * whole of an opaque refresh token). Never the final character: it can hold base64 padding bits
  * that decoders ignore, which would leave the token valid.
