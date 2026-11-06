@@ -78,8 +78,29 @@ describe("safeMarkdownUrl", () => {
     "mailto:a@b.example",
     "#anchor",
     "/app/skills",
+    "/skills?tab=versions#v2",
+    "https://a.example/a/b",
   ])("allows %s", (url) => {
     expect(safeMarkdownUrl(url)).toBe(url);
+  });
+
+  it.each([
+    "/\\evil.com",
+    "//evil.com",
+    "\\\\evil.com",
+    "\\evil.com",
+    "/%5Cevil.com",
+    "/%5cevil.com",
+    "/ok\\evil.com",
+    "https://a.example\\@evil.com",
+    "javascript:alert(1)",
+  ])("blocks protocol-relative and backslash target %j", (url) => {
+    expect(safeMarkdownUrl(url)).toBe("");
+  });
+
+  it("renders no link for a backslash host in a Markdown link", () => {
+    const out = html("[x](</\\evil.com>) [y](<//evil.com>)");
+    expect(out).not.toMatch(/href=/i);
   });
 
   it.each(["javascript:x", "data:text/plain,hi", "//x.example", "ftp://x.example", "", "a b"])(

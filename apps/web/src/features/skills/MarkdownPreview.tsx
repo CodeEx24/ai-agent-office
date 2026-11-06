@@ -10,7 +10,9 @@ import Markdown, { type Components } from "react-markdown";
  * Nothing here uses `dangerouslySetInnerHTML`, so it also works under the strict script CSP (AGO-66).
  */
 
-const SAFE_URL = /^(?:https?:\/\/|mailto:|#|\/(?!\/))/i;
+// Allowed: https:, http:, mailto:, a `#anchor`, or a same-origin path: one `/` followed by a character that
+// is neither `/` nor `\` (browsers read `/\host` and `//host` as protocol-relative, i.e. another origin).
+const SAFE_URL = /^(?:https?:\/\/|mailto:|#|\/[^/\\])/i;
 
 /** Allow-list for link targets. Anything else becomes an empty string. */
 export function safeMarkdownUrl(url: string): string {
@@ -18,7 +20,9 @@ export function safeMarkdownUrl(url: string): string {
   // Control characters or spaces inside the URL are a classic way to hide `java\tscript:`.
   // eslint-disable-next-line no-control-regex
   const hasHiddenChars = /[\u0000- \u007f-\u009f]/.test(trimmed);
-  return SAFE_URL.test(trimmed) && !hasHiddenChars ? trimmed : "";
+  // Any backslash (raw or percent-encoded) is rejected: browsers normalize `\` to `/`.
+  const hasBackslash = /\\|%5c/i.test(trimmed);
+  return SAFE_URL.test(trimmed) && !hasHiddenChars && !hasBackslash ? trimmed : "";
 }
 
 const DISALLOWED_ELEMENTS = [
