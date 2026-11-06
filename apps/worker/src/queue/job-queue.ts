@@ -3,6 +3,7 @@ import { PgBoss } from "pg-boss";
 
 import { createPgRunEventStore, createRunEventEmitter } from "../events/index.js";
 import { withContext, type Logger } from "../logger.js";
+import { hardenPgbossFunctions } from "./pgboss-hardening.js";
 import {
   DEFAULT_RUN_RETRY_POLICY,
   RUN_DEAD_LETTER_QUEUE,
@@ -145,6 +146,8 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
     const instance = newBoss();
     try {
       await instance.start();
+      // pg-boss may have (re)created functions during install or upgrade: close their default PUBLIC grant.
+      await hardenPgbossFunctions(pool);
       await instance.createQueue(RUN_DEAD_LETTER_QUEUE, { policy: "standard" });
       const queueSettings = {
         deadLetter: RUN_DEAD_LETTER_QUEUE,
