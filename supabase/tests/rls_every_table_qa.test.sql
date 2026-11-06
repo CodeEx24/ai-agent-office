@@ -70,14 +70,14 @@ select is(
   (select array_agg(t.relname::text order by t.relname::text collate "C")
    from pg_class t where t.relnamespace = 'public'::regnamespace and t.relkind = 'r'
      and has_table_privilege('authenticated', t.oid, 'DELETE')),
-  array['agent_capabilities', 'agent_skills', 'agents', 'notes_index', 'skills', 'tasks'],
-  'authenticated can DELETE only from agents, skills, agent_skills, agent_capabilities, tasks, notes_index'
+  array['agent_capabilities', 'agent_skills', 'agents', 'notes_index', 'tasks'],
+  'authenticated can DELETE only from agents, agent_skills, agent_capabilities, tasks, notes_index'
 );
 select is(
   (select count(*)::int from pg_class t where t.relnamespace = 'public'::regnamespace and t.relkind = 'r'
      and has_table_privilege('authenticated', t.oid, 'SELECT')),
-  15,
-  'authenticated can SELECT all 15 tables (membership RLS filters the rows)'
+  16,
+  'authenticated can SELECT all 16 tables (membership RLS filters the rows)'
 );
 select is(
   (select count(*)::int from pg_class t where t.relnamespace = 'public'::regnamespace and t.relkind = 'r'
