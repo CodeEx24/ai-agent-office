@@ -1,4 +1,4 @@
-import { RUN_EVENT_VERSION, runEventSchema, toRunEventColumns } from "@ago/shared";
+import { RUN_EVENT_TYPES, RUN_EVENT_VERSION, runEventSchema, toRunEventColumns } from "@ago/shared";
 
 import type { Logger } from "../logger.js";
 import type { RunEventInput, RunEventType } from "@ago/shared";
@@ -39,10 +39,8 @@ export interface ValidationIssue {
 /** An event failed its schema. Carries paths and messages only, never the offending values. */
 export class RunEventValidationError extends Error {
   readonly issues: readonly ValidationIssue[];
-  constructor(eventType: string, issues: readonly ValidationIssue[]) {
-    super(
-      `invalid run event "${eventType}": ${issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`,
-    );
+  constructor(issues: readonly ValidationIssue[]) {
+    super(`invalid run event: ${issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`);
     this.name = "RunEventValidationError";
     this.issues = issues;
   }
@@ -64,13 +62,21 @@ export interface RunEventEmitterOptions {
   readonly logger?: Logger;
 }
 
+/** Zod embeds caller-supplied key names in this message, so it is replaced with a fixed one. */
+const UNRECOGNIZED_KEYS_CODE = "unrecognized_keys";
+
 function toIssues(error: {
-  issues: readonly { path: readonly PropertyKey[]; message: string }[];
+  issues: readonly { code: string; path: readonly PropertyKey[]; message: string }[];
 }): ValidationIssue[] {
   return error.issues.map((issue) => ({
     path: issue.path.map(String).join(".") || "(root)",
-    message: issue.message,
+    message: issue.code === UNRECOGNIZED_KEYS_CODE ? "Unrecognized key" : issue.message,
   }));
+}
+
+/** Caller strings are never logged: only a type the schema knows is safe to record. */
+function loggableType(type: unknown): string {
+  return RUN_EVENT_TYPES.find((known) => known === type) ?? "unknown";
 }
 
 /** Emitter bound to one workspace and run. Every event is validated against `runEventSchema` first. */
@@ -82,8 +88,8 @@ export function createRunEventEmitter(options: RunEventEmitterOptions): RunEvent
       const parsed = runEventSchema.safeParse(candidate);
       if (!parsed.success) {
         const issues = toIssues(parsed.error);
-        logger?.warn({ event_type: input.type, issues }, "run event rejected");
-        throw new RunEventValidationError(input.type, issues);
+        logger?.warn({ event_type: loggableType(input.type), issues }, "run event rejected");
+        throw new RunEventValidationError(issues);
       }
       const columns = toRunEventColumns(parsed.data);
       try {
