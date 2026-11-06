@@ -143,7 +143,8 @@ insert into ago107_t.expected values
   ('claims', 'select', 1), ('claims', 'insert', null), ('claims', 'update', null), ('claims', 'delete', null),
   ('budgets_usage', 'select', 1), ('budgets_usage', 'insert', 3), ('budgets_usage', 'update', 3), ('budgets_usage', 'delete', null),
   ('notes_index', 'select', 1), ('notes_index', 'insert', 2), ('notes_index', 'update', 2), ('notes_index', 'delete', 2),
-  ('policies', 'select', 1), ('policies', 'insert', 3), ('policies', 'update', 3), ('policies', 'delete', null);
+  ('policies', 'select', 1), ('policies', 'insert', 3), ('policies', 'update', 3), ('policies', 'delete', null),
+  ('capabilities', 'select', 1), ('capabilities', 'insert', null), ('capabilities', 'update', 3), ('capabilities', 'delete', null);
 
 -- One statement per table and command, always aimed at workspace A (the outsider is the attacker).
 create table ago107_t.cases (tbl text, cmd text, stmt text, primary key (tbl, cmd));
@@ -203,7 +204,11 @@ insert into ago107_t.cases values
   ('policies', 'select', $q$select 1 from public.policies where id = '10700000-0000-4000-8000-0000000013a1'$q$),
   ('policies', 'insert', $q$insert into public.policies (workspace_id, level, scope_id, rule, created_by, updated_by) values ('10700000-0000-4000-8000-0000000000a1', 'team', '10700000-0000-4000-8000-0000000015a1', '{"version":1,"rules":[]}', (select m.id from public.members m where m.workspace_id = '10700000-0000-4000-8000-0000000000a1' and m.user_id = (select auth.uid())), (select m.id from public.members m where m.workspace_id = '10700000-0000-4000-8000-0000000000a1' and m.user_id = (select auth.uid())))$q$),
   ('policies', 'update', $q$update public.policies set rule = '{"version":1,"rules":[{"action":"x","effect":"deny"}]}', updated_by = (select m.id from public.members m where m.workspace_id = '10700000-0000-4000-8000-0000000000a1' and m.user_id = (select auth.uid())) where id = '10700000-0000-4000-8000-0000000013a1'$q$),
-  ('policies', 'delete', $q$delete from public.policies where id = '10700000-0000-4000-8000-0000000013c1'$q$);
+  ('policies', 'delete', $q$delete from public.policies where id = '10700000-0000-4000-8000-0000000013c1'$q$),
+  ('capabilities', 'select', $q$select 1 from public.capabilities where workspace_id = '10700000-0000-4000-8000-0000000000a1' and key = 'vault.read'$q$),
+  ('capabilities', 'insert', $q$insert into public.capabilities (workspace_id, key, name, tier, scope, default_mode) values ('10700000-0000-4000-8000-0000000000a1', 'probe.cap', 'Probe', 0, 'agent', 'automatic')$q$),
+  ('capabilities', 'update', $q$update public.capabilities set description = 'edited' where workspace_id = '10700000-0000-4000-8000-0000000000a1' and key = 'vault.read'$q$),
+  ('capabilities', 'delete', $q$delete from public.capabilities where workspace_id = '10700000-0000-4000-8000-0000000000a1' and key = 'vault.read'$q$);
 
 create table ago107_t.results (principal text, tbl text, cmd text, outcome text);
 grant select on ago107_t.cases, ago107_t.principals to authenticated;
@@ -217,10 +222,10 @@ select is_empty(
 select is_empty(
   $$select t.tbl from (select tbl, count(distinct cmd) n from ago107_t.cases group by tbl) t where t.n <> 4$$,
   'AC2: every table is exercised with select, insert, update and delete');
-select is((select count(*)::int from ago107_t.cases), 56, 'AC2: 14 tables x 4 commands = 56 cases');
-select is((select count(*)::int from ago107_t.cases c join ago107_t.expected e using (tbl, cmd)), 56, 'AC2: every case has a documented expectation');
+select is((select count(*)::int from ago107_t.cases), 60, 'AC2: 15 tables x 4 commands = 60 cases');
+select is((select count(*)::int from ago107_t.cases c join ago107_t.expected e using (tbl, cmd)), 60, 'AC2: every case has a documented expectation');
 
--- run the 56 cases as each principal
+-- run the 60 cases as each principal
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000001","role":"authenticated"}', true);
 insert into ago107_t.results select 'owner', tbl, cmd, ago107_t.attempt(stmt) from ago107_t.cases;
@@ -235,7 +240,7 @@ insert into ago107_t.results select 'outsider', tbl, cmd, ago107_t.attempt(stmt)
 reset role;
 
 -- 5-7. the matrix: actual outcome equals the documented one for every principal, table and command
-select is((select count(*)::int from ago107_t.results), 280, 'AC2: 5 principals x 56 cases were attempted');
+select is((select count(*)::int from ago107_t.results), 300, 'AC2: 5 principals x 60 cases were attempted');
 create view ago107_t.mismatches as
   select r.principal, r.tbl, r.cmd, r.outcome,
          case when e.min_rank is not null and p.rank >= e.min_rank then 'allowed' else 'denied' end as expected
@@ -260,16 +265,16 @@ select is((select count(*)::int from ago107_t.results where principal in ('remov
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000001","role":"authenticated"}', true);
 select is_empty($$select * from ago107_t.visibility('10700000-0000-4000-8000-0000000000a1') where foreign_rows <> 0 or own = 0$$,
-  'AC1: owner of A sees A''s rows in all 14 tables and no row of B');
+  'AC1: owner of A sees A''s rows in all 15 tables and no row of B');
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000002","role":"authenticated"}', true);
 select is_empty($$select * from ago107_t.visibility('10700000-0000-4000-8000-0000000000a1') where foreign_rows <> 0 or own = 0$$,
-  'AC1: member of A sees A''s rows in all 14 tables and no row of B');
+  'AC1: member of A sees A''s rows in all 15 tables and no row of B');
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000003","role":"authenticated"}', true);
 select is_empty($$select * from ago107_t.visibility('10700000-0000-4000-8000-0000000000a1') where foreign_rows <> 0 or own = 0$$,
-  'AC1: viewer of A sees A''s rows in all 14 tables and no row of B');
+  'AC1: viewer of A sees A''s rows in all 15 tables and no row of B');
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000005","role":"authenticated"}', true);
 select is_empty($$select * from ago107_t.visibility('10700000-0000-4000-8000-0000000000b1') where foreign_rows <> 0 or own = 0$$,
-  'AC1: owner of B sees B''s rows in all 14 tables and no row of A');
+  'AC1: owner of B sees B''s rows in all 15 tables and no row of A');
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000004","role":"authenticated"}', true);
 select is((select coalesce(sum(own + foreign_rows), 0)::int from ago107_t.visibility('10700000-0000-4000-8000-0000000000a1')), 0,
   'AC1: a soft-removed member sees zero rows in every table');
