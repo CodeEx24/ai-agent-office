@@ -7,7 +7,7 @@
 -- Run: pnpm exec supabase test db (inside the db lock).
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(58);
+select plan(68);
 
 -- fixtures (as postgres): o = owner of A, m = member of A, v = viewer of A, b = owner of B
 insert into auth.users (id, instance_id, aud, role, email) values
@@ -151,7 +151,38 @@ set local role anon;
 select throws_ok($$select count(*) from public.skill_versions$$, '42501', null, 'anon cannot read versions');
 select throws_ok($$select count(*) from public.skills$$, '42501', null, 'anon cannot read skills');
 
--- 53-58. the trigger functions are closed to users, and deleting a skill or workspace still cascades
+-- 53-62. append-only for EVERY role, service_role and the table owner included (AGO-102 run_events pattern)
+reset role;
+select is(
+  (select count(*)::int from unnest(array['anon', 'authenticated', 'service_role']) r,
+      unnest(array['UPDATE', 'DELETE', 'TRUNCATE', 'TRIGGER', 'REFERENCES']) p
+    where has_table_privilege(r, 'public.skill_versions'::regclass, p))
+  + (select count(*)::int from unnest(array['anon', 'authenticated', 'service_role']) r
+      where has_any_column_privilege(r, 'public.skill_versions'::regclass, 'UPDATE')),
+  0, 'anon, authenticated and service_role hold no UPDATE/DELETE/TRUNCATE/TRIGGER/REFERENCES on skill_versions (table or column level)');
+select is(
+  (select count(*)::int from pg_trigger
+    where tgrelid = 'public.skill_versions'::regclass and not tgisinternal
+      and tgname in ('skill_versions_block_update', 'skill_versions_block_delete', 'skill_versions_block_truncate')
+      and tgenabled = 'A'),
+  3, 'the 3 immutability triggers exist and are ENABLE ALWAYS (they fire even in replica mode)');
+select throws_ok($$truncate public.skill_versions$$, '42501', null, 'the table owner cannot TRUNCATE skill_versions (trigger)');
+select throws_ok($$truncate public.skills cascade$$, '42501', null, 'a TRUNCATE ... CASCADE from skills cannot empty skill_versions either');
+set local role service_role;
+select throws_ok($$update public.skill_versions set body = 'tampered' where version = 1$$, '42501', null, 'service_role cannot UPDATE a version');
+select throws_ok($$delete from public.skill_versions where version = 1$$, '42501', null, 'service_role cannot DELETE a version');
+select throws_ok($$truncate public.skill_versions$$, '42501', null, 'service_role cannot TRUNCATE skill_versions');
+reset role;
+set local role authenticated;
+select throws_ok($$truncate public.skill_versions$$, '42501', null, 'authenticated cannot TRUNCATE skill_versions');
+reset role;
+set local role anon;
+select throws_ok($$truncate public.skill_versions$$, '42501', null, 'anon cannot TRUNCATE skill_versions');
+reset role;
+select is((select count(*)::int from public.skill_versions where skill_id = '12800000-0000-4000-8000-0000000003a1'), 4,
+  'all four versions of the skill are intact after every blocked change');
+
+-- 63-68. the trigger functions are closed to users, and deleting a skill or workspace still cascades
 reset role;
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"12800000-0000-4000-8000-00000000000a","role":"authenticated"}', true);

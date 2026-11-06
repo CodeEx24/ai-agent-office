@@ -22,6 +22,7 @@ grant delete on public.skills to authenticated;
 drop trigger if exists append_skill_version on public.skills;
 drop trigger if exists bump_skill_version on public.skills;
 drop policy if exists skill_versions_select_viewer on public.skill_versions;
+drop trigger if exists skill_versions_block_truncate on public.skill_versions;
 drop trigger if exists skill_versions_block_delete on public.skill_versions;
 drop trigger if exists skill_versions_block_update on public.skill_versions;
 drop table if exists public.skill_versions;

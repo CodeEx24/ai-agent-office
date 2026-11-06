@@ -9,8 +9,8 @@
 --   changes (and once on insert), so no code path can edit a skill without leaving a version behind.
 -- * Humans decide: only owners create or edit skills and assign or remove them. Members and viewers read.
 --   An agent never writes a skill. Nobody can delete a skill through the API (no delete grant).
--- * Versions are immutable for every role, service_role included: UPDATE always raises; DELETE raises unless the
---   parent skill or workspace is already gone (the FK cascade).
+-- * Versions are immutable for every role, service_role included: UPDATE and TRUNCATE always raise (and the
+--   privileges are revoked); DELETE raises unless the parent skill or workspace is already gone (the FK cascade).
 -- * An assignment follows the latest version (no pin column). Pinning is a follow-up (needs an UPDATE grant).
 
 -- Skill text is Markdown and untrusted data. One cap, mirrored by SKILL_BODY_MAX_LENGTH in packages/shared.
@@ -98,11 +98,22 @@ create trigger skill_versions_block_update before update on public.skill_version
   for each row execute function private.skill_versions_block_change();
 create trigger skill_versions_block_delete before delete on public.skill_versions
   for each row execute function private.skill_versions_block_change();
+-- TRUNCATE skips row triggers and RLS, so it needs its own statement trigger (same pattern as AGO-102 run_events).
+-- The function raises for it: only a row-level DELETE with a vanished parent is let through.
+create trigger skill_versions_block_truncate before truncate on public.skill_versions
+  for each statement execute function private.skill_versions_block_change();
+-- ENABLE ALWAYS: also fire under session_replication_role = replica.
+alter table public.skill_versions enable always trigger skill_versions_block_update;
+alter table public.skill_versions enable always trigger skill_versions_block_delete;
+alter table public.skill_versions enable always trigger skill_versions_block_truncate;
 
 -- 4. RLS and grants. skill_versions: read only. skills and agent_skills: owner writes.
 alter table public.skill_versions enable row level security;
 revoke all on table public.skill_versions from anon, authenticated;
 grant select on public.skill_versions to authenticated;
+-- service_role bypasses RLS and gets default grants: take away everything that modifies or empties the table.
+revoke update, delete, truncate, trigger, references on table public.skill_versions from public, anon, authenticated, service_role;
+revoke update (id, workspace_id, skill_id, version, body, created_by, created_at) on public.skill_versions from public, anon, authenticated, service_role;
 create policy skill_versions_select_viewer on public.skill_versions for select to authenticated
   using (private.is_member(workspace_id));
 
