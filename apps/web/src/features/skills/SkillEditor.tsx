@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { SKILL_BODY_MAX_LENGTH, SKILL_DESCRIPTION_MAX_LENGTH } from "@ago/shared/skills";
+import { SKILL_BODY_MAX_LENGTH, SKILL_DESCRIPTION_MAX_LENGTH } from "@ago/shared/skill-limits";
 import { Button, Input, Label } from "@ago/ui";
 
 import { saveSkillAction, type SkillActionState } from "./actions";
@@ -36,12 +36,12 @@ export function SkillEditor({
   const [draft, setDraft] = useState(body);
 
   return (
-    <form action={action} className="grid gap-4" aria-label="Edit skill">
+    <form action={action} className="grid min-w-0 gap-4" aria-label="Edit skill">
       <input type="hidden" name="workspaceId" value={workspaceId} />
       <input type="hidden" name="skillId" value={skillId} />
       <input type="hidden" name="expectedVersion" value={version} />
 
-      <div className="grid gap-2">
+      <div className="grid min-w-0 gap-2">
         <Label htmlFor="skill-description">Description</Label>
         <Input
           id="skill-description"
@@ -51,7 +51,7 @@ export function SkillEditor({
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         <div className="grid content-start gap-2">
           <Label htmlFor="skill-body">Skill text (Markdown)</Label>
           <textarea
@@ -72,7 +72,7 @@ export function SkillEditor({
         </div>
         <section className="grid content-start gap-2" aria-label="Preview">
           <h2 className="text-sm font-medium">Preview</h2>
-          <div className="min-h-64 rounded-md border p-3">
+          <div className="min-h-64 min-w-0 overflow-x-auto rounded-md border p-3">
             <MarkdownPreview text={draft} />
           </div>
         </section>

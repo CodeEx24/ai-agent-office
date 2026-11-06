@@ -38,7 +38,7 @@ export default async function SkillPage({ params }: { params: Promise<{ skillId:
   const canEdit = hasMinRole(workspace.role, "owner");
 
   return (
-    <main className="mx-auto grid max-w-5xl gap-8 p-8">
+    <main className="mx-auto grid max-w-5xl gap-8 p-8 [&>*]:min-w-0">
       <header className="grid gap-1">
         <Link
           href="/app/skills"
@@ -46,7 +46,10 @@ export default async function SkillPage({ params }: { params: Promise<{ skillId:
         >
           ← All skills
         </Link>
-        <h1 className="text-2xl font-bold tracking-tight" data-testid="skill-name">
+        <h1
+          className="text-2xl font-bold tracking-tight [overflow-wrap:anywhere]"
+          data-testid="skill-name"
+        >
           {skill.name}
         </h1>
         <p className="text-sm text-muted-foreground" data-testid="skill-version">
@@ -65,9 +68,11 @@ export default async function SkillPage({ params }: { params: Promise<{ skillId:
       ) : (
         <section className="grid gap-2" aria-label="Skill text">
           {skill.description ? (
-            <p className="text-sm text-muted-foreground">{skill.description}</p>
+            <p className="text-sm [overflow-wrap:anywhere] text-muted-foreground">
+              {skill.description}
+            </p>
           ) : null}
-          <div className="rounded-md border p-3">
+          <div className="min-w-0 overflow-x-auto rounded-md border p-3">
             <MarkdownPreview text={skill.body} />
           </div>
           <p className="text-sm text-muted-foreground">Only workspace owners can edit skills.</p>

@@ -14,13 +14,13 @@ export function VersionHistory({
   currentVersion: number;
 }) {
   return (
-    <section className="grid gap-3" aria-label="Version history">
+    <section className="grid min-w-0 gap-3" aria-label="Version history">
       <h2 className="text-lg font-semibold">Version history</h2>
-      <ol className="grid gap-2" data-testid="version-history">
+      <ol className="grid min-w-0 gap-2" data-testid="version-history">
         {versions.map((version) => (
           <li
             key={version.id}
-            className="rounded-md border"
+            className="min-w-0 rounded-md border"
             data-testid={`version-${String(version.version)}`}
           >
             <details>
@@ -32,7 +32,7 @@ export function VersionHistory({
                   · {new Date(version.createdAt).toISOString().slice(0, 16).replace("T", " ")} UTC
                 </span>
               </summary>
-              <div className="border-t p-3">
+              <div className="min-w-0 border-t p-3">
                 <MarkdownPreview text={version.body} />
               </div>
             </details>

@@ -57,15 +57,24 @@ const components: Components = {
     <blockquote className="my-2 border-l-2 pl-3 text-muted-foreground">{children}</blockquote>
   ),
   pre: ({ children }) => (
-    <pre className="my-2 overflow-x-auto rounded-md bg-muted p-3 text-sm">{children}</pre>
+    <pre className="my-2 max-w-full overflow-x-auto rounded-md bg-muted p-3 text-sm">
+      {children}
+    </pre>
   ),
-  code: ({ children }) => <code className="rounded bg-muted px-1 py-0.5 text-sm">{children}</code>,
+  code: ({ children }) => (
+    <code className="rounded bg-muted px-1 py-0.5 text-sm [overflow-wrap:anywhere]">
+      {children}
+    </code>
+  ),
 };
 
 /** Safe Markdown rendering of untrusted skill text. Works on the server and in the browser. */
 export function MarkdownPreview({ text }: { text: string }) {
   return (
-    <div data-testid="markdown-preview" className="min-w-0 text-sm break-words">
+    <div
+      data-testid="markdown-preview"
+      className="max-w-full min-w-0 text-sm [overflow-wrap:anywhere] break-words"
+    >
       {text.trim() ? (
         <Markdown
           skipHtml

@@ -69,7 +69,7 @@ export function AssignSkillPanel({
               key={assignment.agentId}
               className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
             >
-              <span>{assignment.agentName}</span>
+              <span className="min-w-0 [overflow-wrap:anywhere]">{assignment.agentName}</span>
               {canEdit ? (
                 <RemoveButton workspaceId={workspaceId} skillId={skillId} agent={assignment} />
               ) : null}

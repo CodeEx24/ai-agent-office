@@ -22,7 +22,7 @@ export default async function SkillsPage() {
   const canEdit = hasMinRole(workspace.role, "owner");
 
   return (
-    <main className="mx-auto grid max-w-3xl gap-6 p-8">
+    <main className="mx-auto grid max-w-3xl gap-6 p-8 [&>*]:min-w-0">
       <header className="grid gap-1">
         <h1 className="text-2xl font-bold tracking-tight">Skills</h1>
         <p className="text-sm text-muted-foreground">
@@ -34,17 +34,19 @@ export default async function SkillsPage() {
       {skills.length === 0 ? (
         <p className="text-muted-foreground">No skills yet.</p>
       ) : (
-        <ul className="grid gap-2" data-testid="skill-list">
+        <ul className="grid min-w-0 gap-2" data-testid="skill-list">
           {skills.map((skill) => (
-            <li key={skill.id} className="rounded-md border">
+            <li key={skill.id} className="min-w-0 rounded-md border">
               <Link
                 href={`/app/skills/${skill.id}`}
                 className="flex items-baseline justify-between gap-3 px-3 py-2 hover:bg-accent"
               >
-                <span>
-                  <span className="font-medium">{skill.name}</span>
+                <span className="min-w-0">
+                  <span className="font-medium [overflow-wrap:anywhere]">{skill.name}</span>
                   {skill.description ? (
-                    <span className="block text-sm text-muted-foreground">{skill.description}</span>
+                    <span className="block text-sm [overflow-wrap:anywhere] text-muted-foreground">
+                      {skill.description}
+                    </span>
                   ) : null}
                 </span>
                 <span className="text-xs text-muted-foreground">v{skill.version}</span>

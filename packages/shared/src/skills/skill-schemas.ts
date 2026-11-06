@@ -1,14 +1,21 @@
 import { z } from "zod";
 
+import {
+  SKILL_BODY_MAX_LENGTH,
+  SKILL_DESCRIPTION_MAX_LENGTH,
+  SKILL_NAME_MAX_LENGTH,
+} from "./skill-limits.js";
+
+export {
+  SKILL_BODY_MAX_LENGTH,
+  SKILL_DESCRIPTION_MAX_LENGTH,
+  SKILL_NAME_MAX_LENGTH,
+} from "./skill-limits.js";
+
 /**
  * Skill library (AGO-128). A skill is Markdown know-how an owner writes and assigns to agents. It is
  * untrusted data, never instructions to the platform, and it never grants a permission (see capabilities).
  */
-
-/** Longest skill text. Mirrors the `skills_body_length_check` and `skill_versions.body` checks. */
-export const SKILL_BODY_MAX_LENGTH = 20_000;
-export const SKILL_NAME_MAX_LENGTH = 120;
-export const SKILL_DESCRIPTION_MAX_LENGTH = 500;
 
 export const skillNameSchema = z
   .string()

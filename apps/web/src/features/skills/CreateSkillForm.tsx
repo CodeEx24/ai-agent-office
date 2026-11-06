@@ -5,7 +5,7 @@ import {
   SKILL_BODY_MAX_LENGTH,
   SKILL_DESCRIPTION_MAX_LENGTH,
   SKILL_NAME_MAX_LENGTH,
-} from "@ago/shared/skills";
+} from "@ago/shared/skill-limits";
 import { Button, Input, Label } from "@ago/ui";
 
 import { createSkillAction, type SkillActionState } from "./actions";
