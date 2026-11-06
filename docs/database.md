@@ -79,6 +79,7 @@ Every table has RLS and per-command policies for `authenticated` built on `priva
 | budgets_usage | viewer | owner (budget columns) | owner (budget columns) | - |
 | notes_index | viewer | member | member | member |
 | policies | viewer | owner (`created_by`/`updated_by` = caller) | owner (`rule`, `archived_at`, `updated_by` only) | - (archive instead) |
+| capabilities | viewer | - (seeded by migration and trigger) | owner (`enabled`, `description` only) | - |
 
 Rules that hold for every table: policies are `to authenticated`, one per command, named `<table>_<command>_<minimum role>`; `workspace_id` and other ids are never in an UPDATE grant (a row cannot move workspaces); approvals keep their `payload_hash`, `expires_at` and `consumed_at` immutable; `run_events` stays append-only; attribution columns (`granted_by`, `decided_by`, `created_by`) must be the caller's own membership (`private.current_member_id`).
 
@@ -95,6 +96,16 @@ Rules that hold for every table: policies are `to authenticated`, one per comman
 - **One active policy per scope.** A unique index on `(workspace_id, level, scope_id) where archived_at is null` (nulls not distinct, so one baseline per workspace) also serves lookups by scope.
 - **Immutable columns.** `level`, `scope_id`, `workspace_id`, `version` and `created_*` are not in any UPDATE grant. `version` is bumped by a trigger whenever `rule` changes.
 - **Rollback.** `supabase/rollbacks/20261106130001_ago_96_department_hooks_policies.down.sql`, proven by `scripts/ago-96-rollback.test.mjs` (`RUN_DB_TESTS=1`, inside the db lock): roll back, check, re-apply, schema dump unchanged.
+
+## Capability catalog (AGO-125)
+
+`capabilities` is the per-workspace catalog of things an agent can be allowed to do: `key` (lowercase dotted, e.g. `vault.read`), `name`, `description`, `tier` (0 to 4), `scope` (`workspace`, `agent`, `external`, `sandbox`), `default_mode` (`automatic` or `approval`) and `enabled`. It is **not** the same as `agent_capabilities`, which records what a human granted to one agent.
+
+- **Twelve starters in every workspace.** Seeded by `private.seed_workspace_capabilities()`: backfilled for existing workspaces by the migration and run by an AFTER INSERT trigger on `workspaces` for new ones (idempotent, never overwrites an owner's edit). That function is the single place to amend the list; `STARTER_CAPABILITIES` in `@ago/shared` mirrors it and a test fails on drift. The Master List the ticket cites was not found, so this list is the v1 source of truth (see `docs/tickets/AGO-125.md`).
+- **Tier 3 and 4 can never be automatic, in data.** `capabilities_high_tier_never_automatic` is a CHECK constraint, so it holds for every role including `service_role` and for any future code path.
+- **Tier, scope, default and key change by migration only.** They are in no INSERT or UPDATE grant. Owners may change `enabled` and `description`; members and viewers read; nobody deletes through the API.
+- **Read API.** `GET /api/capabilities?workspace_id=<uuid>` (members and viewers; 401 signed out, 403 non-member, 400 bad input). It goes through `listCapabilities` in `apps/web/src/features/capabilities/capability-catalog.ts` (server-only, workspace-scoped, rows validated with `capabilitySchema`). There is no write route.
+- **Rollback.** `supabase/rollbacks/20261106140001_ago_125_capability_catalog.down.sql`, proven by `scripts/ago-125-rollback.test.mjs` (`RUN_DB_TESTS=1`, inside the db lock).
 
 ## Seed data
 
