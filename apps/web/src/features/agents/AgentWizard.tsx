@@ -508,11 +508,12 @@ export function AgentWizard({
           </Button>
         ) : null}
         {isReview ? (
-          <Button type="submit" disabled={isPending}>
+          <Button key="create" type="submit" disabled={isPending}>
             {isPending ? "Creating…" : "Create agent"}
           </Button>
         ) : (
-          <Button type="button" onClick={goNext}>
+          // A submit button, so Enter in a field moves on too; onSubmit turns it into "next".
+          <Button key="next" type="submit">
             Next
           </Button>
         )}
