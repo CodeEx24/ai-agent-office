@@ -61,8 +61,13 @@ no Profiling, no tracing (`tracesSampleRate: 0`), no Seer/AI, no source-map uplo
 | `SENTRY_DSN` | web server, worker (server-only) | Ingest address for server and worker errors. Validated as a URL by `serverOnlyEnvSchema`. |
 | `NEXT_PUBLIC_SENTRY_DSN` | browser (declared in `clientEnvSchema`) | Ingest address for browser errors. A DSN is write-only and public by design. It is inlined at **build** time, so set it when running `next build`. |
 
-Neither is in `.env.example` yet (protected by a deny rule, same as the AGO-143 worker variables).
-Put them in `.env.local` / the host's secret store. Both can be the same DSN, or two projects.
+Both are listed, empty, in `.env.example`.
+
+**How to enable** (a human does this; no account is created by code):
+1. Create a free Sentry Developer account and a project (Next.js for the web, Node for the worker, or one project for both).
+2. Copy the project DSN into `.env.local` (or the host's secret store) as `SENTRY_DSN=<dsn>` and `NEXT_PUBLIC_SENTRY_DSN=<dsn>`.
+3. Set `NEXT_PUBLIC_SENTRY_DSN` **before `next build`** (it is inlined into the browser bundle), then restart the web app and the worker.
+4. Leave both empty to turn error tracking off. Nothing is initialised or sent.
 
 - **Web:** `apps/web/src/instrumentation.ts` (`register`, `onRequestError`) and
   `apps/web/src/instrumentation-client.ts`, using `@sentry/nextjs`. `next.config.ts` is not wrapped
