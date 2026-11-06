@@ -45,6 +45,18 @@ test("local environment starts with no variables set (safe dev defaults)", () =>
   assert.equal(env.NEXT_PUBLIC_SUPABASE_URL, "http://127.0.0.1:44321");
 });
 
+test("AGO-104: an invalid NEXT_PUBLIC_SENTRY_DSN reads as unset instead of failing the whole env", () => {
+  for (const schema of [clientEnvSchema, serverEnvSchema]) {
+    const env = parseEnv(schema, { NEXT_PUBLIC_SENTRY_DSN: "not a url at all" });
+    assert.equal(env.NEXT_PUBLIC_SENTRY_DSN, undefined);
+  }
+  const valid = "https://publickey@o0.ingest.sentry.example.test/1";
+  assert.equal(
+    parseEnv(clientEnvSchema, { NEXT_PUBLIC_SENTRY_DSN: valid }).NEXT_PUBLIC_SENTRY_DSN,
+    valid,
+  );
+});
+
 test("empty string counts as unset", () => {
   const env = parseEnv(serverEnvSchema, { APP_ENV: "", ANTHROPIC_API_KEY: "" });
   assert.equal(env.APP_ENV, "local");

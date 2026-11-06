@@ -77,11 +77,16 @@ Both are listed, empty, in `.env.example`.
   exceptions and unhandled rejections are reported, flushed, then the process exits 1; `stop()`
   flushes on SIGTERM/SIGINT.
 - **CSP:** the Sentry ingest origin (taken from the DSN, never its key) is added to `connect-src`
-  only when `NEXT_PUBLIC_SENTRY_DSN` is set (`apps/web/src/lib/security/csp.ts`).
+  only when `NEXT_PUBLIC_SENTRY_DSN` is set (`apps/web/src/lib/security/csp.ts`). The value is the
+  one inlined at **build** time, the same one the browser SDK uses, so the CSP and the browser
+  always agree; changing the DSN needs a rebuild. An invalid value is logged once (variable name
+  only) and treated as "off": the app keeps serving and nothing is allowed or sent.
 - **Scrubbing:** every event and breadcrumb passes `scrubTelemetryEvent` (`packages/shared/src/redaction`,
   the same rules as the worker log scrubber) in `beforeSend` / `beforeBreadcrumb`: secret-named keys
   (including `cookie`), `Authorization`/`Bearer`/`Basic` values, `apikey=`/`token=` pairs, credentialed
-  URLs, JWTs, and `sk-`, `sb_secret_`, `ghp_` style keys, also inside free-text messages. Sentry v11
+  URLs, JWTs, `Cookie:` / `Set-Cookie:` header lines, and `sk-` (any `sk-` key of 16+ characters,
+  including `sk-proj-`, `sk-svcacct-`, `sk-admin-`, `sk-ant-`), `sb_secret_`, `ghp_` style keys,
+  also inside free-text messages. Sentry v11
   has no `sendDefaultPii`; `TELEMETRY_DATA_COLLECTION` turns every `dataCollection` category off.
 - **Log shipping:** the worker already writes one scrubbed JSON object per line to stdout. The host
   (container runtime, Vercel, or whatever the human picks) collects stdout; no paid log service is

@@ -10,6 +10,9 @@ export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   const { getServerEnv } = await import("./lib/env/server");
   const env = getServerEnv();
+  // Surfaces an invalid browser DSN once at start (it is logged, never fatal: Sentry is optional).
+  const { getSentryDsn } = await import("./lib/env");
+  getSentryDsn();
   if (env.SENTRY_DSN === undefined) return;
   const { buildSentryOptions } = await import("./lib/sentry/options");
   Sentry.init(buildSentryOptions(env.SENTRY_DSN, env.APP_ENV));

@@ -103,18 +103,17 @@ test.describe("AGO-104 AC1: error tracking is optional and adds nothing without 
   });
 });
 
-test.describe("AGO-104 AC1: a bad DSN fails fast without leaking it", () => {
-  test("AC1 (negative): an invalid NEXT_PUBLIC_SENTRY_DSN refuses to serve and the log names the variable, not its value", async () => {
+test.describe("AGO-104 AC1: a bad DSN never takes the app down and is never leaked", () => {
+  test("AC1 (negative): an invalid NEXT_PUBLIC_SENTRY_DSN keeps serving pages and never appears in a response or the log", async () => {
     const badValue = "not a url at all";
     let app: AppServer | undefined;
     try {
-      app = await startAppServer({ NEXT_PUBLIC_SENTRY_DSN: badValue }, async (baseUrl) => {
-        await fetch(`${baseUrl}/`);
-        return true;
-      });
-      const response = await fetch(`${app.baseUrl}/`);
-      expect(response.status).toBe(500);
-      await expect.poll(() => app?.logs() ?? "").toContain("NEXT_PUBLIC_SENTRY_DSN");
+      app = await startAppServer({ NEXT_PUBLIC_SENTRY_DSN: badValue }, SERVER_READY);
+      for (const path of ["/", "/sign-in"]) {
+        const response = await fetch(`${app.baseUrl}${path}`);
+        expect(response.status, path).toBeLessThan(500);
+        expect(response.headers.get("content-security-policy") ?? "").not.toContain(badValue);
+      }
       expect(app.logs()).not.toContain(badValue);
     } finally {
       await app?.stop();

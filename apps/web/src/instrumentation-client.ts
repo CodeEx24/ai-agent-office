@@ -9,7 +9,8 @@ import { buildSentryOptions } from "./lib/sentry/options";
  *
  * The literal `process.env` read is validated with `URL.canParse` rather than `getClientEnv()`:
  * that would ship the whole public env schema (and its variable names) into the browser bundle,
- * which the AGO-70 bundle guard forbids. The schema still validates it on the server (`lib/env.ts`).
+ * which the AGO-70 bundle guard forbids. The server applies the same rule in `lib/env.ts`
+ * (`getSentryDsn`): an invalid value is logged once and treated as "off", never fatal.
  */
 function initBrowserErrorTracking(): void {
   try {
