@@ -27,7 +27,7 @@ resources: Vercel and hosted Supabase are set up by a human.
 ## Fail fast
 
 - Web: `apps/web/src/instrumentation.ts` validates the server env when the server starts.
-- Worker: call `loadWorkerEnv()` at process start.
+- Worker: `apps/worker/src/index.ts` calls `loadWorkerConfig()` (which wraps `loadWorkerEnv()`) at process start and exits 1 with one JSON error line naming the variable when the check fails (AGO-143).
 - Errors name each missing or invalid variable and never print values.
 - `APP_ENV` is required whenever `NODE_ENV=production`, on any host (Vercel, Docker, plain Node) and in the
   worker. If it is unset, startup fails with an error naming `APP_ENV` and how to set it (never a value). It
@@ -36,6 +36,19 @@ resources: Vercel and hosted Supabase are set up by a human.
   `.env.example` does, `ci.yml` does, and `apps/web/playwright.config.ts` sets it in `webServer.env`. `turbo.json`
   passes `APP_ENV` through to the `build`, `dev` and `test:e2e` tasks.
   Both the web app and the worker use one helper, `isAppEnvMissingInProduction`, via `parseServerEnv`.
+
+## Worker variables (AGO-143)
+
+Beyond the shared server variables, the worker reads (all optional, validated in `apps/worker/src/config.ts`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `WORKER_PORT` | `8787` | Health server port (`0` = pick a free port). Separate from the web `PORT`. |
+| `WORKER_HOST` | `127.0.0.1` | Bind address; the container image sets `0.0.0.0`. |
+| `LOG_LEVEL` | `info` | pino level: fatal, error, warn, info, debug, trace, silent. |
+| `HEALTH_DB_TIMEOUT_MS` | `2000` | Timeout of the `/health` database probe (100-30000). |
+
+`DATABASE_URL` defaults to the local Supabase Postgres (`127.0.0.1:44322`) when `APP_ENV` is `local`. `.env.example` is protected by a deny rule, so these four are not listed there yet (follow-up in `docs/tickets/AGO-143.md`).
 
 ## Build check
 
