@@ -82,6 +82,68 @@ describe("scrubString", () => {
     expect(out).toContain("next line");
   });
 
+  it.each([
+    ["one dotted segment", `sk-${"Zk4m".repeat(5)}.${"Qw3r".repeat(4)}`],
+    [
+      "several dotted segments",
+      `sk-proj-${"Zk4m".repeat(5)}.${"Qw3r".repeat(3)}.${"Ab9c".repeat(3)}`,
+    ],
+    ["an Anthropic key with a dotted tail", `sk-ant-${"Mn7p".repeat(6)}.${"Qw3r".repeat(4)}`],
+  ])("masks the whole tail of an sk- key with %s", (_label, secret) => {
+    const out = scrubString(`key ${secret} end`);
+    expect(out).not.toContain("Qw3r");
+    expect(out).not.toContain("Ab9c");
+    expect(out).toContain("end");
+  });
+
+  it.each([
+    ["/token/", "/api/token/"],
+    ["/tokens/", "/v1/tokens/"],
+    ["/secret/", "/hooks/secret/"],
+    ["/password/", "/reset/password/"],
+    ["/api-key/", "/v2/api-key/"],
+    ["/credentials/", "/v2/credentials/"],
+    ["/bearer/", "/svc/bearer/"],
+    ["/otp/", "/verify/otp/"],
+  ])("masks a bare token in a URL path after %s", (_label, prefix) => {
+    const value = `Tk${"9xQ2".repeat(5)}`;
+    const out = scrubString(`GET https://app.test${prefix}${value}?ok=1 failed`);
+    expect(out).not.toContain(value);
+    expect(out).toContain(prefix);
+    expect(out).toContain("failed");
+  });
+
+  it("masks a path token that ends the text, a query-less path and a relative path", () => {
+    const value = `Tk${"7mN3".repeat(4)}`;
+    expect(scrubString(`/token/${value}`)).not.toContain(value);
+    expect(scrubString(`fetch(/api/token/${value})`)).not.toContain(value);
+  });
+
+  it("keeps ordinary paths that merely look similar", () => {
+    expect(scrubString("GET /api/tokenizer/status and /tokens/list and /keys")).toBe(
+      "GET /api/tokenizer/status and /tokens/list and /keys",
+    );
+  });
+
+  it.each([
+    ["Bearer after a colon-less word", (v: string) => `request used Bearer ${v} and failed`],
+    ["lower-case bearer", (v: string) => `header bearer ${v} rejected`],
+    ["bearer with a colon", (v: string) => `bearer: ${v} rejected`],
+    ["bearer with an equals sign", (v: string) => `auth=Bearer=${v} rejected`],
+    ["quoted bearer", (v: string) => `sent "Bearer ${v}" upstream`],
+    ["apikey followed by a space", (v: string) => `the apikey ${v} was rejected`],
+    ["api key with a space", (v: string) => `api key: ${v} was rejected`],
+    ["api_key in quotes", (v: string) => `api_key "${v}" was rejected`],
+    ["x-api-key header", (v: string) => `x-api-key: ${v} was rejected`],
+    ["api key is phrase", (v: string) => `api key is ${v} today`],
+  ])("masks %s in a free-text message", (_label, build) => {
+    for (const value of [`Vl${"4kQ8".repeat(4)}`, "s3cr3t"]) {
+      const out = scrubString(build(value));
+      expect(out, value).not.toContain(value);
+      expect(out).toContain(REDACTED);
+    }
+  });
+
   it("leaves ordinary text alone", () => {
     expect(scrubString("agent finished run in 3 steps")).toBe("agent finished run in 3 steps");
   });

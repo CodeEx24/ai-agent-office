@@ -24,8 +24,30 @@ const PRIVATE_KEY_BLOCK =
 /** Any JWT (Supabase anon and service-role keys, access tokens, ...). */
 const JWT = /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{10,}/g;
 
-/** `Authorization: Bearer <token>` / `Basic <b64>` values, wherever they appear in text. */
-const AUTH_SCHEME_VALUE = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
+/** `Authorization: Basic <b64>` values, wherever they appear in text. */
+const BASIC_AUTH_VALUE = /\b(Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
+
+/**
+ * `Bearer <token>` in any spelling that shows up in a log line: `bearer: x`, `Bearer=x`,
+ * `"Bearer x"`. Short on purpose (4+ characters): a short secret is still a secret.
+ */
+const BEARER_VALUE =
+  /\b(Bearer)(?:\s*[:=]\s*|\s+)(?!\[redacted\])["']?[A-Za-z0-9._~+/=-]{4,}["']?/gi;
+
+/**
+ * `apikey x`, `api key: x`, `api_key "x"`, `x-api-key: x`, `api key is x`: an API key named in
+ * prose, with or without a separator. Over-redacts the word after "api key" on purpose.
+ */
+const API_KEY_PHRASE =
+  /\b(api[ _-]?key)(?:\s*[:=]\s*|\s+(?:is\s+)?)(?!\[redacted\])["']?[^\s"'&,;)}\]]{4,}/gi;
+
+/**
+ * A bare credential in a URL path: `/token/<value>`, `/v1/tokens/<value>`, `/reset/password/<value>`.
+ * Only the segment right after a credential-named segment is masked, and only when it is a value
+ * (8+ URL-safe characters), so `/tokens/list` and `/api/tokenizer/status` survive.
+ */
+const PATH_CREDENTIAL =
+  /(\/(?:access[_-]?tokens?|refresh[_-]?tokens?|tokens?|secrets?|passwords?|passwd|credentials?|api[_-]?keys?|bearer|jwt|otp)\/)(?!\[redacted\])[A-Za-z0-9._~%+=-]{8,}/gi;
 
 /**
  * `Cookie:` / `Set-Cookie:` header lines written into free text. The whole rest of the line is the
@@ -47,11 +69,12 @@ const CREDENTIAL_ASSIGNMENT =
  */
 export const SECRET_VALUE_PATTERNS: readonly (readonly [RegExp, string])[] = [
   [/AKIA[0-9A-Z]{16}/, "AWS access key"],
-  [/sk-ant-[A-Za-z0-9_-]{20,}/, "Anthropic API key"],
-  [/sk-proj-[A-Za-z0-9_-]{20,}/, "OpenAI project key"],
+  // The tail may carry dots (`sk-...<part>.<part>`): a stopped-at-the-dot match would leak the rest.
+  [/sk-ant-[A-Za-z0-9_.-]{20,}/, "Anthropic API key"],
+  [/sk-proj-[A-Za-z0-9_.-]{20,}/, "OpenAI project key"],
   // Any `sk-` key of 16+ key characters: plain, `sk-svcacct-`, `sk-admin-`, short or long. Broad on
   // purpose (over-redaction is the safe failure); the two entries above only keep specific labels.
-  [/\bsk-[A-Za-z0-9_-]{16,}/, "OpenAI API key"],
+  [/\bsk-[A-Za-z0-9_.-]{16,}/, "OpenAI API key"],
   [/\bgh[pousr]_[A-Za-z0-9]{36}\b/, "GitHub token"],
   [/github_pat_[A-Za-z0-9_]{22,}/, "GitHub fine-grained token"],
   [/\bsbp_[0-9a-f]{40}\b/, "Supabase access token"],
@@ -103,7 +126,10 @@ export function scrubString(value: string): string {
   out = out.replace(JWT, REDACTED);
   for (const pattern of GLOBAL_SECRET_VALUE_PATTERNS) out = out.replace(pattern, REDACTED);
   out = out.replace(COOKIE_HEADER, `$1${REDACTED}`);
-  out = out.replace(AUTH_SCHEME_VALUE, `$1 ${REDACTED}`);
+  out = out.replace(BASIC_AUTH_VALUE, `$1 ${REDACTED}`);
+  out = out.replace(BEARER_VALUE, `$1 ${REDACTED}`);
+  out = out.replace(API_KEY_PHRASE, `$1 ${REDACTED}`);
+  out = out.replace(PATH_CREDENTIAL, `$1${REDACTED}`);
   out = out.replace(CREDENTIAL_ASSIGNMENT, `$1$2${REDACTED}`);
   return out;
 }
