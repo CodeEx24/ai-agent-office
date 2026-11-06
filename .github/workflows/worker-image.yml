@@ -1,0 +1,89 @@
+name: Worker image
+
+# AGO-143: build the worker image on every relevant PR (no push), publish it to GHCR on main,
+# and keep the "deploy to host" step as a manual placeholder. No hosting provider is chosen yet
+# (see docs/tickets/AGO-143.md), so nothing here can deploy until a human adds a host.
+
+on:
+  pull_request:
+    paths:
+      - "apps/worker/**"
+      - "packages/shared/**"
+      - "pnpm-lock.yaml"
+      - ".dockerignore"
+      - ".github/workflows/worker-image.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/worker/**"
+      - "packages/shared/**"
+      - "pnpm-lock.yaml"
+      - ".dockerignore"
+      - ".github/workflows/worker-image.yml"
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Run the deploy placeholder (needs the host secrets the owner adds later)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: worker-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Only the publish run needs to write packages; PR builds never log in or push.
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Compute image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/worker" >> "$GITHUB_OUTPUT"
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build (and push on main)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: apps/worker/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ github.sha }}
+            ${{ steps.image.outputs.name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Placeholder: disabled until the owner picks a host. Manual only (workflow_dispatch).
+  # To enable: choose a host, add its credentials as environment secrets on `production`, and
+  # replace the step below with the host's deploy command pulling the image published above.
+  deploy:
+    name: worker-deploy
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Deploy placeholder
+        run: |
+          echo "::error::No hosting provider is configured for the worker yet. See docs/tickets/AGO-143.md."
+          exit 1
