@@ -22,10 +22,15 @@ export function parseInput<S extends z.ZodType>(
   };
 }
 
-/** String entries of a FormData as a plain object. Files are dropped; the last duplicate wins. */
+/**
+ * String entries of a FormData as a plain object. Files are dropped; the last duplicate wins.
+ * Next.js adds its own `$ACTION_*` fields to every server-action form (action reference and key);
+ * they are framework plumbing, not user input, so they are dropped and a strict schema still works.
+ */
 export function formDataToRecord(formData: FormData): Record<string, string> {
   const record: Record<string, string> = {};
   for (const [key, value] of formData.entries()) {
+    if (key.startsWith("$ACTION_")) continue;
     if (typeof value === "string") record[key] = value;
   }
   return record;

@@ -4,6 +4,7 @@ export * from "./workspace/roles.js";
 export * from "./policy/policy-schemas.js";
 export * from "./capabilities/capability-schemas.js";
 export * from "./capabilities/starter-capabilities.js";
+export * from "./skills/skill-schemas.js";
 export * from "./seed/seed-ids.js";
 
 /** Project name shared by every workspace package. Placeholder until AGO-61+ add real schemas. */

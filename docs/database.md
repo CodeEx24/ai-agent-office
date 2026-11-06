@@ -68,8 +68,9 @@ Every table has RLS and per-command policies for `authenticated` built on `priva
 | workspaces | viewer | - | owner (`name` only) | - |
 | members | viewer | - | - | - |
 | agents | viewer | member | member (not `mode`/`status`) | owner |
-| skills | viewer | member | member | member |
-| agent_skills | viewer | member | - | member |
+| skills | viewer | owner | owner (`name`, `description`, `body`; each new `body` adds a version) | - (AGO-128) |
+| skill_versions | viewer | - (a trigger on `skills` appends) | - (blocked for every role) | - (blocked; only the FK cascade removes) |
+| agent_skills | viewer | owner | - | owner |
 | agent_capabilities | viewer | owner (`granted_by` = caller) | - | owner |
 | tasks | viewer | member (`created_by` null or caller) | member | member |
 | runs | viewer | member (starts `queued`) | - | - |
@@ -124,3 +125,14 @@ Hosted environments are migrated by a human through the release process, not by 
 ## Generated types
 
 `pnpm db:types` writes `packages/shared/src/db/database.types.ts` from the local database (`public` schema) and `@ago/shared` re-exports `Database` and `Json`. The script writes only when generation succeeds. Never edit the file by hand.
+
+## Skill library with versions (AGO-128)
+
+A skill is Markdown know-how an owner writes and assigns to agents. It is untrusted data and never grants a permission (capabilities do, AGO-125). `skills` stays the *current* row: `body` and `version` always mirror the newest version, so readers that only want "the skill" keep working. `skill_versions` is the immutable history, one row per saved text `(workspace_id, skill_id, version, body, created_by, created_at)`.
+
+- **A new version per changed text.** A `BEFORE UPDATE` trigger sets `version = old.version + 1` whenever `body` changes (and keeps it otherwise); an `AFTER INSERT OR UPDATE` trigger appends the `skill_versions` row, recording the owner's member id. `version` is in no grant, so a client cannot forge it, and saving identical text or editing only the description adds nothing.
+- **Versions are immutable for every role**, `service_role` included: UPDATE always raises `42501`; DELETE raises unless the parent skill or workspace is already gone (the FK cascade). API roles only have SELECT.
+- **Owners write, everyone reads.** Creating, editing, assigning and removing are owner-only (a change from the member-level AGO-107 policies). Agents are not members and never write skills. Nobody can delete a skill through the API.
+- **Assignments follow the latest version.** `agent_skills` has no pin column; pinning an assignment to a version needs an UPDATE grant and policy and is left for the context builder (AGO-145).
+- **Size limit.** `skills.body` and `skill_versions.body` are capped at 20,000 characters (`SKILL_BODY_MAX_LENGTH` in `@ago/shared`, which also normalises browser CRLF line breaks to LF before counting).
+- **Rollback.** `supabase/rollbacks/20261106150001_ago_128_skill_versions.down.sql`, proven by `scripts/ago-128-rollback.test.mjs` (`RUN_DB_TESTS=1`, inside the db lock). Rolling back drops the history (local data); the current text stays in `skills`.
