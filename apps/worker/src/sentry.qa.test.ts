@@ -282,3 +282,34 @@ describe("AC2: secrets are scrubbed from error payloads (every byte sent to the 
     expect(everything).toContain("[redacted]");
   });
 });
+
+// Shapes found missing during QA (AGO-104 AC2). Each is its own test so a failure names the shape.
+// These FAIL today: the free-text scrubber has no rule for them. They are findings for the implementer.
+describe("AC2: further secret shapes must not reach the ingest", () => {
+  const BODY = "Zk4m".repeat(12);
+  const SHORT_BODY = "Zk4m".repeat(8);
+  const shapes: readonly (readonly [string, string, string])[] = [
+    ["OpenAI service-account key (sk-svcacct-)", `key sk-svcacct-${BODY}`, BODY],
+    ["OpenAI admin key (sk-admin-)", `key sk-admin-${BODY}`, BODY],
+    ["plain sk- key shorter than 48 characters", `key sk-${SHORT_BODY}`, SHORT_BODY],
+    ["Set-Cookie header written into free text", `Set-Cookie: session=${BODY}; Path=/`, BODY],
+  ];
+
+  for (const [label, text, fragment] of shapes) {
+    it(`AC2: ${label} is scrubbed from the error message and a breadcrumb`, async () => {
+      ingest = await startFakeIngest();
+      tracker = createErrorTracker({ dsn: ingest.dsn, environment: "local" });
+      tracker.addBreadcrumb({
+        level: "info",
+        message: text,
+        context: {},
+      });
+      tracker.captureException(new Error(text));
+      await tracker.close();
+      tracker = undefined;
+
+      await ingest.waitFor((bodies) => eventsOf(bodies).length > 0);
+      expect(ingest.bodies.join("\n")).not.toContain(fragment);
+    });
+  }
+});
