@@ -62,6 +62,23 @@ test.describe("AGO-66 AC2: rate limits", () => {
     expect(other.status()).toBe(307);
   });
 
+  test("GET /api/capabilities is rate limited: 429 with Retry-After once over budget (AGO-201)", async ({
+    request,
+  }) => {
+    const headers = { "x-forwarded-for": uniqueIp() };
+    const get = () => request.get("/api/capabilities", { headers, failOnStatusCode: false });
+
+    // Signed out, the budget is counted per IP: 120 reads reach the route (a 401, not a 429).
+    for (let attempt = 1; attempt <= 120; attempt++) {
+      expect((await get()).status(), `attempt ${String(attempt)}`).not.toBe(429);
+    }
+    const blocked = await get();
+
+    expect(blocked.status()).toBe(429);
+    expect(Number(blocked.headers()["retry-after"])).toBeGreaterThanOrEqual(1);
+    expect(blocked.headers()["ratelimit-limit"]).toBe("120");
+  });
+
   test("page views are not rate limited", async ({ request }) => {
     const headers = { "x-forwarded-for": uniqueIp() };
     for (let attempt = 0; attempt < 70; attempt++) {

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   MemoryRateLimiter,
+  RATE_LIMIT_RULES,
   getClientIp,
   limitAction,
   matchRouteRateLimit,
@@ -43,6 +44,15 @@ describe("matchRouteRateLimit", () => {
     expect(matchRouteRateLimit("GET", "/auth/callback")).toMatchObject({ scope: "ip" });
     expect(matchRouteRateLimit("POST", "/app")).toMatchObject({ scope: "user" });
     expect(matchRouteRateLimit("POST", "/app/agents")).toMatchObject({ scope: "user" });
+  });
+
+  it("limits GET /api/capabilities per user with the AGO-66 limiter (AGO-201)", () => {
+    expect(matchRouteRateLimit("GET", "/api/capabilities")).toEqual({
+      rule: RATE_LIMIT_RULES.apiReadUser,
+      scope: "user",
+    });
+    expect(matchRouteRateLimit("get", "/api/capabilities")).toMatchObject({ scope: "user" });
+    expect(matchRouteRateLimit("GET", "/api/capabilities/extra")).toBeUndefined();
   });
 
   it("does not limit page views or unrelated routes", () => {
