@@ -693,7 +693,7 @@ test.describe("AGO-128 QA: skill library acceptance (local stack)", () => {
     const skills = new SkillsPage(page);
     await skills.gotoSkill(skillId);
 
-    const wall = `# ${"W".repeat(19_000)}\n\n[link](https://example.com/${"a".repeat(900)})`;
+    const wall = `# ${"W".repeat(19_000)}\n\n[link](https://example.com/${"a".repeat(900)})\n\n\`\`\`\n${"c".repeat(3_000)}\n\`\`\``;
     await skills.body.fill(wall);
     await skills.saveButton.click();
     await expect(skills.version).toHaveText("Version 2");
@@ -703,6 +703,14 @@ test.describe("AGO-128 QA: skill library acceptance (local stack)", () => {
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     );
     expect(overflow, "the page must not scroll sideways").toBeLessThanOrEqual(1);
+    const code = skills.preview.locator("pre").first();
+    await expect(code).toBeVisible();
+    const box = await code.evaluate((el) => ({
+      scrolls: el.scrollWidth > el.clientWidth,
+      overflowX: getComputedStyle(el).overflowX,
+    }));
+    expect(box.scrolls, "the code block scrolls inside its own box").toBe(true);
+    expect(["auto", "scroll"]).toContain(box.overflowX);
     await page.screenshot({ path: testInfo.outputPath("AC3-long-text.png") });
   });
 });
