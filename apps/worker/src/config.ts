@@ -24,6 +24,16 @@ export const workerRuntimeSchema = z.object({
     emptyToUndefined,
     z.coerce.number().int().min(100).max(30_000).default(2_000),
   ),
+  /** Run jobs this worker processes at once. */
+  QUEUE_CONCURRENCY: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(32).default(2),
+  ),
+  /** How long shutdown waits for running jobs before aborting them. */
+  QUEUE_SHUTDOWN_TIMEOUT_MS: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(0).max(300_000).default(25_000),
+  ),
 });
 
 export interface WorkerConfig {
@@ -33,6 +43,8 @@ export interface WorkerConfig {
   readonly logLevel: (typeof LOG_LEVELS)[number];
   readonly databaseUrl: string;
   readonly healthDbTimeoutMs: number;
+  readonly queueConcurrency: number;
+  readonly queueShutdownTimeoutMs: number;
   /** `SENTRY_DSN`; undefined keeps error tracking off (AGO-104). */
   readonly sentryDsn: string | undefined;
 }
@@ -55,6 +67,8 @@ export function loadWorkerConfig(source: EnvSource = process.env): WorkerConfig 
     logLevel: parsed.data.LOG_LEVEL,
     databaseUrl: env.DATABASE_URL ?? LOCAL_DATABASE_URL,
     healthDbTimeoutMs: parsed.data.HEALTH_DB_TIMEOUT_MS,
+    queueConcurrency: parsed.data.QUEUE_CONCURRENCY,
+    queueShutdownTimeoutMs: parsed.data.QUEUE_SHUTDOWN_TIMEOUT_MS,
     sentryDsn: env.SENTRY_DSN,
   };
 }

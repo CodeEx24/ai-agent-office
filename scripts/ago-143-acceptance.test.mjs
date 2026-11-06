@@ -168,6 +168,19 @@ const running = [];
 afterAll(async () => {
   await Promise.all(running.map((worker) => worker.stop()));
 });
+/**
+ * AGO-151: the job queue connects in the background, so right after start `/health` may still say
+ * `queue: down`. Poll until the queue is up, then return that final response and its body.
+ */
+async function healthOnceQueueUp(url) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const response = await fetch(url);
+    const body = await response.json();
+    if (body.queue.status === "ok") return { response, body };
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+  }
+  assert.fail("the job queue never reported ok");
+}
 async function start(extraEnv) {
   const worker = await startWorker(extraEnv);
   running.push(worker);
@@ -179,21 +192,22 @@ async function start(extraEnv) {
 // ---------------------------------------------------------------------------------------------
 
 describe("AC1: health endpoint returns ok with queue and database status", () => {
-  liveTest("AC1: GET /health with a reachable database returns 200 with db ok and queue not_configured (degraded)", async () => {
+  liveTest("AC1: GET /health with a reachable database returns 200 with db ok and queue ok with its depth", async () => {
     const worker = await start({});
-    const response = await fetch(worker.url("/health"));
+    const { response, body } = await healthOnceQueueUp(worker.url("/health"));
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type") ?? "", /application\/json/);
     assert.equal(response.headers.get("cache-control"), "no-store");
-    const body = await response.json();
     assert.equal(body.db.status, "ok");
-    assert.equal(body.queue.status, "not_configured");
-    assert.equal(body.status, "degraded");
+    assert.equal(body.queue.status, "ok");
+    assert.deepEqual(Object.keys(body.queue.depth).sort(), ["active", "dead_letter", "failed", "queued"]);
+    assert.equal(body.status, "ok");
     assert.equal(typeof body.uptime_s, "number");
   });
 
   liveTest("AC1: GET /healthz is an alias of /health", async () => {
     const worker = await start({});
+    await healthOnceQueueUp(worker.url("/health"));
     const [health, healthz] = await Promise.all([
       fetch(worker.url("/health")).then((r) => r.json()),
       fetch(worker.url("/healthz")),
@@ -220,7 +234,7 @@ describe("AC1: health endpoint returns ok with queue and database status", () =>
     const body = await response.json();
     assert.equal(body.status, "down");
     assert.equal(body.db.status, "down");
-    assert.equal(body.queue.status, "not_configured");
+    assert.equal(body.queue.status, "down"); // the queue cannot start without the database
   });
 
   test("AC1: negative: the worker stays up after a failed probe (second probe still 503)", async () => {
@@ -583,12 +597,12 @@ describe.skipIf(!dockerReady)("AC3: the Docker image builds, serves /health and 
       APP_ENV: "local",
       DATABASE_URL: "postgresql://postgres:postgres@host.docker.internal:44322/postgres",
     });
-    const response = await waitForHealth(hostPort);
+    await waitForHealth(hostPort);
+    const { response, body } = await healthOnceQueueUp(`http://127.0.0.1:${hostPort}/health`);
     assert.equal(response.status, 200);
-    const body = await response.json();
     assert.equal(body.db.status, "ok");
-    assert.equal(body.queue.status, "not_configured");
-    assert.equal(body.status, "degraded");
+    assert.equal(body.queue.status, "ok");
+    assert.equal(body.status, "ok");
     const whoami = docker(["exec", name, "id", "-u"]);
     assert.notEqual(whoami.stdout.trim(), "0", "container must not run as root");
     for (const line of parseJsonLines(docker(["logs", name]).stdout)) {

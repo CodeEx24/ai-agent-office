@@ -7,30 +7,47 @@ export interface ComponentReport {
 }
 
 /** A dependency probe. Must resolve (never throw) with the component's status. */
-export type HealthCheck = () => Promise<ComponentReport>;
+export type HealthCheck<R extends ComponentReport = ComponentReport> = () => Promise<R>;
+
+/** Job counts for the run queue (AC3). Counts only: never job payloads. */
+export interface QueueDepth {
+  /** Waiting to run, including jobs waiting out a retry backoff. */
+  readonly queued: number;
+  readonly active: number;
+  /** Failed jobs still retained in the queue table. */
+  readonly failed: number;
+  /** Jobs that failed every attempt and sit in the dead-letter queue. */
+  readonly dead_letter: number;
+}
+
+export interface QueueReport extends ComponentReport {
+  /** Present when the queue is `ok`. */
+  readonly depth?: QueueDepth;
+}
 
 export interface HealthReport {
-  /** ok: all configured parts up. degraded: queue not configured. down: database unreachable. */
+  /** ok: all parts up. degraded: queue not ready. down: database unreachable. */
   readonly status: "ok" | "degraded" | "down";
   readonly db: ComponentReport;
-  readonly queue: ComponentReport;
+  readonly queue: QueueReport;
   readonly uptime_s: number;
 }
 
 export interface HealthChecks {
   readonly db: HealthCheck;
-  /** pg-boss arrives with AGO-151; until then the queue reports `not_configured`. */
-  readonly queue: HealthCheck;
+  /** pg-boss run queue (AGO-151): status plus depth. */
+  readonly queue: HealthCheck<QueueReport>;
 }
 
-/** Queue probe used until AGO-151 wires pg-boss: AGO-151 replaces this with a real check. */
-export const queueNotConfigured: HealthCheck = () => Promise.resolve({ status: "not_configured" });
+/** For callers that run without a queue (tests, tools): reports `not_configured`. */
+export const queueNotConfigured: HealthCheck<QueueReport> = () =>
+  Promise.resolve({ status: "not_configured" });
 
-async function safely(check: HealthCheck): Promise<ComponentReport> {
+async function safely<R extends ComponentReport>(check: HealthCheck<R>, fallback: R): Promise<R> {
   try {
     return await check();
   } catch {
-    return { status: "down" };
+    return fallback;
   }
 }
 
@@ -43,7 +60,10 @@ export async function buildHealthReport(
   checks: HealthChecks,
   uptimeSeconds: number,
 ): Promise<HealthReport> {
-  const [db, queue] = await Promise.all([safely(checks.db), safely(checks.queue)]);
+  const [db, queue] = await Promise.all([
+    safely<ComponentReport>(checks.db, { status: "down" }),
+    safely<QueueReport>(checks.queue, { status: "down" }),
+  ]);
   return { status: summarize(db, queue), db, queue, uptime_s: Math.round(uptimeSeconds) };
 }
 

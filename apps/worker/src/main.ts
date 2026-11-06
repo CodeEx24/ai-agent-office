@@ -1,7 +1,8 @@
 import { loadWorkerConfig } from "./config.js";
-import { createPgDatabaseCheck, queueNotConfigured } from "./health.js";
+import { createPgDatabaseCheck } from "./health.js";
 import { createLogger, scrubString, type Logger } from "./logger.js";
 import { createErrorTracker, type CreateErrorTrackerOptions, type ErrorTracker } from "./sentry.js";
+import { createJobQueue, type JobQueue, type RunExecutor } from "./queue/index.js";
 import { startHealthServer } from "./server.js";
 
 import type { EnvSource } from "@ago/shared";
@@ -10,12 +11,15 @@ import type { Server } from "node:http";
 export interface StartWorkerOptions {
   /** Tests inject a mock Sentry transport; production leaves this unset. */
   readonly sentryTransport?: CreateErrorTrackerOptions["transport"];
+  /** The agent runtime (AGO-167). Absent: the queue accepts jobs but nothing consumes them. */
+  readonly runExecutor?: RunExecutor;
 }
 
 export interface WorkerHandle {
   readonly server: Server;
   readonly logger: Logger;
   readonly errorTracker: ErrorTracker;
+  readonly queue: JobQueue;
   stop(): Promise<void>;
 }
 
@@ -58,18 +62,31 @@ export async function startWorker(
     },
   });
   const db = createPgDatabaseCheck(config.databaseUrl, config.healthDbTimeoutMs);
+  const queue = createJobQueue({
+    connectionString: config.databaseUrl,
+    logger,
+    errorTracker,
+    executor: options.runExecutor,
+    concurrency: config.queueConcurrency,
+    shutdownTimeoutMs: config.queueShutdownTimeoutMs,
+  });
   const server = await startHealthServer({
     port: config.port,
     host: config.host,
     logger,
-    checks: { db, queue: queueNotConfigured },
+    checks: { db, queue: () => queue.health() },
   });
+  // Never throws: if the database is not up yet the queue keeps retrying and health reports it.
+  void queue.start();
   logger.info({ app_env: config.env.APP_ENV, port: config.port }, "worker started");
   return {
     server,
     logger,
     errorTracker,
+    queue,
     stop: async () => {
+      // Drain first: running jobs finish (up to the timeout) while /health still answers.
+      await queue.stop();
       await new Promise<void>((resolve) =>
         server.close(() => {
           resolve();
