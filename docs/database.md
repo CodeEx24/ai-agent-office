@@ -67,7 +67,7 @@ Every table has RLS and per-command policies for `authenticated` built on `priva
 |---|---|---|---|---|
 | workspaces | viewer | - | owner (`name` only) | - |
 | members | viewer | - | - | - |
-| agents | viewer | member | member (not `mode`/`status`) | owner |
+| agents | viewer | owner (AGO-141: the wizard; not `mode`/`status`) | member (not `mode`/`status`) | owner |
 | skills | viewer | owner | owner (`name`, `description`, `body`; each new `body` adds a version) | - (AGO-128) |
 | skill_versions | viewer | - (a trigger on `skills` appends) | - (blocked for every role) | - (blocked; only the FK cascade removes) |
 | agent_skills | viewer | owner | - | owner |

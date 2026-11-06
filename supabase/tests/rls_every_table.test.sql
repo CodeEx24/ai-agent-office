@@ -132,7 +132,7 @@ create table ago107_t.expected (tbl text, cmd text, min_rank int, primary key (t
 insert into ago107_t.expected values
   ('workspaces', 'select', 1), ('workspaces', 'insert', null), ('workspaces', 'update', 3), ('workspaces', 'delete', null),
   ('members', 'select', 1), ('members', 'insert', null), ('members', 'update', null), ('members', 'delete', null),
-  ('agents', 'select', 1), ('agents', 'insert', 2), ('agents', 'update', 2), ('agents', 'delete', 3),
+  ('agents', 'select', 1), ('agents', 'insert', 3), ('agents', 'update', 2), ('agents', 'delete', 3),
   ('skills', 'select', 1), ('skills', 'insert', 3), ('skills', 'update', 3), ('skills', 'delete', null),
   ('skill_versions', 'select', 1), ('skill_versions', 'insert', null), ('skill_versions', 'update', null), ('skill_versions', 'delete', null),
   ('agent_skills', 'select', 1), ('agent_skills', 'insert', 3), ('agent_skills', 'update', null), ('agent_skills', 'delete', 3),
