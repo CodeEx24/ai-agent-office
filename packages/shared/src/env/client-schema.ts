@@ -18,6 +18,12 @@ export function emptyToUndefined(value: unknown): unknown {
   return value === "" ? undefined : value;
 }
 
+/** Like `emptyToUndefined`, and also treats a value that is not a URL as unset (optional telemetry). */
+function invalidUrlToUndefined(value: unknown): unknown {
+  const present = emptyToUndefined(value);
+  return z.url().safeParse(present).success ? present : undefined;
+}
+
 /** Variables that may be bundled into the browser. Must start with `NEXT_PUBLIC_`. */
 export const clientEnvSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.preprocess(emptyToUndefined, httpUrlString.default(LOCAL_APP_URL)),
@@ -27,6 +33,14 @@ export const clientEnvSchema = z.object({
   ),
   /** Anon key is public by design; RLS is the protection. Required outside local. */
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.preprocess(emptyToUndefined, optionalString),
+  /**
+   * Browser Sentry DSN (AGO-104). A DSN is a write-only ingest address, public by design.
+   * Optional: with no value the browser SDK is never initialised and nothing is sent.
+   * Error tracking must never take the app down, so an invalid value is NOT a validation error:
+   * it reads as unset ("off"). The web app logs it once (`getSentryDsn`, name only, never the
+   * value). Without this, `getServerEnv()` would throw at start and every route would 500.
+   */
+  NEXT_PUBLIC_SENTRY_DSN: z.preprocess(invalidUrlToUndefined, z.url().optional()),
 });
 export type ClientEnv = z.infer<typeof clientEnvSchema>;
 

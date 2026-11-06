@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { isProtectedPath, signInPathFor } from "./features/auth/routes";
-import { getSupabaseUrl } from "./lib/env";
+import { getSentryDsn, getSupabaseUrl } from "./lib/env";
 import {
   getClientIp,
   getRateLimiter,
@@ -36,6 +36,8 @@ export async function proxy(request: NextRequest) {
     nonce,
     isDevelopment: process.env.NODE_ENV === "development",
     supabaseUrl: safeSupabaseUrl(),
+    // Never throws: an invalid DSN is logged once and leaves the Sentry origin out of the CSP.
+    sentryDsn: getSentryDsn(),
   });
   // Mutating the request headers is what `NextResponse.next({ request })` forwards to the page.
   request.headers.set(NONCE_HEADER, nonce);

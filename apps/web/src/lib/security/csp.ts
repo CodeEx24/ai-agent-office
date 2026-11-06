@@ -5,6 +5,11 @@ export interface CspOptions {
   isDevelopment: boolean;
   /** Validated NEXT_PUBLIC_SUPABASE_URL; allowed for fetch/websocket (auth, realtime). */
   supabaseUrl?: string;
+  /**
+   * Validated NEXT_PUBLIC_SENTRY_DSN (AGO-104). Its ingest origin is allowed in `connect-src` only
+   * when a DSN is configured; the DSN's public key is never copied into the policy.
+   */
+  sentryDsn?: string;
 }
 
 /** A fresh, unguessable nonce per request (base64 of a random UUID, as in the Next.js docs). */
@@ -20,6 +25,17 @@ function supabaseSources(supabaseUrl: string | undefined): string[] {
     return [url.origin, `${socketProtocol}//${url.host}`];
   } catch {
     // Not a URL: allow nothing extra rather than a malformed source.
+    return [];
+  }
+}
+
+/** The ingest origin of a Sentry DSN (scheme + host, no key, no project path); nothing if invalid. */
+function sentrySources(sentryDsn: string | undefined): string[] {
+  if (!sentryDsn) return [];
+  try {
+    const url = new URL(sentryDsn);
+    return url.protocol === "https:" || url.protocol === "http:" ? [url.origin] : [];
+  } catch {
     return [];
   }
 }
@@ -42,13 +58,20 @@ export function buildContentSecurityPolicy({
   nonce,
   isDevelopment,
   supabaseUrl,
+  sentryDsn,
 }: CspOptions): string {
   // 'wasm-unsafe-eval' lets WebAssembly compile (the Pixel/Mannequin GLBs are meshopt-compressed,
   // and three.js decodes them in wasm). It does not allow eval() or new Function().
   const scriptSrc = ["'self'", `'nonce-${nonce}'`, "'strict-dynamic'", "'wasm-unsafe-eval'"];
   if (isDevelopment) scriptSrc.push("'unsafe-eval'");
 
-  const connectSrc = ["'self'", "blob:", "data:", ...supabaseSources(supabaseUrl)];
+  const connectSrc = [
+    "'self'",
+    "blob:",
+    "data:",
+    ...supabaseSources(supabaseUrl),
+    ...sentrySources(sentryDsn),
+  ];
 
   const directives: Record<string, string[]> = {
     "default-src": ["'self'"],

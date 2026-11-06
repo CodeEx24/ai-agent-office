@@ -13,6 +13,10 @@
     "./client-env": {
       "types": "./dist/env/client-entry.d.ts",
       "default": "./dist/env/client-entry.js"
+    },
+    "./redaction": {
+      "types": "./dist/redaction/index.d.ts",
+      "default": "./dist/redaction/index.js"
     }
   },
   "scripts": {

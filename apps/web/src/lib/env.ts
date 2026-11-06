@@ -26,7 +26,33 @@ function readPublicEnv() {
         : source.NEXT_PUBLIC_APP_URL,
     NEXT_PUBLIC_SUPABASE_URL: source.NEXT_PUBLIC_SUPABASE_URL,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: source.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    // NEXT_PUBLIC_SENTRY_DSN is deliberately not parsed here: it is optional, and a bad value must
+    // never make this parse (and so every request) fail. See `getSentryDsn`.
   });
+}
+
+let hasWarnedAboutSentryDsn = false;
+
+/**
+ * Public Sentry DSN when error tracking is configured and valid, else undefined (AGO-104). Used to
+ * allow the Sentry ingest origin in the CSP only when there is a DSN.
+ *
+ * Sentry is optional and must never take the app down, so an invalid value is treated as "off":
+ * it is logged once (the variable name only, never the value) and this returns undefined.
+ *
+ * The literal `process.env.NEXT_PUBLIC_SENTRY_DSN` is inlined at build time (see next.config.ts),
+ * exactly like the browser SDK's DSN, so the CSP and the browser always agree. Changing the DSN
+ * therefore needs a rebuild.
+ */
+export function getSentryDsn(): string | undefined {
+  const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+  if (dsn === undefined || dsn === "") return undefined;
+  if (URL.canParse(dsn)) return dsn;
+  if (!hasWarnedAboutSentryDsn) {
+    hasWarnedAboutSentryDsn = true;
+    console.warn("NEXT_PUBLIC_SENTRY_DSN is not a valid URL; error tracking is off.");
+  }
+  return undefined;
 }
 
 /**

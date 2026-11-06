@@ -279,6 +279,7 @@ test("AC3: the schema defines exactly the documented set of variables", () => {
     "NEXT_PUBLIC_APP_URL",
     "NEXT_PUBLIC_SUPABASE_URL",
     "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    "NEXT_PUBLIC_SENTRY_DSN",
     "SUPABASE_URL",
     "SUPABASE_SERVICE_ROLE_KEY",
     "DATABASE_URL",

@@ -1,4 +1,5 @@
 import { bootstrapWorker } from "./main.js";
+import { registerFatalErrorHandlers } from "./sentry.js";
 
 /** Process entrypoint: fail fast with a non-zero exit when the environment is invalid. */
 async function run(): Promise<void> {
@@ -8,6 +9,8 @@ async function run(): Promise<void> {
   if (worker === null) {
     process.exit(1);
   }
+
+  registerFatalErrorHandlers(process, worker.errorTracker, worker.logger);
 
   const shutdown = (signal: string): void => {
     worker.logger.info({ signal }, "shutting down");

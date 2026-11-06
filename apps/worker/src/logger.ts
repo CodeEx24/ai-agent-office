@@ -1,11 +1,10 @@
-import { isSecretLikeEnvName } from "@ago/shared";
+import { REDACTED, scrubString, scrubValue } from "@ago/shared";
 import { pino, type Logger } from "pino";
 
 export type { Logger } from "pino";
 
-export const REDACTED = "[redacted]";
-const MAX_DEPTH = 6;
-const CREDENTIAL_URL = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]*:[^\s/@]*@/gi;
+// Redaction lives in @ago/shared so the logger and error tracking (AGO-104) apply one rule set.
+export { REDACTED, scrubString, scrubValue };
 
 /** Context ids that every run-scoped log line carries. */
 export interface LogContext {
@@ -14,43 +13,37 @@ export interface LogContext {
   readonly workspace_id?: string;
 }
 
-/** Strip `scheme://user:password@` credentials out of any string. */
-export function scrubString(value: string): string {
-  return value.replace(CREDENTIAL_URL, `$1${REDACTED}@`);
-}
-
-function isSecretKey(key: string): boolean {
-  return isSecretLikeEnvName(key.replace(/([a-z])([A-Z])/g, "$1_$2"));
-}
-
-/** Deep-copy a log payload, masking secret-named keys and credentialed URLs. Never mutates. */
-export function scrubValue(value: unknown, depth = 0): unknown {
-  if (typeof value === "string") return scrubString(value);
-  if (value === null || typeof value !== "object") return value;
-  if (depth >= MAX_DEPTH) return REDACTED;
-  if (value instanceof Error) {
-    return {
-      type: value.name,
-      message: scrubString(value.message),
-      stack: value.stack === undefined ? undefined : scrubString(value.stack),
-    };
-  }
-  if (Array.isArray(value)) return value.map((item) => scrubValue(item, depth + 1));
-  const out: Record<string, unknown> = {};
-  for (const [key, inner] of Object.entries(value)) {
-    out[key] = isSecretKey(key) ? REDACTED : scrubValue(inner, depth + 1);
-  }
-  return out;
+/** One scrubbed log call, offered to an optional sink such as Sentry breadcrumbs. */
+export interface LogEntry {
+  readonly level: string;
+  readonly message: string;
+  readonly context: LogContext;
 }
 
 export interface CreateLoggerOptions {
   readonly level?: string;
   /** Destination stream; defaults to stdout. Tests pass a collector. */
   readonly destination?: { write(chunk: string): void };
+  /** Called with every emitted (already scrubbed) entry; must not throw into the logger. */
+  readonly onLog?: (entry: LogEntry) => void;
+}
+
+function readContext(bindings: Readonly<Record<string, unknown>>): LogContext {
+  const pick = (key: keyof LogContext): string | undefined => {
+    const value = bindings[key];
+    return typeof value === "string" ? value : undefined;
+  };
+  return { run_id: pick("run_id"), agent_id: pick("agent_id"), workspace_id: pick("workspace_id") };
+}
+
+function messageOf(args: readonly unknown[]): string {
+  const text = args.find((arg) => typeof arg === "string");
+  return typeof text === "string" ? text : "";
 }
 
 /** Structured JSON logger (one object per line). Secrets and credentialed URLs are scrubbed. */
 export function createLogger(options: CreateLoggerOptions = {}): Logger {
+  const { onLog } = options;
   return pino(
     {
       name: "ago-worker",
@@ -59,9 +52,19 @@ export function createLogger(options: CreateLoggerOptions = {}): Logger {
       timestamp: pino.stdTimeFunctions.isoTime,
       formatters: { level: (label) => ({ level: label }) },
       hooks: {
-        logMethod(args, method) {
+        logMethod(args, method, levelNumber) {
           const scrubbed = args.map((arg) => scrubValue(arg));
           method.apply(this, scrubbed as Parameters<typeof method>);
+          if (onLog === undefined) return;
+          try {
+            onLog({
+              level: this.levels.labels[levelNumber] ?? "info",
+              message: messageOf(scrubbed),
+              context: readContext(this.bindings()),
+            });
+          } catch {
+            // A sink fault must never break logging.
+          }
         },
       },
     },
