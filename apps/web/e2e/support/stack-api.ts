@@ -55,6 +55,8 @@ interface RequestInitLite {
   method?: string;
   body?: unknown;
   prefer?: string;
+  /** Extra request headers, e.g. `Accept-Profile` to probe which schemas the Data API exposes. */
+  headers?: Record<string, string>;
 }
 
 async function call<T>(
@@ -70,6 +72,7 @@ async function call<T>(
       authorization: `Bearer ${bearer}`,
       "content-type": "application/json",
       ...(init.prefer ? { prefer: init.prefer } : {}),
+      ...init.headers,
     },
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
   });
