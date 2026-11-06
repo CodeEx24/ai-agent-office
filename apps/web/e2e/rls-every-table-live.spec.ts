@@ -236,7 +236,7 @@ test.describe("AGO-107: RLS on every table (local stack)", () => {
     const world = await getWorld();
     const cases: [TableName, "ownerA" | "memberA"][] = [
       ["agents", "ownerA"],
-      ["skills", "memberA"],
+      ["skills", "ownerA"],
       ["tasks", "memberA"],
       ["notes_index", "memberA"],
       ["budgets_usage", "ownerA"],
@@ -589,7 +589,7 @@ test.describe("AGO-107: RLS on every table (local stack)", () => {
 
     // agent_skills has INSERT but no UPDATE: a merge-duplicates upsert must not rewrite a link.
     const link = must(await svcRow("agent_skills", world.a.seeded.agent_skills));
-    await send({ user: world.memberA }, "/rest/v1/agent_skills?on_conflict=agent_id,skill_id", {
+    await send({ user: world.ownerA }, "/rest/v1/agent_skills?on_conflict=agent_id,skill_id", {
       ...upsert,
       body: { workspace_id: world.a.id, agent_id: link.agent_id, skill_id: link.skill_id },
     });

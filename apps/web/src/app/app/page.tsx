@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { getCurrentUser } from "../../features/auth/current-user";
 import { OnboardingForm } from "../../features/workspaces/OnboardingForm";
@@ -29,6 +30,11 @@ export default async function WorkspaceHomePage() {
           <p className="text-sm text-muted-foreground">
             Signed in as <strong>{user?.email}</strong> ·{" "}
             <span data-testid="workspace-role">{workspace.role}</span>
+          </p>
+          <p>
+            <Link href="/app/skills" className="text-sm text-primary underline underline-offset-4">
+              Skills
+            </Link>
           </p>
         </section>
       ) : (

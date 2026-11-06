@@ -341,6 +341,38 @@ isOneToOne: false
       referencedColumns: ["workspace_id","id"]
     }
                   ]
+                },"skill_versions": {
+                  Row: {
+                    "body": string,"created_at": string,"created_by": string | null,"id": string,"skill_id": string,"version": number,"workspace_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "body"?: string,"created_at"?: string,"created_by"?: string | null,"id"?: string,"skill_id": string,"version": number,"workspace_id": string
+                  }
+                  Update: {
+                    "body"?: string,"created_at"?: string,"created_by"?: string | null,"id"?: string,"skill_id"?: string,"version"?: number,"workspace_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "skill_versions_workspace_id_created_by_fkey"
+      columns: ["workspace_id","created_by"]
+isOneToOne: false
+      referencedRelation: "members"
+      referencedColumns: ["workspace_id","id"]
+    },{
+      foreignKeyName: "skill_versions_workspace_id_fkey"
+      columns: ["workspace_id"]
+isOneToOne: false
+      referencedRelation: "workspaces"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "skill_versions_workspace_id_skill_id_fkey"
+      columns: ["workspace_id","skill_id"]
+isOneToOne: false
+      referencedRelation: "skills"
+      referencedColumns: ["workspace_id","id"]
+    }
+                  ]
                 },"skills": {
                   Row: {
                     "body": string,"created_at": string,"description": string,"id": string,"name": string,"updated_at": string,"version": number,"workspace_id": string

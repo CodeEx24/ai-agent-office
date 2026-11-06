@@ -55,9 +55,9 @@ select is(
     where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
       and (not exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = 'created_at'
              and a.atttypid = 'timestamptz'::regtype and a.attnotnull)
-        or (c.relname <> 'run_events' and not exists (select 1 from pg_attribute a where a.attrelid = c.oid
+        or (c.relname not in ('run_events', 'skill_versions') and not exists (select 1 from pg_attribute a where a.attrelid = c.oid
              and a.attname = 'updated_at' and a.atttypid = 'timestamptz'::regtype and a.attnotnull)))),
-  0, 'every table has timestamptz created_at/updated_at (run_events has no updated_at)');
+  0, 'every table has timestamptz created_at/updated_at (run_events and skill_versions have no updated_at)');
 
 -- 7. run_events: append-only-ready (no updated_at, ordering column)
 select hasnt_column('public', 'run_events', 'updated_at', 'run_events has no updated_at');

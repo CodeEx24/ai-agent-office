@@ -14,6 +14,14 @@
       "types": "./dist/env/client-entry.d.ts",
       "default": "./dist/env/client-entry.js"
     },
+    "./skill-limits": {
+      "types": "./dist/skills/skill-limits.d.ts",
+      "default": "./dist/skills/skill-limits.js"
+    },
+    "./skills": {
+      "types": "./dist/skills/skill-schemas.d.ts",
+      "default": "./dist/skills/skill-schemas.js"
+    },
     "./redaction": {
       "types": "./dist/redaction/index.d.ts",
       "default": "./dist/redaction/index.js"

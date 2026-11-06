@@ -38,6 +38,16 @@ describe("input record helpers", () => {
     expect(formDataToRecord(form)).toEqual({ a: "1" });
   });
 
+  it("formDataToRecord drops the $ACTION_ fields Next.js adds to server-action forms", () => {
+    const form = new FormData();
+    form.set("name", "Ada");
+    form.set("$ACTION_REF_1", "1");
+    form.set("$ACTION_1:0", "{}");
+    form.set("$ACTION_KEY", "k");
+
+    expect(formDataToRecord(form)).toEqual({ name: "Ada" });
+  });
+
   it("searchParamsToRecord keeps the first value and cannot pollute the prototype", () => {
     const record = searchParamsToRecord(
       new URLSearchParams("a=1&a=2&__proto__=evil&constructor=x"),
