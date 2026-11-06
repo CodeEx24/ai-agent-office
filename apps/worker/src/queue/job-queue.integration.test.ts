@@ -18,6 +18,7 @@ import {
   type RunExecutor,
 } from "./index.js";
 
+import { hardenPgbossFunctions } from "./pgboss-hardening.js";
 import type { ErrorTracker } from "../sentry.js";
 
 const DATABASE_URL = process.env.DATABASE_URL ?? LOCAL_DATABASE_URL;
@@ -306,5 +307,40 @@ describe.skipIf(!live)("job queue (live database)", () => {
               has_schema_privilege('authenticated', 'pgboss', 'USAGE') as authenticated`,
     );
     expect(usage.rows[0]).toEqual({ anon: false, authenticated: false });
+  });
+
+  it("hardening survives many concurrent starts and leaves no API role with EXECUTE", async () => {
+    await makeQueue(); // installs the pgboss schema and its functions
+    const grantsLeft = async (): Promise<number> => {
+      const { rows } = await pool.query<{ held: number }>(
+        `select count(*)::int as held
+           from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'pgboss'
+            and (has_function_privilege('anon', p.oid, 'EXECUTE')
+              or has_function_privilege('authenticated', p.oid, 'EXECUTE')
+              or has_function_privilege('service_role', p.oid, 'EXECUTE')
+              or has_function_privilege('public', p.oid, 'EXECUTE'))`,
+      );
+      return rows[0]?.held ?? -1;
+    };
+    // Reproduce the pg-boss install/upgrade default so there is real work to serialise.
+    await pool.query("grant execute on all functions in schema pgboss to public");
+    expect(await grantsLeft()).toBeGreaterThan(0);
+
+    const WORKERS = 12;
+    const pools = Array.from(
+      { length: WORKERS },
+      () => new pg.Pool({ connectionString: DATABASE_URL, max: 1 }),
+    );
+    try {
+      const results = await Promise.allSettled(pools.map((p) => hardenPgbossFunctions(p)));
+      expect(results.filter((r) => r.status === "rejected")).toEqual([]);
+    } finally {
+      await Promise.all(pools.map((p) => p.end().catch(() => undefined)));
+    }
+    expect(await grantsLeft()).toBe(0);
+    // Idempotent: a second round finds nothing to revoke and still succeeds.
+    await hardenPgbossFunctions(pool);
+    expect(await grantsLeft()).toBe(0);
   });
 });
