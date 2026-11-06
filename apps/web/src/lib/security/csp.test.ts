@@ -55,6 +55,26 @@ describe("buildContentSecurityPolicy", () => {
     }
   });
 
+  it("allows the Sentry ingest origin only when a DSN is configured, never the DSN key", () => {
+    const dsn = "https://publickey123@o42.ingest.sentry.example.test/7";
+    const withDsn = buildContentSecurityPolicy({ ...base, sentryDsn: dsn });
+
+    expect(directive(withDsn, "connect-src")).toContain("https://o42.ingest.sentry.example.test");
+    expect(withDsn).not.toContain("publickey123");
+    // Nothing else changes: the other directives stay identical.
+    expect(directive(withDsn, "script-src")).toEqual(
+      directive(buildContentSecurityPolicy(base), "script-src"),
+    );
+  });
+
+  it("adds no Sentry source without a usable DSN", () => {
+    for (const sentryDsn of [undefined, "", "not a url", "ftp://k@host/1"]) {
+      expect(directive(buildContentSecurityPolicy({ ...base, sentryDsn }), "connect-src")).toEqual(
+        directive(buildContentSecurityPolicy(base), "connect-src"),
+      );
+    }
+  });
+
   it("sets the hardening directives", () => {
     const csp = buildContentSecurityPolicy(base);
 

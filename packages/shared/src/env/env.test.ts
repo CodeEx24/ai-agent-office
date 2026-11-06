@@ -206,7 +206,7 @@ test("isForbiddenPublicEnvName denies by default: only NEXT_PUBLIC_ vars declare
     "NEXT_PUBLIC_ANTHROPIC_APIKEY",
     "NEXT_PUBLIC_REDIS_URL",
     "NEXT_PUBLIC_APP_ENV",
-    "NEXT_PUBLIC_SENTRY_DSN",
+    "NEXT_PUBLIC_SENTRY_AUTH_TOKEN",
     "NEXT_PUBLIC_ANYTHING_ELSE",
   ]) {
     assert.equal(isForbiddenPublicEnvName(name), true, name);

@@ -42,22 +42,8 @@ const NON_SECRET_VALUE_NAMES = new Set(shared.NON_SECRET_SERVER_ENV_NAMES);
  */
 const CREDENTIAL_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@"'`\\]*:[^\s/@"'`\\]+@[^\s/"'`\\]+/i;
 
-/** Well-known secret value shapes, flagged whatever the variable was called (mirrors .claude/hooks/guard.mjs). */
-const SECRET_VALUE_PATTERNS = [
-  [/AKIA[0-9A-Z]{16}/, "AWS access key"],
-  [/sk-ant-[A-Za-z0-9_-]{20,}/, "Anthropic API key"],
-  [/sk-proj-[A-Za-z0-9_-]{20,}/, "OpenAI project key"],
-  [/\bsk-[A-Za-z0-9]{48,}\b/, "OpenAI API key"],
-  [/\bgh[pousr]_[A-Za-z0-9]{36}\b/, "GitHub token"],
-  [/github_pat_[A-Za-z0-9_]{22,}/, "GitHub fine-grained token"],
-  [/\bsbp_[0-9a-f]{40}\b/, "Supabase access token"],
-  [/\bsb_secret_[A-Za-z0-9_-]{20,}/, "Supabase secret key"],
-  [/\b(sk|rk)_live_[0-9a-zA-Z]{24,}/, "Stripe live key"],
-  [/\bxox[baprs]-[0-9A-Za-z-]{10,}/, "Slack token"],
-  [/\b\d{8,10}:AA[0-9A-Za-z_-]{33}\b/, "Telegram bot token"],
-  [/AIza[0-9A-Za-z_-]{35}/, "Google API key"],
-  [/-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/, "private key"],
-];
+/** Well-known secret value shapes, flagged whatever the variable was called. One list, shared with the redactor (AGO-104). */
+const SECRET_VALUE_PATTERNS = shared.SECRET_VALUE_PATTERNS;
 const JWT = /eyJ[A-Za-z0-9_-]{10,}\.(eyJ[A-Za-z0-9_-]{6,})\.[A-Za-z0-9_-]{10,}/g;
 
 /** True when a JWT in `text` carries the Supabase service_role role (the anon key's role is allowed). */

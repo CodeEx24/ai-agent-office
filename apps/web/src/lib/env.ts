@@ -26,7 +26,16 @@ function readPublicEnv() {
         : source.NEXT_PUBLIC_APP_URL,
     NEXT_PUBLIC_SUPABASE_URL: source.NEXT_PUBLIC_SUPABASE_URL,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: source.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    NEXT_PUBLIC_SENTRY_DSN: source.NEXT_PUBLIC_SENTRY_DSN,
   });
+}
+
+/**
+ * Public Sentry DSN when error tracking is configured, else undefined (AGO-104). Used to allow
+ * the Sentry ingest origin in the CSP only when there is a DSN.
+ */
+export function getSentryDsn(): string | undefined {
+  return readPublicEnv().NEXT_PUBLIC_SENTRY_DSN;
 }
 
 /**

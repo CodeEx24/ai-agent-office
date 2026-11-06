@@ -27,6 +27,11 @@ export const clientEnvSchema = z.object({
   ),
   /** Anon key is public by design; RLS is the protection. Required outside local. */
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.preprocess(emptyToUndefined, optionalString),
+  /**
+   * Browser Sentry DSN (AGO-104). A DSN is a write-only ingest address, public by design.
+   * Optional: with no value the browser SDK is never initialised and nothing is sent.
+   */
+  NEXT_PUBLIC_SENTRY_DSN: z.preprocess(emptyToUndefined, z.url().optional()),
 });
 export type ClientEnv = z.infer<typeof clientEnvSchema>;
 

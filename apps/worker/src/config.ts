@@ -33,6 +33,8 @@ export interface WorkerConfig {
   readonly logLevel: (typeof LOG_LEVELS)[number];
   readonly databaseUrl: string;
   readonly healthDbTimeoutMs: number;
+  /** `SENTRY_DSN`; undefined keeps error tracking off (AGO-104). */
+  readonly sentryDsn: string | undefined;
 }
 
 /**
@@ -53,5 +55,6 @@ export function loadWorkerConfig(source: EnvSource = process.env): WorkerConfig 
     logLevel: parsed.data.LOG_LEVEL,
     databaseUrl: env.DATABASE_URL ?? LOCAL_DATABASE_URL,
     healthDbTimeoutMs: parsed.data.HEALTH_DB_TIMEOUT_MS,
+    sentryDsn: env.SENTRY_DSN,
   };
 }

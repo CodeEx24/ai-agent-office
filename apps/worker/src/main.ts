@@ -1,14 +1,21 @@
 import { loadWorkerConfig } from "./config.js";
 import { createPgDatabaseCheck, queueNotConfigured } from "./health.js";
 import { createLogger, scrubString, type Logger } from "./logger.js";
+import { createErrorTracker, type CreateErrorTrackerOptions, type ErrorTracker } from "./sentry.js";
 import { startHealthServer } from "./server.js";
 
 import type { EnvSource } from "@ago/shared";
 import type { Server } from "node:http";
 
+export interface StartWorkerOptions {
+  /** Tests inject a mock Sentry transport; production leaves this unset. */
+  readonly sentryTransport?: CreateErrorTrackerOptions["transport"];
+}
+
 export interface WorkerHandle {
   readonly server: Server;
   readonly logger: Logger;
+  readonly errorTracker: ErrorTracker;
   stop(): Promise<void>;
 }
 
@@ -33,9 +40,23 @@ export async function bootstrapWorker(
  * Validate the environment, then start the health server. Throws on an invalid environment
  * (the caller exits non-zero); never logs secrets.
  */
-export async function startWorker(source: EnvSource = process.env): Promise<WorkerHandle> {
+export async function startWorker(
+  source: EnvSource = process.env,
+  options: StartWorkerOptions = {},
+): Promise<WorkerHandle> {
   const config = loadWorkerConfig(source);
-  const logger = createLogger({ level: config.logLevel });
+  const errorTracker = createErrorTracker({
+    dsn: config.sentryDsn,
+    environment: config.env.APP_ENV,
+    transport: options.sentryTransport,
+  });
+  // Log lines double as breadcrumbs on later error events; stdout stays the shipped log stream.
+  const logger = createLogger({
+    level: config.logLevel,
+    onLog: (entry) => {
+      errorTracker.addBreadcrumb(entry);
+    },
+  });
   const db = createPgDatabaseCheck(config.databaseUrl, config.healthDbTimeoutMs);
   const server = await startHealthServer({
     port: config.port,
@@ -47,6 +68,7 @@ export async function startWorker(source: EnvSource = process.env): Promise<Work
   return {
     server,
     logger,
+    errorTracker,
     stop: async () => {
       await new Promise<void>((resolve) =>
         server.close(() => {
@@ -55,6 +77,7 @@ export async function startWorker(source: EnvSource = process.env): Promise<Work
       );
       await db.close();
       logger.info("worker stopped");
+      await errorTracker.close();
     },
   };
 }

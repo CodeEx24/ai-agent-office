@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { isProtectedPath, signInPathFor } from "./features/auth/routes";
-import { getSupabaseUrl } from "./lib/env";
+import { getSentryDsn, getSupabaseUrl } from "./lib/env";
 import {
   getClientIp,
   getRateLimiter,
@@ -24,6 +24,15 @@ function safeSupabaseUrl(): string | undefined {
   }
 }
 
+function safeSentryDsn(): string | undefined {
+  try {
+    return getSentryDsn();
+  } catch {
+    // An invalid DSN simply leaves the Sentry origin out of the CSP (error tracking stays off).
+    return undefined;
+  }
+}
+
 // Next.js 16 renamed middleware.ts to proxy.ts. In order, it:
 //  1. builds the per-request nonce CSP and forwards it (plus `x-nonce`) on the request headers, so
 //     Next puts the nonce on its own scripts and the root layout can hand it to next-themes;
@@ -36,6 +45,7 @@ export async function proxy(request: NextRequest) {
     nonce,
     isDevelopment: process.env.NODE_ENV === "development",
     supabaseUrl: safeSupabaseUrl(),
+    sentryDsn: safeSentryDsn(),
   });
   // Mutating the request headers is what `NextResponse.next({ request })` forwards to the page.
   request.headers.set(NONCE_HEADER, nonce);
