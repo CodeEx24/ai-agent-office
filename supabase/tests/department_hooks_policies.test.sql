@@ -211,8 +211,11 @@ reset role;
 -- 45-52. AC2: existing flows work unchanged with department_id null (member of A, normal work)
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"96000000-0000-4000-8000-00000000000c","role":"authenticated"}', true);
+-- AGO-141: only owners create agents now, so the owner (a) creates it and the rest continues as member (c)
+select set_config('request.jwt.claims', '{"sub":"96000000-0000-4000-8000-00000000000a","role":"authenticated"}', true);
 select lives_ok($$insert into public.agents (workspace_id, name) values ('96aaaaaa-0000-4000-8000-000000000001', 'agent-new')$$,
-  'AC2: a member creates an agent without a department');
+  'AC2: an owner creates an agent without a department');
+select set_config('request.jwt.claims', '{"sub":"96000000-0000-4000-8000-00000000000c","role":"authenticated"}', true);
 select lives_ok($$insert into public.tasks (workspace_id, title) values ('96aaaaaa-0000-4000-8000-000000000001', 'task-new')$$,
   'AC2: a member creates a task without a department');
 select lives_ok($$insert into public.notes_index (workspace_id, path) values ('96aaaaaa-0000-4000-8000-000000000001', 'new.md')$$,
