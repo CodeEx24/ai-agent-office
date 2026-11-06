@@ -55,6 +55,33 @@ describe("scrubString", () => {
     expect(out).toContain("done");
   });
 
+  it.each([
+    ["service-account key", `sk-svcacct-${"Zk4m".repeat(12)}`],
+    ["admin key", `sk-admin-${"Zk4m".repeat(12)}`],
+    ["short plain sk- key", `sk-${"Zk4m".repeat(8)}`],
+    ["minimum-length sk- key", `sk-${"a1B2".repeat(4)}`],
+  ])("masks an OpenAI-style %s of any length", (_label, secret) => {
+    const out = scrubString(`key ${secret} end`);
+    expect(out).not.toContain(secret.slice(3));
+    expect(out).toContain("end");
+  });
+
+  it("does not mistake words ending in sk- for a key", () => {
+    expect(scrubString("task-list-item-checkbox-label and disk-usage-report-daily")).toBe(
+      "task-list-item-checkbox-label and disk-usage-report-daily",
+    );
+  });
+
+  it("masks Cookie and Set-Cookie header lines written into free text", () => {
+    const body = "Ck4e".repeat(12);
+    const out = scrubString(
+      `Set-Cookie: session=${body}; Path=/; HttpOnly\nCookie: sb=${body}; theme=dark\nnext line`,
+    );
+    expect(out).not.toContain(body);
+    expect(out).not.toContain("HttpOnly");
+    expect(out).toContain("next line");
+  });
+
   it("leaves ordinary text alone", () => {
     expect(scrubString("agent finished run in 3 steps")).toBe("agent finished run in 3 steps");
   });

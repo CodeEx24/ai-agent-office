@@ -28,6 +28,12 @@ const JWT = /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{10,}/g
 const AUTH_SCHEME_VALUE = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 
 /**
+ * `Cookie:` / `Set-Cookie:` header lines written into free text. The whole rest of the line is the
+ * value (several `name=value; Path=/` pairs), so it is masked up to the end of the line.
+ */
+const COOKIE_HEADER = /\b((?:Set-)?Cookie2?\s*[:=]\s*)(?!\[redacted\])[^\r\n]+/gi;
+
+/**
  * `name=value` / `name: value` / `"name":"value"` where the name looks like a credential
  * (apikey, access_token, client_secret, password, authorization, ...). Covers query strings,
  * headers dumped into a message and JSON fragments. Over-redaction is the safe failure.
@@ -43,7 +49,9 @@ export const SECRET_VALUE_PATTERNS: readonly (readonly [RegExp, string])[] = [
   [/AKIA[0-9A-Z]{16}/, "AWS access key"],
   [/sk-ant-[A-Za-z0-9_-]{20,}/, "Anthropic API key"],
   [/sk-proj-[A-Za-z0-9_-]{20,}/, "OpenAI project key"],
-  [/\bsk-[A-Za-z0-9]{48,}\b/, "OpenAI API key"],
+  // Any `sk-` key of 16+ key characters: plain, `sk-svcacct-`, `sk-admin-`, short or long. Broad on
+  // purpose (over-redaction is the safe failure); the two entries above only keep specific labels.
+  [/\bsk-[A-Za-z0-9_-]{16,}/, "OpenAI API key"],
   [/\bgh[pousr]_[A-Za-z0-9]{36}\b/, "GitHub token"],
   [/github_pat_[A-Za-z0-9_]{22,}/, "GitHub fine-grained token"],
   [/\bsbp_[0-9a-f]{40}\b/, "Supabase access token"],
@@ -94,6 +102,7 @@ export function scrubString(value: string): string {
   out = out.replace(CREDENTIAL_URL, `$1${REDACTED}@`);
   out = out.replace(JWT, REDACTED);
   for (const pattern of GLOBAL_SECRET_VALUE_PATTERNS) out = out.replace(pattern, REDACTED);
+  out = out.replace(COOKIE_HEADER, `$1${REDACTED}`);
   out = out.replace(AUTH_SCHEME_VALUE, `$1 ${REDACTED}`);
   out = out.replace(CREDENTIAL_ASSIGNMENT, `$1$2${REDACTED}`);
   return out;
