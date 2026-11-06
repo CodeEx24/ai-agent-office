@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { SKILL_BODY_MAX_LENGTH, SKILL_DESCRIPTION_MAX_LENGTH } from "@ago/shared";
+import { SKILL_BODY_MAX_LENGTH, SKILL_DESCRIPTION_MAX_LENGTH } from "@ago/shared/skills";
 import { Button, Input, Label } from "@ago/ui";
 
 import { saveSkillAction, type SkillActionState } from "./actions";
