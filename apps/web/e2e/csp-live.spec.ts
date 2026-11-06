@@ -29,7 +29,10 @@ test.describe("AGO-66 CSP on /app (local stack)", () => {
     await expect(workspace.workspaceName).toHaveText("CSP Check");
 
     const appCsp = documentCsp.at(-1) ?? "";
-    expect(appCsp).toMatch(/script-src 'self' 'nonce-[^']+' 'strict-dynamic'(;|$)/);
+    // 'wasm-unsafe-eval' follows 'strict-dynamic' (meshopt GLBs decode in WebAssembly).
+    expect(appCsp).toMatch(
+      /script-src 'self' 'nonce-[^']+' 'strict-dynamic' 'wasm-unsafe-eval'(;|$)/,
+    );
     expect(appCsp).toContain("http://127.0.0.1:44321");
   });
 });
