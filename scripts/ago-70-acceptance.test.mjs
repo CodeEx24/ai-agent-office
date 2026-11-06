@@ -289,6 +289,7 @@ test("AC3: the schema defines exactly the documented set of variables", () => {
     "LANGFUSE_PUBLIC_KEY",
     "LANGFUSE_SECRET_KEY",
     "LANGFUSE_HOST",
+    "TRUST_PROXY_HEADERS",
   ].sort();
   assert.deepEqual([...SERVER_ONLY_ENV_NAMES, ...CLIENT_ENV_NAMES].sort(), expected);
 });
@@ -347,12 +348,13 @@ test("AC2 (bypass): the public anon key reference is not a false positive", () =
   });
 });
 
-test("AC2 (allowlist): only APP_ENV, SUPABASE_URL, LANGFUSE_HOST and SENTRY_DSN values may appear in a bundle", () => {
+test("AC2 (allowlist): only APP_ENV, SUPABASE_URL, LANGFUSE_HOST, SENTRY_DSN and TRUST_PROXY_HEADERS values may appear in a bundle", () => {
   const allowed = {
     APP_ENV: "production",
     SUPABASE_URL: "https://project.example.test",
     LANGFUSE_HOST: "https://langfuse.example.test",
     SENTRY_DSN: "https://publickey@o0.ingest.sentry.example.test/1",
+    TRUST_PROXY_HEADERS: "true",
   };
   withBundle({ "a.js": Object.values(allowed).map((v) => `x("${v}");`).join("") }, (dir) => {
     assert.deepEqual(scanBundle(dir, { serverNames: SERVER_ONLY_ENV_NAMES, env: allowed }), []);

@@ -79,6 +79,9 @@ export default defineConfig({
       env: {
         // Minimal safe env so the production server boots (no secrets; placeholder public URLs).
         APP_ENV: "local",
+        // The rate-limit specs give each test its own x-forwarded-for address, which the limiter
+        // ignores unless a trusted proxy is configured (AGO-201).
+        TRUST_PROXY_HEADERS: "true",
         // The dev-only 3D test page is off in production builds unless this is set (AGO-49).
         ENABLE_DEV_3D: "1",
         // Same for the component gallery, so the CSP spec can cover /dev/ui (AGO-66).

@@ -17,6 +17,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("shouldTrustProxyHeaders (AGO-201)", () => {
+  it("is off unless TRUST_PROXY_HEADERS is exactly true", async () => {
+    const { shouldTrustProxyHeaders } = await loadEnv();
+    for (const value of ["", "false", "TRUE", "1", "yes"]) {
+      vi.stubEnv("TRUST_PROXY_HEADERS", value);
+      expect(shouldTrustProxyHeaders(), value).toBe(false);
+    }
+    vi.stubEnv("TRUST_PROXY_HEADERS", "true");
+    expect(shouldTrustProxyHeaders()).toBe(true);
+  });
+});
+
 describe("getSentryDsn", () => {
   it("is undefined when the DSN is unset or empty", async () => {
     vi.stubEnv("NEXT_PUBLIC_SENTRY_DSN", "");

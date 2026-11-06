@@ -45,6 +45,18 @@ test("local environment starts with no variables set (safe dev defaults)", () =>
   assert.equal(env.NEXT_PUBLIC_SUPABASE_URL, "http://127.0.0.1:44321");
 });
 
+test("AGO-201: TRUST_PROXY_HEADERS defaults to false, accepts only true/false and never prints a bad value", () => {
+  assert.equal(parseEnv(serverEnvSchema, {}).TRUST_PROXY_HEADERS, "false");
+  assert.equal(parseEnv(serverEnvSchema, { TRUST_PROXY_HEADERS: "" }).TRUST_PROXY_HEADERS, "false");
+  assert.equal(
+    parseEnv(serverEnvSchema, { TRUST_PROXY_HEADERS: "true" }).TRUST_PROXY_HEADERS,
+    "true",
+  );
+  const message = messageOf(() => parseEnv(serverEnvSchema, { TRUST_PROXY_HEADERS: SENTINEL }));
+  assert.ok(message.includes("TRUST_PROXY_HEADERS"));
+  assert.ok(!message.includes(SENTINEL));
+});
+
 test("AGO-104: an invalid NEXT_PUBLIC_SENTRY_DSN reads as unset instead of failing the whole env", () => {
   for (const schema of [clientEnvSchema, serverEnvSchema]) {
     const env = parseEnv(schema, { NEXT_PUBLIC_SENTRY_DSN: "not a url at all" });

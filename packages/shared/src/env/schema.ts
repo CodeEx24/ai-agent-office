@@ -39,6 +39,13 @@ export const serverOnlyEnvSchema = z.object({
   ANTHROPIC_API_KEY: z.preprocess(emptyToUndefined, optionalString),
   TELEGRAM_BOT_TOKEN: z.preprocess(emptyToUndefined, optionalString),
   SENTRY_DSN: z.preprocess(emptyToUndefined, z.url().optional()),
+  /**
+   * Set to `true` only when the app runs behind a reverse proxy that overwrites
+   * `X-Forwarded-For` / `X-Real-IP` (Vercel does). The rate limiter then trusts the first hop as
+   * the client address (AGO-201). Default `false`: the headers are caller-controlled, so they are
+   * ignored and every caller shares one per-IP bucket (per-user and per-email limits are unchanged).
+   */
+  TRUST_PROXY_HEADERS: z.preprocess(emptyToUndefined, z.enum(["true", "false"]).default("false")),
   LANGFUSE_PUBLIC_KEY: z.preprocess(emptyToUndefined, optionalString),
   LANGFUSE_SECRET_KEY: z.preprocess(emptyToUndefined, optionalString),
   LANGFUSE_HOST: z.preprocess(emptyToUndefined, httpUrlString.optional()),
@@ -105,6 +112,7 @@ export const NON_SECRET_SERVER_ENV_NAMES: readonly string[] = [
   "SUPABASE_URL",
   "LANGFUSE_HOST",
   "SENTRY_DSN",
+  "TRUST_PROXY_HEADERS",
 ];
 
 /**
