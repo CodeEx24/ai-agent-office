@@ -37,6 +37,11 @@ export function getAppUrl(): string {
   return readPublicEnv().NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
 }
 
+/** Validated public Supabase URL (no anon key needed); allowed in the CSP `connect-src`. */
+export function getSupabaseUrl(): string {
+  return readPublicEnv().NEXT_PUBLIC_SUPABASE_URL;
+}
+
 export function getSupabasePublicEnv(): SupabasePublicEnv {
   const env = readPublicEnv();
   const anonKey = env.NEXT_PUBLIC_SUPABASE_ANON_KEY;

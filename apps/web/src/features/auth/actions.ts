@@ -3,6 +3,8 @@
 import { redirect } from "next/navigation";
 
 import { getAppUrl } from "../../lib/env";
+import { limitAction, RATE_LIMIT_RULES } from "../../lib/rate-limit";
+import { parseInput } from "../../lib/validation/parse-input";
 import { createSupabaseServerClient } from "../../lib/supabase/server";
 import { oauthProviderSchema, sendCodeSchema, verifyCodeSchema } from "./schemas";
 import { safeNextPath } from "./safe-next-path";
@@ -20,10 +22,15 @@ function formString(formData: FormData, key: string): string {
 
 /** Step 1: email the user a one-time code (and a magic link). Creates the account on first use. */
 export async function sendCodeAction(_prev: SignInState, formData: FormData): Promise<SignInState> {
-  const parsed = sendCodeSchema.safeParse({ email: formString(formData, "email") });
-  if (!parsed.success) {
-    return { step: "email", error: parsed.error.issues[0]?.message ?? GENERIC_ERROR };
-  }
+  const parsed = parseInput(
+    sendCodeSchema,
+    { email: formString(formData, "email") },
+    GENERIC_ERROR,
+  );
+  if (!parsed.success) return { step: "email", error: parsed.message };
+
+  const limit = await limitAction(parsed.data.email, RATE_LIMIT_RULES.sendCodeEmail);
+  if (!limit.allowed) return { step: "email", error: limit.message };
 
   const next = safeNextPath(formString(formData, "next"));
   // Sent to Supabase, so it comes from configuration, never from request headers.
@@ -47,14 +54,18 @@ export async function verifyCodeAction(
   _prev: SignInState,
   formData: FormData,
 ): Promise<SignInState> {
-  const parsed = verifyCodeSchema.safeParse({
-    email: formString(formData, "email"),
-    token: formString(formData, "token"),
-  });
+  const parsed = parseInput(
+    verifyCodeSchema,
+    { email: formString(formData, "email"), token: formString(formData, "token") },
+    GENERIC_ERROR,
+  );
   if (!parsed.success) {
-    const email = formString(formData, "email");
-    return { step: "code", email, error: parsed.error.issues[0]?.message ?? GENERIC_ERROR };
+    return { step: "code", email: formString(formData, "email"), error: parsed.message };
   }
+
+  // Caps guesses at the 6-digit code for one address, whatever IP they come from.
+  const limit = await limitAction(parsed.data.email, RATE_LIMIT_RULES.verifyCodeEmail);
+  if (!limit.allowed) return { step: "code", email: parsed.data.email, error: limit.message };
 
   try {
     const supabase = await createSupabaseServerClient();
@@ -75,7 +86,7 @@ export async function verifyCodeAction(
 
 /** Starts Google/GitHub sign-in: builds the provider URL on the server and redirects to it. */
 export async function signInWithOAuthAction(formData: FormData): Promise<void> {
-  const provider = oauthProviderSchema.safeParse(formString(formData, "provider"));
+  const provider = parseInput(oauthProviderSchema, formString(formData, "provider"));
   if (!provider.success) redirect(`${SIGN_IN_PATH}?error=provider`);
 
   const next = safeNextPath(formString(formData, "next"));
@@ -97,7 +108,10 @@ export async function signInWithOAuthAction(formData: FormData): Promise<void> {
   redirect(url ?? `${SIGN_IN_PATH}?error=provider`);
 }
 
-/** Ends the session (clears the Supabase cookies). Called by a POST form, never a link. */
+/**
+ * Ends the session (clears the Supabase cookies). Called by a POST form, never a link.
+ * @no-input takes no user input, so there is nothing to validate.
+ */
 export async function signOutAction(): Promise<void> {
   try {
     const supabase = await createSupabaseServerClient();

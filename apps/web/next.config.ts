@@ -1,7 +1,16 @@
 import type { NextConfig } from "next";
 
+import { BASELINE_SECURITY_HEADERS } from "./src/lib/security/headers";
+
 const nextConfig: NextConfig = {
   reactCompiler: true,
+  // Baseline security headers on every route, static assets included. The per-request CSP is
+  // added in src/proxy.ts because it carries a nonce.
+  headers() {
+    return Promise.resolve([
+      { source: "/:path*", headers: BASELINE_SECURITY_HEADERS.map((header) => ({ ...header })) },
+    ]);
+  },
   // @ago/ui ships TypeScript source (no build step); Next compiles it.
   transpilePackages: ["@ago/ui"],
   // @ago/shared is compiled by turbo (^build) to NodeNext ESM with `.js` import specifiers,

@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { safeNextPath } from "../../../features/auth/safe-next-path";
+import { authCallbackQuerySchema } from "../../../features/auth/schemas";
+import { parseInput, searchParamsToRecord } from "../../../lib/validation/parse-input";
 import { resolveOrigin } from "../../../lib/request-origin";
 import { createSupabaseServerClient } from "../../../lib/supabase/server";
 
@@ -8,10 +10,14 @@ import { createSupabaseServerClient } from "../../../lib/supabase/server";
 // sends the user to `next`. `next` is validated as a same-origin path, so this can never be used
 // as an open redirect; the redirect base is the host the user is on (cookies are host-scoped).
 export async function GET(request: NextRequest) {
-  const { searchParams } = request.nextUrl;
   const origin = resolveOrigin(request.headers);
-  const next = safeNextPath(searchParams.get("next"));
-  const code = searchParams.get("code");
+  const query = parseInput(
+    authCallbackQuerySchema,
+    searchParamsToRecord(request.nextUrl.searchParams),
+  );
+  // Invalid input (oversized or malformed values) is treated like a missing code.
+  const code = query.success ? query.data.code : undefined;
+  const next = safeNextPath(query.success ? query.data.next : undefined);
 
   if (code) {
     try {
