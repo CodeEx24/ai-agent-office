@@ -153,6 +153,26 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"capabilities": {
+                  Row: {
+                    "created_at": string,"default_mode": string,"description": string,"enabled": boolean,"id": string,"key": string,"name": string,"scope": string,"tier": number,"updated_at": string,"workspace_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"default_mode": string,"description"?: string,"enabled"?: boolean,"id"?: string,"key": string,"name": string,"scope": string,"tier": number,"updated_at"?: string,"workspace_id": string
+                  }
+                  Update: {
+                    "created_at"?: string,"default_mode"?: string,"description"?: string,"enabled"?: boolean,"id"?: string,"key"?: string,"name"?: string,"scope"?: string,"tier"?: number,"updated_at"?: string,"workspace_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "capabilities_workspace_id_fkey"
+      columns: ["workspace_id"]
+isOneToOne: false
+      referencedRelation: "workspaces"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"claims": {
                   Row: {
                     "agent_id": string,"claimed_at": string,"created_at": string,"expires_at": string | null,"id": string,"released_at": string | null,"run_id": string | null,"task_id": string,"updated_at": string,"workspace_id": string

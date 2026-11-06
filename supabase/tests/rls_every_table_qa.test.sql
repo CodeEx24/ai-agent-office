@@ -59,7 +59,8 @@ select is(
      'approvals.status', 'approvals.decided_by', 'approvals.decided_at',
      'budgets_usage.period_end', 'budgets_usage.token_budget', 'budgets_usage.cost_budget_cents',
      'notes_index.title', 'notes_index.content_hash', 'notes_index.metadata', 'notes_index.indexed_at',
-     'policies.rule', 'policies.archived_at', 'policies.updated_by'
+     'policies.rule', 'policies.archived_at', 'policies.updated_by',
+     'capabilities.enabled', 'capabilities.description'
    ]) e),
   'authenticated can UPDATE exactly the ticket''s columns'
 );
@@ -75,8 +76,8 @@ select is(
 select is(
   (select count(*)::int from pg_class t where t.relnamespace = 'public'::regnamespace and t.relkind = 'r'
      and has_table_privilege('authenticated', t.oid, 'SELECT')),
-  14,
-  'authenticated can SELECT all 14 tables (membership RLS filters the rows)'
+  15,
+  'authenticated can SELECT all 15 tables (membership RLS filters the rows)'
 );
 select is(
   (select count(*)::int from pg_class t where t.relnamespace = 'public'::regnamespace and t.relkind = 'r'
