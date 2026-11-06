@@ -5,7 +5,9 @@
 //   node scripts/db-lock.mjs acquire AGO-96
 //   RUN_DB_TESTS=1 pnpm exec vitest run --config vitest.scripts.config.mjs scripts/ago-96-rollback.test.mjs
 //   node scripts/db-lock.mjs release AGO-96
-// It ends with the migration applied again, so the database is left exactly as `db:reset` made it.
+// It ends with the migration applied again (a `finally` restores it even if an assertion fails), so the
+// database is left exactly as `db:reset` made it. For a moment the migration is NOT applied, so this test
+// must never run in parallel with another DB suite: use the db lock and `--no-file-parallelism`.
 // Local container only (docker exec); no URL is ever used, so a hosted project cannot be reached.
 
 import { execFileSync } from 'node:child_process';
@@ -67,16 +69,20 @@ describe.skipIf(!enabled)('AGO-96 rollback against the local stack', () => {
     const applied = dumpSchema();
     const policiesBefore = policyCount();
 
-    // 2. roll back: hooks, table, helper and policies are gone, the AGO-107 policies remain
-    psql(`begin;\n${DOWN}\ncommit;`);
-    expect(hasHooks()).toBe(0);
-    expect(hasPoliciesTable()).toBe(false);
-    expect(psql(`select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'private' and p.proname = 'bump_policy_version'`)).toBe('0');
-    expect(policyCount()).toBe(policiesBefore - 3);
-    expect(dumpSchema()).not.toBe(applied);
+    try {
+      // 2. roll back: hooks, table, helper and policies are gone, the AGO-107 policies remain
+      psql(`begin;\n${DOWN}\ncommit;`);
+      expect(hasHooks()).toBe(0);
+      expect(hasPoliciesTable()).toBe(false);
+      expect(psql(`select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'private' and p.proname = 'bump_policy_version'`)).toBe('0');
+      expect(policyCount()).toBe(policiesBefore - 3);
+      expect(dumpSchema()).not.toBe(applied);
+    } finally {
+      // The stack is shared by every worktree: whatever failed above, leave the migration applied.
+      if (!hasPoliciesTable()) psql(`begin;\n${UP}\ncommit;`);
+    }
 
-    // 3. re-apply: an empty diff against the first dump
-    psql(`begin;\n${UP}\ncommit;`);
+    // 3. the schema after rollback and re-apply: an empty diff against the first dump
     expect(hasHooks()).toBe(4);
     expect(hasPoliciesTable()).toBe(true);
     expect(policyCount()).toBe(policiesBefore);

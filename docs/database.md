@@ -91,7 +91,7 @@ Rules that hold for every table: policies are `to authenticated`, one per comman
 `policies` stores the layered rules: `level` (`baseline`, `department`, `team`, `agent`), `scope_id` (the department, team or agent; null only for baseline, enforced by `policies_scope_matches_level`), `rule` (a JSON object validated by `policyRuleSchema` in `@ago/shared`), `version`, `archived_at`, and the human who wrote it (`created_by`, `updated_by`, composite FKs to `members`). Storage only: evaluation is the policy engine (AGO-34).
 
 - **Owners write, everyone in the workspace reads.** Agents are never members, so they cannot change their own rules. `created_by` and `updated_by` must be the caller's own membership.
-- **No hard delete.** Nobody has DELETE; retire a policy with `archived_at`. The row stays as history.
+- **No hard delete.** Nobody has DELETE; retire a policy with `archived_at`. The row stays as history, and an archived policy can no longer be edited or un-archived through the API (the UPDATE policy requires `archived_at is null`).
 - **One active policy per scope.** A unique index on `(workspace_id, level, scope_id) where archived_at is null` (nulls not distinct, so one baseline per workspace) also serves lookups by scope.
 - **Immutable columns.** `level`, `scope_id`, `workspace_id`, `version` and `created_*` are not in any UPDATE grant. `version` is bumped by a trigger whenever `rule` changes.
 - **Rollback.** `supabase/rollbacks/20261106130001_ago_96_department_hooks_policies.down.sql`, proven by `scripts/ago-96-rollback.test.mjs` (`RUN_DB_TESTS=1`, inside the db lock): roll back, check, re-apply, schema dump unchanged.

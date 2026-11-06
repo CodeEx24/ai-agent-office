@@ -100,8 +100,10 @@ create policy policies_insert_owner on public.policies for insert to authenticat
     and created_by = private.current_member_id(workspace_id)
     and updated_by = private.current_member_id(workspace_id)
   );
+-- USING requires the old row to be active: an archived policy is history and cannot be edited or
+-- un-archived through the API (archiving itself still works, because USING sees the active row).
 create policy policies_update_owner on public.policies for update to authenticated
-  using (private.is_member(workspace_id, 'owner'))
+  using (private.is_member(workspace_id, 'owner') and archived_at is null)
   with check (
     private.is_member(workspace_id, 'owner')
     and updated_by = private.current_member_id(workspace_id)

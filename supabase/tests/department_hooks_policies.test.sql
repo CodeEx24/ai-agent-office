@@ -6,7 +6,7 @@
 -- Run: pnpm exec supabase test db (inside the db lock).
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(54);
+select plan(55);
 
 -- fixtures (as postgres): o = owner of A, m = member of A, v = viewer of A, e = removed from A, b = owner of B
 insert into auth.users (id, instance_id, aud, role, email) values
@@ -144,6 +144,9 @@ select throws_ok(
 with u as (update public.policies set archived_at = now(), updated_by = '96000000-0000-4000-8000-0000000001a1'
            where id = '96000000-0000-4000-8000-0000000013a1' returning 1)
 select is((select count(*)::int from u), 1, 'an owner can archive a policy');
+with u as (update public.policies set rule = '{}', updated_by = '96000000-0000-4000-8000-0000000001a1'
+           where id = '96000000-0000-4000-8000-0000000013a1' returning 1)
+select is((select count(*)::int from u), 0, 'an archived policy is history: an owner can no longer edit or un-archive it (0 rows)');
 select throws_ok($$update public.policies set level = 'agent' where id = '96000000-0000-4000-8000-0000000013a1'$$, '42501', null,
   'level is immutable (no UPDATE privilege)');
 select throws_ok($$update public.policies set scope_id = '96000000-0000-4000-8000-0000000002a1' where id = '96000000-0000-4000-8000-0000000013a1'$$, '42501', null,

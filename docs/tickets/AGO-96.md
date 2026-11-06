@@ -25,7 +25,7 @@ One migration, `supabase/migrations/20261106130001_ago_96_department_hooks_polic
 
 **Types.** `packages/shared/src/policy/policy-schemas.ts`: `POLICY_LEVELS`, `policyLevelSchema`, `policyRuleSchema` (strict `{ version: 1, rules: [{ action, effect, note? }] }`, `effect` is `allow | require_approval | deny`, max 200 rules) and `createPolicySchema` (level and scope must agree, same rule as the database check). `pnpm db:types` regenerated `database.types.ts` (idempotent). No evaluation logic: that is AGO-34.
 
-**Tests.** `supabase/tests/department_hooks_policies.test.sql` (54 assertions), `scripts/ago-96-rollback.test.mjs`, `packages/shared/src/policy/policy-schemas.test.ts`. Existing suites that hard-coded "13 tables" or exact grant lists were updated (see Testing notes). Docs: `docs/database.md` (role matrix row and a new section).
+**Tests.** `supabase/tests/department_hooks_policies.test.sql` (55 assertions), `scripts/ago-96-rollback.test.mjs`, `packages/shared/src/policy/policy-schemas.test.ts`. Existing suites that hard-coded "13 tables" or exact grant lists were updated (see Testing notes). Docs: `docs/database.md` (role matrix row and a new section).
 
 ### Decisions taken (no human at the keyboard; recommended option chosen each time)
 | Decision | Chosen | Why |
@@ -36,7 +36,7 @@ One migration, `supabase/migrations/20261106130001_ago_96_department_hooks_polic
 | `policies.level` | text + check constraint, not a Postgres enum | Matches the repo (`status`, `role`, `mode` are text + check); easier to migrate. The Zod enum mirrors it. |
 | `scope_id` | Polymorphic uuid, no FK, checked against `level` | Points at a department, team or agent; teams and departments do not exist yet. A dangling id is harmless: the engine resolves scope inside the workspace. |
 | Who writes policies | Owners only; agents and members never | Human in the loop: agents cannot change their own rules. Matches the owner = governance column of the AGO-107 matrix. |
-| Delete | No DELETE for anyone; `archived_at` retires a policy | Audit-friendly: history of what governed an agent is kept. Matches `runs` (never deleted through the API). A hard delete can be added later as an owner-only path if needed. |
+| Delete | No DELETE for anyone; `archived_at` retires a policy, and archived rows are frozen (UPDATE policy requires `archived_at is null`) | Audit-friendly: history of what governed an agent is kept. Matches `runs` (never deleted through the API). A hard delete can be added later as an owner-only path if needed. |
 | Uniqueness | One active policy per `(workspace, level, scope)`; baseline unique via `nulls not distinct`; archived rows excluded | Layering needs a single answer per layer. Archived rows keep history without blocking a replacement. |
 | Versioning | `version` bumped by trigger on every `rule` change, not writable | Cheap change counter for the engine and audit. Not a history table: row-level history can follow with the audit work. |
 | Attribution | `created_by` / `updated_by` not null, pinned to the caller via `private.current_member_id` | Same pattern as `granted_by` and `decided_by` in AGO-107. |
@@ -62,10 +62,12 @@ AGO-74 (tables), AGO-82 (`private.is_member`, roles), AGO-107 (grant and policy 
 - `scope_id` is not checked against a real department, team or agent; it is scoped by workspace only through the engine's lookups.
 - No policy history table: `version` counts changes, and archiving keeps retired rows, but old rule payloads are overwritten on update.
 - No hard delete for policies; a workspace delete still cascades them.
+- An archived policy cannot be un-archived through the API; to bring it back an owner writes a new policy for that scope (a human-only restore path can come later).
+- Best-practice check: `supabase-postgres-best-practices` applied (least-privilege column grants, no anon access, RLS columns indexed, partial indexes for sparse columns, SECURITY DEFINER helpers revoked from callers). `private.is_member(workspace_id)` is called per row exactly as in AGO-107, because its argument is a row column and cannot be hoisted into a cached subquery; the per-row cost note from AGO-107 still applies.
 - Live e2e needs the local stack (`E2E_SUPABASE=1`), so it does not run in CI.
 
 ## Testing notes
-- DB: `node scripts/db-lock.mjs acquire AGO-96`, `pnpm db:reset`, `pnpm exec supabase test db` (12 files, 390 assertions, all pass), `pnpm exec supabase db lint`, `pnpm exec supabase db diff`, `node scripts/db-lock.mjs release AGO-96`.
+- DB: `node scripts/db-lock.mjs acquire AGO-96`, `pnpm db:reset`, `pnpm exec supabase test db` (12 files, 391 assertions, all pass), `pnpm exec supabase db lint`, `pnpm exec supabase db diff`, `node scripts/db-lock.mjs release AGO-96`.
 - New: `department_hooks_policies.test.sql` (hooks are nullable uuid with no FK and null on existing rows; policy constraints; one active per scope; archive frees the slot; version trigger; owner-only writes, pinned attribution, immutable columns, no delete; member, viewer, removed owner and outsider; anon; existing flows for agents, tasks, notes and approvals with a null department; `department_id` not writable).
 - Updated for the 14th table: `rls_every_table` (policies in fixtures, matrix and cases: 56 cases, 280 attempts), `rls_catalog` (37 policies), `rls_every_table_qa` (exact INSERT and UPDATE columns, 14 tables), `core_schema_qa` (14 tables, 18 parent FKs, 28 anon denials).
 - Rollback: `RUN_DB_TESTS=1 pnpm exec vitest run --config vitest.scripts.config.mjs scripts/ago-96-rollback.test.mjs` (inside the lock).
