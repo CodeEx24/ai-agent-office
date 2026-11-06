@@ -78,10 +78,23 @@ Every table has RLS and per-command policies for `authenticated` built on `priva
 | claims | viewer | - | - | - |
 | budgets_usage | viewer | owner (budget columns) | owner (budget columns) | - |
 | notes_index | viewer | member | member | member |
+| policies | viewer | owner (`created_by`/`updated_by` = caller) | owner (`rule`, `archived_at`, `updated_by` only) | - (archive instead) |
 
 Rules that hold for every table: policies are `to authenticated`, one per command, named `<table>_<command>_<minimum role>`; `workspace_id` and other ids are never in an UPDATE grant (a row cannot move workspaces); approvals keep their `payload_hash`, `expires_at` and `consumed_at` immutable; `run_events` stays append-only; attribution columns (`granted_by`, `decided_by`, `created_by`) must be the caller's own membership (`private.current_member_id`).
 
 **New table checklist:** enable RLS, `revoke all ... from anon, authenticated`, grant only the privileges needed, add one policy per granted command with `private.is_member`, index `workspace_id`, then add the table to `cases` and `expected` in `supabase/tests/rls_every_table.test.sql`. `rls_catalog.test.sql` enumerates every table in `public` and fails the run for a table without RLS or a policy, a privilege without a matching policy, an `anon` privilege, or a policy that is not `to authenticated` / membership-based. `rls_every_table.test.sql` runs select, insert, update and delete on every table as owner, member, viewer, a removed member and a member of another workspace.
+
+## Department hooks and layered policies (AGO-96)
+
+`agents`, `tasks`, `approvals` and `notes_index` (the vault index; there is no `notes` table) each have a nullable `department_id uuid`. It is a hook for departments (EP-15, AGO-108): there is no `departments` table yet, so it has **no foreign key**, it is null on every row, and it is in no INSERT or UPDATE grant for `authenticated` (only `service_role` or a later human-only path sets it). Reads are unchanged. AGO-108 adds the table and the composite FK `(workspace_id, department_id)`, then decides who may assign it. Each column has a partial index `(workspace_id, department_id) where department_id is not null`.
+
+`policies` stores the layered rules: `level` (`baseline`, `department`, `team`, `agent`), `scope_id` (the department, team or agent; null only for baseline, enforced by `policies_scope_matches_level`), `rule` (a JSON object validated by `policyRuleSchema` in `@ago/shared`), `version`, `archived_at`, and the human who wrote it (`created_by`, `updated_by`, composite FKs to `members`). Storage only: evaluation is the policy engine (AGO-34).
+
+- **Owners write, everyone in the workspace reads.** Agents are never members, so they cannot change their own rules. `created_by` and `updated_by` must be the caller's own membership.
+- **No hard delete.** Nobody has DELETE; retire a policy with `archived_at`. The row stays as history.
+- **One active policy per scope.** A unique index on `(workspace_id, level, scope_id) where archived_at is null` (nulls not distinct, so one baseline per workspace) also serves lookups by scope.
+- **Immutable columns.** `level`, `scope_id`, `workspace_id`, `version` and `created_*` are not in any UPDATE grant. `version` is bumped by a trigger whenever `rule` changes.
+- **Rollback.** `supabase/rollbacks/20261106130001_ago_96_department_hooks_policies.down.sql`, proven by `scripts/ago-96-rollback.test.mjs` (`RUN_DB_TESTS=1`, inside the db lock): roll back, check, re-apply, schema dump unchanged.
 
 ## Seed data
 

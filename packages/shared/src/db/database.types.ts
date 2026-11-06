@@ -71,14 +71,14 @@ isOneToOne: false
                   ]
                 },"agents": {
                   Row: {
-                    "archived_at": string | null,"created_at": string,"description": string,"id": string,"mode": string,"name": string,"status": string,"updated_at": string,"workspace_id": string
+                    "archived_at": string | null,"created_at": string,"department_id": string | null,"description": string,"id": string,"mode": string,"name": string,"status": string,"updated_at": string,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "archived_at"?: string | null,"created_at"?: string,"description"?: string,"id"?: string,"mode"?: string,"name": string,"status"?: string,"updated_at"?: string,"workspace_id": string
+                    "archived_at"?: string | null,"created_at"?: string,"department_id"?: string | null,"description"?: string,"id"?: string,"mode"?: string,"name": string,"status"?: string,"updated_at"?: string,"workspace_id": string
                   }
                   Update: {
-                    "archived_at"?: string | null,"created_at"?: string,"description"?: string,"id"?: string,"mode"?: string,"name"?: string,"status"?: string,"updated_at"?: string,"workspace_id"?: string
+                    "archived_at"?: string | null,"created_at"?: string,"department_id"?: string | null,"description"?: string,"id"?: string,"mode"?: string,"name"?: string,"status"?: string,"updated_at"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -91,14 +91,14 @@ isOneToOne: false
                   ]
                 },"approvals": {
                   Row: {
-                    "action": string,"agent_id": string,"consumed_at": string | null,"created_at": string,"decided_at": string | null,"decided_by": string | null,"expires_at": string,"id": string,"payload_hash": string,"run_id": string | null,"status": string,"updated_at": string,"workspace_id": string
+                    "action": string,"agent_id": string,"consumed_at": string | null,"created_at": string,"decided_at": string | null,"decided_by": string | null,"department_id": string | null,"expires_at": string,"id": string,"payload_hash": string,"run_id": string | null,"status": string,"updated_at": string,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "action": string,"agent_id": string,"consumed_at"?: string | null,"created_at"?: string,"decided_at"?: string | null,"decided_by"?: string | null,"expires_at": string,"id"?: string,"payload_hash": string,"run_id"?: string | null,"status"?: string,"updated_at"?: string,"workspace_id": string
+                    "action": string,"agent_id": string,"consumed_at"?: string | null,"created_at"?: string,"decided_at"?: string | null,"decided_by"?: string | null,"department_id"?: string | null,"expires_at": string,"id"?: string,"payload_hash": string,"run_id"?: string | null,"status"?: string,"updated_at"?: string,"workspace_id": string
                   }
                   Update: {
-                    "action"?: string,"agent_id"?: string,"consumed_at"?: string | null,"created_at"?: string,"decided_at"?: string | null,"decided_by"?: string | null,"expires_at"?: string,"id"?: string,"payload_hash"?: string,"run_id"?: string | null,"status"?: string,"updated_at"?: string,"workspace_id"?: string
+                    "action"?: string,"agent_id"?: string,"consumed_at"?: string | null,"created_at"?: string,"decided_at"?: string | null,"decided_by"?: string | null,"department_id"?: string | null,"expires_at"?: string,"id"?: string,"payload_hash"?: string,"run_id"?: string | null,"status"?: string,"updated_at"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -213,14 +213,14 @@ isOneToOne: false
                   ]
                 },"notes_index": {
                   Row: {
-                    "content_hash": string,"created_at": string,"id": string,"indexed_at": string,"metadata": NonNullable<Json>,"path": string,"title": string,"updated_at": string,"workspace_id": string
+                    "content_hash": string,"created_at": string,"department_id": string | null,"id": string,"indexed_at": string,"metadata": NonNullable<Json>,"path": string,"title": string,"updated_at": string,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "content_hash"?: string,"created_at"?: string,"id"?: string,"indexed_at"?: string,"metadata"?: NonNullable<Json>,"path": string,"title"?: string,"updated_at"?: string,"workspace_id": string
+                    "content_hash"?: string,"created_at"?: string,"department_id"?: string | null,"id"?: string,"indexed_at"?: string,"metadata"?: NonNullable<Json>,"path": string,"title"?: string,"updated_at"?: string,"workspace_id": string
                   }
                   Update: {
-                    "content_hash"?: string,"created_at"?: string,"id"?: string,"indexed_at"?: string,"metadata"?: NonNullable<Json>,"path"?: string,"title"?: string,"updated_at"?: string,"workspace_id"?: string
+                    "content_hash"?: string,"created_at"?: string,"department_id"?: string | null,"id"?: string,"indexed_at"?: string,"metadata"?: NonNullable<Json>,"path"?: string,"title"?: string,"updated_at"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -229,6 +229,38 @@ isOneToOne: false
 isOneToOne: false
       referencedRelation: "workspaces"
       referencedColumns: ["id"]
+    }
+                  ]
+                },"policies": {
+                  Row: {
+                    "archived_at": string | null,"created_at": string,"created_by": string,"id": string,"level": string,"rule": NonNullable<Json>,"scope_id": string | null,"updated_at": string,"updated_by": string,"version": number,"workspace_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "archived_at"?: string | null,"created_at"?: string,"created_by": string,"id"?: string,"level": string,"rule": NonNullable<Json>,"scope_id"?: string | null,"updated_at"?: string,"updated_by": string,"version"?: number,"workspace_id": string
+                  }
+                  Update: {
+                    "archived_at"?: string | null,"created_at"?: string,"created_by"?: string,"id"?: string,"level"?: string,"rule"?: NonNullable<Json>,"scope_id"?: string | null,"updated_at"?: string,"updated_by"?: string,"version"?: number,"workspace_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "policies_workspace_id_created_by_fkey"
+      columns: ["workspace_id","created_by"]
+isOneToOne: false
+      referencedRelation: "members"
+      referencedColumns: ["workspace_id","id"]
+    },{
+      foreignKeyName: "policies_workspace_id_fkey"
+      columns: ["workspace_id"]
+isOneToOne: false
+      referencedRelation: "workspaces"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "policies_workspace_id_updated_by_fkey"
+      columns: ["workspace_id","updated_by"]
+isOneToOne: false
+      referencedRelation: "members"
+      referencedColumns: ["workspace_id","id"]
     }
                   ]
                 },"run_events": {
@@ -311,14 +343,14 @@ isOneToOne: false
                   ]
                 },"tasks": {
                   Row: {
-                    "agent_id": string | null,"created_at": string,"created_by": string | null,"description": string,"id": string,"status": string,"title": string,"updated_at": string,"workspace_id": string
+                    "agent_id": string | null,"created_at": string,"created_by": string | null,"department_id": string | null,"description": string,"id": string,"status": string,"title": string,"updated_at": string,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"description"?: string,"id"?: string,"status"?: string,"title": string,"updated_at"?: string,"workspace_id": string
+                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"department_id"?: string | null,"description"?: string,"id"?: string,"status"?: string,"title": string,"updated_at"?: string,"workspace_id": string
                   }
                   Update: {
-                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"description"?: string,"id"?: string,"status"?: string,"title"?: string,"updated_at"?: string,"workspace_id"?: string
+                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"department_id"?: string | null,"description"?: string,"id"?: string,"status"?: string,"title"?: string,"updated_at"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
