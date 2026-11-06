@@ -207,7 +207,7 @@ describe("emitter safety (no database)", () => {
   const RUN = randomUUID();
 
   test("AC1: the emitter validates before writing and never leaks values in errors or logs", async () => {
-    const SECRET = "sk-live-qa-secret-9f2c";
+    const SECRET = "not-a-real-value-" + "qa9f2c";
     const writes = [];
     const logs = [];
     const logger = {};
@@ -240,7 +240,7 @@ describe("emitter safety (no database)", () => {
   });
 
   test("AC1: an unknown event type supplied by the caller is not echoed in the error message or issues", async () => {
-    const SECRET = "sk-live-qa-secret-9f2c";
+    const SECRET = "not-a-real-value-" + "qa9f2c";
     const store = { insert: () => Promise.reject(new Error("must not be called")) };
     const emitter = createRunEventEmitter({ workspaceId: WS, runId: RUN, store });
     const error = await emitter.emit({ type: SECRET, payload: {} }).catch((e) => e);
