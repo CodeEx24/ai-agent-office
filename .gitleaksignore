@@ -1,0 +1,3 @@
+# AGO-164: fake test fixtures (not real secrets) in commit c143d7a, since replaced in a later commit.
+c143d7adf8efc8d86509f91385e60f5345c61da1:scripts/ago-164-acceptance.test.mjs:generic-api-key:210
+c143d7adf8efc8d86509f91385e60f5345c61da1:scripts/ago-164-acceptance.test.mjs:generic-api-key:243
