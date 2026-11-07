@@ -30,7 +30,7 @@ const WORKSPACE_ID = "12500000-0000-4000-8000-0000000000a1";
 
 function request(search: string): NextRequest {
   const url = new URL(`http://localhost/api/capabilities${search}`);
-  return { nextUrl: url } as unknown as NextRequest;
+  return { nextUrl: url, headers: new Headers() } as unknown as NextRequest;
 }
 
 describe("GET /api/capabilities", () => {

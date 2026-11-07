@@ -246,6 +246,7 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
               toolName: call.name,
               input: call.input,
               tier,
+              ...(tool?.capabilityKey === undefined ? {} : { capabilityKey: tool.capabilityKey }),
               isRegistered: tool !== undefined,
             },
             {
