@@ -27,7 +27,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const IDENTITY_ENTRY = join(ROOT, "apps", "worker", "dist", "identity", "index.js");
 const LOCAL_DB_PORT = Number(process.env.AGO_TEST_DB_PORT ?? 44322);
 const LOCAL_DB = `postgresql://postgres:postgres@127.0.0.1:${LOCAL_DB_PORT}/postgres`;
-const SECRET = "qa-round1-signing-secret-long-enough-1234";
+const SECRET = "qa-round1-fake-signing-secret-".padEnd(48, "x");
 
 function isPortOpen(port) {
   return new Promise((resolveProbe) => {
