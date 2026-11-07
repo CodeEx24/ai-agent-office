@@ -9,6 +9,7 @@ const GHP = `ghp_${"a1B2".repeat(9)}`;
 const SB_SECRET = `sb_secret_${"Zy9x".repeat(8)}`;
 const SK_PROJ = `sk-proj-${"Qw3r".repeat(8)}`;
 const SK_ANT = `sk-ant-${"Mn7p".repeat(8)}`;
+const AGENT_CREDENTIAL = `ago_agt_eyJ${"h".repeat(12)}.eyJ${"p".repeat(12)}.${"s".repeat(16)}`;
 const JWT = `eyJ${"h".repeat(12)}.eyJ${"p".repeat(12)}.${"s".repeat(16)}`;
 
 describe("scrubString", () => {
@@ -18,6 +19,7 @@ describe("scrubString", () => {
     ["OpenAI project key", SK_PROJ],
     ["Anthropic key", SK_ANT],
     ["JWT", JWT],
+    ["agent credential (AGO-148)", AGENT_CREDENTIAL],
   ])("masks a %s inside free text", (_label, secret) => {
     const out = scrubString(`call failed for ${secret} while saving`);
     expect(out).not.toContain(secret);

@@ -87,7 +87,7 @@ const V1_LIST = Object.keys(VALID);
 const ev = (type, payload = VALID[type], version = 1) => ({ type, version, payload });
 
 describe("AC1: every event matches a Zod schema", () => {
-  test("AC1: every one of the 24 event types accepts its valid sample", () => {
+  test("AC1: every event type of the v1 list accepts its valid sample", () => {
     expect(V1_LIST).toHaveLength(25);
     for (const type of V1_LIST) {
       const result = runEventSchema.safeParse(ev(type));
@@ -392,12 +392,12 @@ describe("run event emitter against the local database", () => {
     expect(next.seq).toBe(before.length + 1);
   });
 
-  liveTest("AC1: every one of the 24 event types is stored and parses back through its schema", async () => {
+  liveTest("AC1: every event type of the v1 list is stored and parses back through its schema", async () => {
     const emitter = emitterFor(ws.b, run.b);
     for (const type of V1_LIST) await emitter.emit({ type, payload: VALID[type] });
     const rows = (await pool.query("select type, payload, seq from public.run_events where run_id = $1 order by seq", [run.b])).rows;
     expect(rows.map((r) => r.type)).toEqual(V1_LIST);
-    expect(rows.map((r) => Number(r.seq))).toEqual(range(24));
+    expect(rows.map((r) => Number(r.seq))).toEqual(range(V1_LIST.length));
     for (const row of rows) {
       const parsed = parseStoredRunEvent(row);
       expect(parsed, row.type).not.toBeNull();
@@ -469,7 +469,7 @@ describe("run event emitter against the local database", () => {
       asUser(userId, async (client) => (await client.query("select count(*)::int as n from public.run_events where run_id = $1", [runId])).rows[0].n);
     expect(await readCount(user.a, run.one)).toBe(200);
     expect(await readCount(user.b, run.one)).toBe(0);
-    expect(await readCount(user.b, run.b)).toBe(24);
+    expect(await readCount(user.b, run.b)).toBe(V1_LIST.length);
     expect(await readCount(user.a, run.b)).toBe(0);
   });
 });

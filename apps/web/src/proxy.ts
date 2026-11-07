@@ -8,6 +8,7 @@ import {
   matchRouteRateLimit,
   tooManyRequestsResponse,
 } from "./lib/rate-limit";
+import { rejectAgentCredential } from "./lib/auth/human-only";
 import { resolveOrigin } from "./lib/request-origin";
 import { buildContentSecurityPolicy, generateNonce } from "./lib/security/csp";
 import { updateSession } from "./lib/supabase/session";
@@ -42,6 +43,17 @@ export async function proxy(request: NextRequest) {
   // Mutating the request headers is what `NextResponse.next({ request })` forwards to the page.
   request.headers.set(NONCE_HEADER, nonce);
   request.headers.set(CSP_HEADER, csp);
+
+  // AGO-148: an agent credential is never a human session. Refused before any session or limiter work.
+  const agentDenied = rejectAgentCredential(request);
+  if (agentDenied) {
+    const denied = new NextResponse(agentDenied.body, {
+      status: agentDenied.status,
+      headers: agentDenied.headers,
+    });
+    denied.headers.set(CSP_HEADER, csp);
+    return denied;
+  }
 
   const { isSignedIn, userId, response } = await updateSession(request);
   const { pathname, search } = request.nextUrl;

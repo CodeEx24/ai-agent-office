@@ -5,6 +5,23 @@ export const RUN_QUEUE = "agent-run";
 /** Jobs that failed every attempt land here and stay visible (health reports the count). */
 export const RUN_DEAD_LETTER_QUEUE = "agent-run-dead";
 
+/** A queue and its dead-letter queue, derived from one base name. */
+export interface RunQueueNames {
+  readonly queue: string;
+  readonly deadLetter: string;
+}
+
+/**
+ * The queue names for a base name. Production always uses the default (`agent-run`). Tests pass a
+ * unique name so suites that share one database (and other worktrees' workers) never see, steal or
+ * purge each other's jobs (AGO-202).
+ */
+export function runQueueNames(queueName: string = RUN_QUEUE): RunQueueNames {
+  return queueName === RUN_QUEUE
+    ? { queue: RUN_QUEUE, deadLetter: RUN_DEAD_LETTER_QUEUE }
+    : { queue: queueName, deadLetter: `${queueName}-dead` };
+}
+
 /** Longest a handler may run before pg-boss treats the job as abandoned and retries it. */
 export const RUN_JOB_EXPIRE_SECONDS = 900;
 

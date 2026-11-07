@@ -8,6 +8,7 @@ export * from "./skills/skill-schemas.js";
 export * from "./context/context-schemas.js";
 export * from "./agents/agent-schemas.js";
 export * from "./seed/seed-ids.js";
+export * from "./identity/credential-schemas.js";
 
 /** Project name shared by every workspace package. Placeholder until AGO-61+ add real schemas. */
 export const PROJECT_NAME = "Agent Office";

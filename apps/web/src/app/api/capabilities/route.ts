@@ -6,6 +6,7 @@ import {
   listCapabilities,
 } from "../../../features/capabilities/capability-catalog";
 import { WorkspaceAccessError } from "../../../features/workspaces/workspace-access";
+import { rejectAgentCredential } from "../../../lib/auth/human-only";
 import {
   invalidInputResponse,
   parseInput,
@@ -26,6 +27,9 @@ function jsonError(error: string, status: number): Response {
  * 401 signed out, 403 not a member of that workspace, 400 bad input.
  */
 export async function GET(request: NextRequest) {
+  const agentDenied = rejectAgentCredential(request);
+  if (agentDenied) return agentDenied;
+
   const query = parseInput(
     listCapabilitiesQuerySchema,
     searchParamsToRecord(request.nextUrl.searchParams),

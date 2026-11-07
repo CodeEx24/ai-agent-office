@@ -9,6 +9,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import net from "node:net";
 import { dirname, join, resolve } from "node:path";
@@ -23,6 +24,8 @@ if (!existsSync(join(ROOT, "apps", "worker", "dist", "index.js"))) {
 const pg = createRequire(join(ROOT, "apps", "worker", "package.json"))("pg");
 const PORT = Number(process.env.AGO_TEST_DB_PORT ?? 44322);
 const LOCAL_DB = `postgresql://postgres:postgres@127.0.0.1:${PORT}/postgres`;
+// This file's own queue (AGO-202): its workers never touch the shared `agent-run` queue of other suites.
+const QUEUE_NAME = `agent-run-ago151-cs-${randomUUID().slice(0, 8)}`;
 const WORKERS = 10;
 const ROUNDS = 3;
 
@@ -55,7 +58,7 @@ function startWorker(env) {
     if (process.env[key] !== undefined) base[key] = process.env[key];
   }
   const child = spawn(process.execPath, [FIXTURE], {
-    env: { ...base, DATABASE_URL: LOCAL_DB, ROLE: "worker", QA_NO_EXECUTOR: "1", ...env },
+    env: { ...base, DATABASE_URL: LOCAL_DB, ROLE: "worker", QA_NO_EXECUTOR: "1", QA_QUEUE_NAME: QUEUE_NAME, ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const proc = { child, out: "", exit: null };
@@ -117,6 +120,10 @@ describe.skipIf(!dbUp)("AGO-151 pgboss hardening survives concurrent worker star
   afterEach(killAll);
   afterAll(async () => {
     await killAll();
+    // Remove this file's queues so unique names do not pile up in pgboss.queue run after run.
+    for (const name of [QUEUE_NAME, `${QUEUE_NAME}-dead`]) {
+      await pool.query("select pgboss.delete_queue($1)", [name]).catch(() => undefined);
+    }
     await pool.end();
   });
 

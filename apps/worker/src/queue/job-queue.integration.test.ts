@@ -10,9 +10,8 @@ import { LOCAL_DATABASE_URL } from "../config.js";
 import { createLogger } from "../logger.js";
 import {
   createJobQueue,
-  RUN_DEAD_LETTER_QUEUE,
-  RUN_QUEUE,
   RUN_STATUS,
+  runQueueNames,
   type JobQueue,
   type RunExecutionContext,
   type RunExecutor,
@@ -39,6 +38,10 @@ async function isDatabaseUp(): Promise<boolean> {
 
 const live = await isDatabaseUp();
 
+// Its own queue (not the shared `agent-run`): another suite or worktree using this database can neither
+// consume these jobs nor have its own purged by this file (AGO-202).
+const QUEUE_NAME = `agent-run-test-${randomUUID().slice(0, 8)}`;
+const QUEUES = runQueueNames(QUEUE_NAME);
 const WORKSPACE = randomUUID();
 const AGENT = randomUUID();
 const FAST_RETRY = {
@@ -83,6 +86,7 @@ describe.skipIf(!live)("job queue (live database)", () => {
       logger: createLogger({ level: "silent" }),
       errorTracker: tracker,
       executor,
+      queueName: QUEUE_NAME,
       retryPolicy: FAST_RETRY,
       pollingIntervalSeconds: 0.5,
       shutdownTimeoutMs: 10_000,
@@ -117,7 +121,7 @@ describe.skipIf(!live)("job queue (live database)", () => {
 
   const purgeJobs = () =>
     pool
-      .query("delete from pgboss.job where name = any($1)", [[RUN_QUEUE, RUN_DEAD_LETTER_QUEUE]])
+      .query("delete from pgboss.job where name = any($1)", [[QUEUES.queue, QUEUES.deadLetter]])
       .catch(() => undefined);
 
   beforeAll(async () => {
@@ -154,24 +158,33 @@ describe.skipIf(!live)("job queue (live database)", () => {
       delete from public.workspaces where id = '${WORKSPACE}';
       commit;`);
     await purgeJobs();
+    // Unique queue names must not pile up in pgboss.queue run after run.
+    for (const name of [QUEUES.queue, QUEUES.deadLetter]) {
+      await pool.query("select pgboss.delete_queue($1)", [name]).catch(() => undefined);
+    }
     await pool.end();
   });
 
   it("AC1: a duplicate or concurrent enqueue of one run executes it exactly once", async () => {
     const executions: string[] = [];
-    const queue = await makeQueue({
+    // An enqueue-only queue: nothing consumes while the 8 calls are made. With a consumer already running, the
+    // first job could finish the run before a slow call (a loaded machine) checks it, and that call would be
+    // refused as "not queued" instead of being a duplicate (AGO-202).
+    const enqueuer = await makeQueue();
+    const runId = await newRun();
+
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => enqueuer.enqueueRun({ workspaceId: WORKSPACE, runId })),
+    );
+    expect(results.filter((r) => r.enqueued)).toHaveLength(1);
+
+    await makeQueue({
       execute: async (ctx: RunExecutionContext) => {
         executions.push(ctx.runId);
         await sleep(300);
         return { steps: 1 };
       },
     });
-    const runId = await newRun();
-
-    const results = await Promise.all(
-      Array.from({ length: 8 }, () => queue.enqueueRun({ workspaceId: WORKSPACE, runId })),
-    );
-    expect(results.filter((r) => r.enqueued)).toHaveLength(1);
 
     await waitFor(async () => (await runStatus(runId)) === RUN_STATUS.succeeded);
     await sleep(1_500); // time for any stray second job to show up
@@ -181,22 +194,26 @@ describe.skipIf(!live)("job queue (live database)", () => {
 
   it("AC1: different idempotency keys for one run cannot double-execute (database guard)", async () => {
     const executions: string[] = [];
-    const queue = await makeQueue({
+    // Enqueue-only first, consumer after: all four jobs must exist before any of them runs, or the run
+    // leaves `queued` while a slow enqueue is still checking it (AGO-202).
+    const enqueuer = await makeQueue();
+    const runId = await newRun();
+
+    // Different keys get past pg-boss's dedupe, so only the conditional claim stands in the way.
+    const results = await Promise.all(
+      ["key-a", "key-b", "key-c", "key-d"].map((idempotencyKey) =>
+        enqueuer.enqueueRun({ workspaceId: WORKSPACE, runId, idempotencyKey }),
+      ),
+    );
+    expect(results.every((r) => r.enqueued)).toBe(true);
+
+    await makeQueue({
       execute: async (ctx) => {
         executions.push(ctx.runId);
         await sleep(300);
         return { steps: 1 };
       },
     });
-    const runId = await newRun();
-
-    // Different keys get past pg-boss's dedupe, so only the conditional claim stands in the way.
-    const results = await Promise.all(
-      ["key-a", "key-b", "key-c", "key-d"].map((idempotencyKey) =>
-        queue.enqueueRun({ workspaceId: WORKSPACE, runId, idempotencyKey }),
-      ),
-    );
-    expect(results.every((r) => r.enqueued)).toBe(true);
 
     await waitFor(async () => (await runStatus(runId)) === RUN_STATUS.succeeded);
     await sleep(1_500);

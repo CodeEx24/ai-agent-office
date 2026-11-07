@@ -18,12 +18,12 @@
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { createHmac, randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createHash, createHmac, randomUUID } from "node:crypto";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import net from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 
@@ -31,7 +31,29 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKER_ENTRY = join(ROOT, "apps", "worker", "dist", "index.js");
 const FIXTURE = join(ROOT, "scripts", "fixtures", "ago-151-proc.mjs");
 const MIGRATION = "20261107010001_ago_151_pgboss_schema";
-const IMAGE = "ago-worker-qa-151";
+
+/** Every file under `path`, sorted, so the hash below does not depend on directory order. */
+function filesUnder(path) {
+  if (!existsSync(path)) return [];
+  if (!statSync(path).isDirectory()) return [path];
+  return readdirSync(path)
+    .sort()
+    .filter((entry) => entry !== "node_modules" && entry !== "dist")
+    .flatMap((entry) => filesUnder(join(path, entry)));
+}
+
+// The image tag carries a hash of what goes into the image (worker + shared sources, lockfile, Dockerfile).
+// A fixed tag reused a stale image built from another branch (it ignored the per-suite queue name and consumed
+// the shared queue), so the shutdown tests timed out (AGO-202). A changed source builds a fresh image.
+const IMAGE_INPUTS = ["apps/worker", "packages/shared", "pnpm-lock.yaml"];
+const IMAGE = `ago-worker-qa-151:${createHash("sha256")
+  .update(
+    IMAGE_INPUTS.flatMap((input) => filesUnder(join(ROOT, input)))
+      .map((file) => `${relative(ROOT, file)}\n${readFileSync(file).toString("base64")}`)
+      .join("\n"),
+  )
+  .digest("hex")
+  .slice(0, 12)}`;
 
 if (!existsSync(WORKER_ENTRY)) {
   throw new Error("apps/worker/dist is missing: run `pnpm --filter @ago/worker build` first");
@@ -41,8 +63,12 @@ const pg = requireFromWorker("pg");
 
 const LOCAL_DB_PORT = Number(process.env.AGO_TEST_DB_PORT ?? 44322);
 const LOCAL_DB = `postgresql://postgres:postgres@127.0.0.1:${LOCAL_DB_PORT}/postgres`;
-const RUN_QUEUE = "agent-run";
-const DEAD_QUEUE = "agent-run-dead";
+// A queue of this file's own (AGO-202): spawned workers get it through QA_QUEUE_NAME, so no other suite or
+// worktree on the shared database can consume, purge or count these jobs.
+const QUEUE_NAME = `agent-run-ago151-${randomUUID().slice(0, 8)}`;
+const RUN_QUEUE = QUEUE_NAME;
+const DEAD_QUEUE = `${QUEUE_NAME}-dead`;
+const GLOBAL_RUN_QUEUE = "agent-run";
 
 /** Secret-shaped values built at runtime (no literal in the source for secret scanners). */
 const SECRET_CORE = `Zk${"9q".repeat(10)}`;
@@ -105,7 +131,7 @@ const children = new Set();
 
 function startProcess(args, env) {
   const child = spawn(process.execPath, args, {
-    env: cleanEnv({ DATABASE_URL: LOCAL_DB, ...env }),
+    env: cleanEnv({ DATABASE_URL: LOCAL_DB, QA_QUEUE_NAME: QUEUE_NAME, ...env }),
     stdio: ["ignore", "pipe", "pipe"],
   });
   const proc = { child, stdout: "", stderr: "", exit: null };
@@ -217,6 +243,13 @@ liveDescribe("AGO-151 pg-boss job queue (live database, real processes)", () => 
     (await query("select type from public.run_events where run_id = $1 order by seq", [runId])).rows.map((r) => r.type);
   const tmpFile = (name) => join(tmp, `${++seq}-${name}`);
   const purgeJobs = () => query("delete from pgboss.job where name = any($1)", [[RUN_QUEUE, DEAD_QUEUE]]).catch(() => undefined);
+  // Remove this file's queues at the end so unique names do not pile up in pgboss.queue run after run.
+  const dropQueues = async () => {
+    await purgeJobs();
+    for (const name of [RUN_QUEUE, DEAD_QUEUE]) {
+      await query("select pgboss.delete_queue($1)", [name]).catch(() => undefined);
+    }
+  };
   const jobsFor = async (runId) =>
     (await query("select * from pgboss.job where name = $1 and data->>'run_id' = $2", [RUN_QUEUE, runId])).rows;
 
@@ -240,7 +273,7 @@ liveDescribe("AGO-151 pg-boss job queue (live database, real processes)", () => 
 
   afterAll(async () => {
     await Promise.all([...children].map((proc) => proc.kill()));
-    await purgeJobs();
+    await dropQueues();
     // run_events is append-only and its parents are RESTRICT: clean up like scripts/run-events-teardown.mjs.
     const ids = workspaces.map((id) => `'${id}'`).join(",");
     if (ids !== "") {
@@ -663,7 +696,7 @@ liveDescribe("AGO-151 pg-boss job queue (live database, real processes)", () => 
         const write = await fetch(`${api}/job`, {
           method: "POST",
           headers: { ...headers, "Content-Profile": "pgboss", "Content-Type": "application/json" },
-          body: JSON.stringify({ name: RUN_QUEUE, data: {} }),
+          body: JSON.stringify({ name: GLOBAL_RUN_QUEUE, data: {} }),
         });
         const rpc = await fetch(`${api}/rpc/create_queue`, {
           method: "POST",
@@ -721,6 +754,7 @@ liveDescribe("AGO-151 pg-boss job queue (live database, real processes)", () => 
         "-v", `${logDir}:/out`,
         "-e", "AGO_WORKER_DIST=/app/dist/",
         "-e", `DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:${LOCAL_DB_PORT}/postgres`,
+        "-e", `QA_QUEUE_NAME=${QUEUE_NAME}`,
         "-e", `QA_EXEC_LOG=/out/${logFile.split(/[\\/]/).pop()}`,
         ...Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]),
         IMAGE, "node", "/fix/ago-151-proc.mjs",

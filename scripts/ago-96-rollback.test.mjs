@@ -16,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { assertLocalOnly, localDbContainer } from './db-seed.mjs';
+import { normalizeSchemaDump } from './schema-dump.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const STAMP = '20261106130001_ago_96_department_hooks_policies';
@@ -30,11 +31,14 @@ function docker(args, input) {
 const psql = (sql) => docker(['psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q', '-At'], sql).trim();
 /** Schema-only dump of everything the app owns; `public` and `private` hold all of it. */
 // pg_dump prints a random \restrict / \unrestrict token per run; drop those two lines before comparing.
+// Compared in an order-insensitive form: see scripts/schema-dump.mjs (AGO-202).
 const dumpSchema = () =>
-  docker(['pg_dump', '-U', 'postgres', '-s', '--no-owner', '-n', 'public', '-n', 'private', 'postgres'])
-    .split('\n')
-    .filter((line) => !/^\\(un)?restrict /.test(line))
-    .join('\n');
+  normalizeSchemaDump(
+    docker(['pg_dump', '-U', 'postgres', '-s', '--no-owner', '-n', 'public', '-n', 'private', 'postgres'])
+      .split('\n')
+      .filter((line) => !/^\\(un)?restrict /.test(line))
+      .join('\n'),
+  );
 const hasHooks = () =>
   Number(psql(`select count(*) from information_schema.columns where table_schema = 'public' and column_name = 'department_id'`));
 const hasPoliciesTable = () => psql(`select to_regclass('public.policies') is not null`) === 't';

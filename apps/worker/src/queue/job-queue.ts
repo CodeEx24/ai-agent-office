@@ -6,11 +6,10 @@ import { withContext, type Logger } from "../logger.js";
 import { hardenPgbossFunctions } from "./pgboss-hardening.js";
 import {
   DEFAULT_RUN_RETRY_POLICY,
-  RUN_DEAD_LETTER_QUEUE,
-  RUN_QUEUE,
   idempotencyKeySchema,
   runJobKey,
   runJobSchema,
+  runQueueNames,
   type RunRetryPolicy,
 } from "./run-job.js";
 import { createRunProcessor, type RunExecutor } from "./run-processor.js";
@@ -71,6 +70,11 @@ export interface JobQueueOptions {
   /** Delay before retrying a failed start (database not up yet). */
   readonly startRetryMs?: number;
   readonly connectionTimeoutMs?: number;
+  /**
+   * Base name of the pg-boss queue (dead letter: `<name>-dead`). Defaults to `agent-run`. Only tests
+   * set it, to give each suite its own queue on the shared database (AGO-202).
+   */
+  readonly queueName?: string;
 }
 
 /** pg-boss default schema; created (and locked down) by the AGO-151 migration. */
@@ -104,6 +108,7 @@ const depthSql = (schema: string): string => `
 
 export function createJobQueue(options: JobQueueOptions): JobQueue {
   const { logger, errorTracker } = options;
+  const { queue: runQueue, deadLetter: deadLetterQueue } = runQueueNames(options.queueName);
   const policy = options.retryPolicy ?? DEFAULT_RUN_RETRY_POLICY;
   const shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULTS.shutdownTimeoutMs;
   const startRetryMs = options.startRetryMs ?? DEFAULTS.startRetryMs;
@@ -148,9 +153,9 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
       await instance.start();
       // pg-boss may have (re)created functions during install or upgrade: close their default PUBLIC grant.
       await hardenPgbossFunctions(pool);
-      await instance.createQueue(RUN_DEAD_LETTER_QUEUE, { policy: "standard" });
+      await instance.createQueue(deadLetterQueue, { policy: "standard" });
       const queueSettings = {
-        deadLetter: RUN_DEAD_LETTER_QUEUE,
+        deadLetter: deadLetterQueue,
         retryLimit: policy.retryLimit,
         retryDelay: policy.retryDelaySeconds,
         retryBackoff: true,
@@ -158,10 +163,10 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
         expireInSeconds: policy.expireInSeconds,
       };
       // Exclusive: one queued-or-active job per singletonKey, so a duplicate enqueue is dropped.
-      await instance.createQueue(RUN_QUEUE, { policy: "exclusive", ...queueSettings });
+      await instance.createQueue(runQueue, { policy: "exclusive", ...queueSettings });
       // createQueue keeps an existing queue as it is; the processor relies on this retry limit, so
       // converge the stored settings to the code on every start.
-      await instance.updateQueue(RUN_QUEUE, queueSettings);
+      await instance.updateQueue(runQueue, queueSettings);
       if (options.executor === undefined) {
         logger.warn("no run executor configured: runs are queued but nothing consumes them yet");
       } else {
@@ -175,7 +180,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
           staleAfterSeconds: policy.expireInSeconds,
         });
         await instance.work(
-          RUN_QUEUE,
+          runQueue,
           {
             batchSize: 1,
             localConcurrency: options.concurrency ?? DEFAULTS.concurrency,
@@ -197,10 +202,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
     }
     boss = instance;
     state = "ready";
-    logger.info(
-      { queue: RUN_QUEUE, consumer: options.executor !== undefined },
-      "job queue started",
-    );
+    logger.info({ queue: runQueue, consumer: options.executor !== undefined }, "job queue started");
   }
 
   async function startWithRetry(): Promise<void> {
@@ -221,7 +223,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
   async function readDepth(instance: PgBoss): Promise<QueueDepth> {
     const { rows } = await instance
       .getDb()
-      .executeSql(depthSql(PGBOSS_SCHEMA), [[RUN_QUEUE, RUN_DEAD_LETTER_QUEUE]]);
+      .executeSql(depthSql(PGBOSS_SCHEMA), [[runQueue, deadLetterQueue]]);
     const counts = new Map<string, number>();
     for (const row of rows as DepthRow[]) {
       const key = `${row.name}:${row.state}`;
@@ -230,10 +232,10 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
     const at = (queue: string, ...states: string[]): number =>
       states.reduce((total, state) => total + (counts.get(`${queue}:${state}`) ?? 0), 0);
     return {
-      queued: at(RUN_QUEUE, "created", "retry"),
-      active: at(RUN_QUEUE, "active"),
-      failed: at(RUN_QUEUE, "failed"),
-      dead_letter: at(RUN_DEAD_LETTER_QUEUE, "created", "retry", "active"),
+      queued: at(runQueue, "created", "retry"),
+      active: at(runQueue, "active"),
+      failed: at(runQueue, "failed"),
+      dead_letter: at(deadLetterQueue, "created", "retry", "active"),
     };
   }
 
@@ -261,7 +263,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
       });
       if (run === null) throw new RunNotQueueableError();
 
-      const jobId = await instance.send(RUN_QUEUE, payload, {
+      const jobId = await instance.send(runQueue, payload, {
         singletonKey: runJobKey(payload, key),
       });
       const jobLogger = withContext(logger, {

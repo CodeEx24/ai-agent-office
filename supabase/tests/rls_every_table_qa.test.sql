@@ -77,8 +77,8 @@ select is(
 select is(
   (select count(*)::int from pg_class t where t.relnamespace = 'public'::regnamespace and t.relkind = 'r'
      and has_table_privilege('authenticated', t.oid, 'SELECT')),
-  16,
-  'authenticated can SELECT all 16 tables (membership RLS filters the rows)'
+  18,
+  'authenticated can SELECT all 18 tables (membership RLS filters the rows)'
 );
 select is(
   (select count(*)::int from pg_class t where t.relnamespace = 'public'::regnamespace and t.relkind = 'r'

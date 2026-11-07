@@ -81,6 +81,8 @@ Every table has RLS and per-command policies for `authenticated` built on `priva
 | notes_index | viewer | member | member | member |
 | policies | viewer | owner (`created_by`/`updated_by` = caller) | owner (`rule`, `archived_at`, `updated_by` only) | - (archive instead) |
 | capabilities | viewer | - (seeded by migration and trigger) | owner (`enabled`, `description` only) | - |
+| agent_identities | viewer | - (created by a trigger on agents) | - | - |
+| agent_credentials | viewer | - (the worker appends; see the AGO-148 section) | - | - |
 
 Rules that hold for every table: policies are `to authenticated`, one per command, named `<table>_<command>_<minimum role>`; `workspace_id` and other ids are never in an UPDATE grant (a row cannot move workspaces); approvals keep their `payload_hash`, `expires_at` and `consumed_at` immutable; `run_events` stays append-only; attribution columns (`granted_by`, `decided_by`, `created_by`) must be the caller's own membership (`private.current_member_id`).
 
@@ -136,3 +138,14 @@ A skill is Markdown know-how an owner writes and assigns to agents. It is untrus
 - **Assignments follow the latest version.** `agent_skills` has no pin column; pinning an assignment to a version needs an UPDATE grant and policy and is left for the context builder (AGO-145).
 - **Size limit.** `skills.body` and `skill_versions.body` are capped at 20,000 characters (`SKILL_BODY_MAX_LENGTH` in `@ago/shared`, which also normalises browser CRLF line breaks to LF before counting).
 - **Rollback.** `supabase/rollbacks/20261106150001_ago_128_skill_versions.down.sql`, proven by `scripts/ago-128-rollback.test.mjs` (`RUN_DB_TESTS=1`, inside the db lock). Rolling back drops the history (local data); the current text stays in `skills`.
+
+## Agent identity and credentials (AGO-148)
+
+Each agent has one **identity** (`agent_identities`, a non-login principal created by a trigger on `agents`, never an auth user) and the worker issues it a **credential per run**: a signed token that carries the agent, workspace and run, the capabilities it may use, and an expiry. The `agent_credentials` table is the issuance log.
+
+- **Expiry (AC1).** A credential lives until the task ends or 15 minutes pass, whichever is sooner (`computeCredentialExpiry` in `@ago/shared`). The `agent_credentials_max_ttl_check` constraint refuses anything longer, so it also holds for a buggy caller or `service_role`. A credential is revoked when its run leaves queued or running (trigger on `runs`), and no credential can be issued for a run that has ended.
+- **Scope (AC2).** The capability set is the agent's granted capabilities (`agent_capabilities`, enabled in the catalog) intersected with what the caller asked for. A BEFORE INSERT trigger re-checks it: a capability the agent was not granted, that is disabled, or that is not in the catalog cannot be put on a credential. The verifier (`createCredentialVerifier`, worker) also rejects expired, revoked, unknown, wrong-workspace, wrong-agent, wrong-run and missing-capability credentials. A credential never raises a capability's tier: tier 3 and 4 still need a person's approval and every tool call still passes the policy engine (`policyCheckRequired` is always true).
+- **Log (AC3).** One row per issuance: `token_hash` (sha256, never the token), `capabilities`, `issued_at`, `expires_at`, `revoked_at`. Append-only for every role, `service_role` and the table owner included; the one allowed change is `revoked_at` null to a timestamp, once. UPDATE, DELETE and TRUNCATE otherwise raise, and the triggers are ENABLE ALWAYS. Members and viewers read their own workspace's rows; nobody writes through the API.
+- **Human-only routes.** A request that carries an agent credential (`Authorization: Bearer ago_agt_...`) is refused with 403 by the proxy, the capabilities route and the create-agent server action (`apps/web/src/lib/auth/human-only.ts`), even if it also carries a session cookie. The agent allow-list is empty today.
+- **Secret.** `AGENT_CREDENTIAL_SIGNING_SECRET`, see [environments.md](environments.md#agent-credential-signing-secret-ago-148).
+- **Rollback.** `supabase/rollbacks/20261107130001_ago_148_agent_identity_credentials.down.sql` (local data only; it drops the issuance log).
