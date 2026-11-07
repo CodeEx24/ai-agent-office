@@ -15,10 +15,10 @@ const CAPABILITIES: WizardCapability[] = [
   { key: "email.send", name: "Send email", description: "", tier: 3, defaultMode: "approval" },
 ];
 
-function setup() {
+function setup(capabilities: WizardCapability[] = CAPABILITIES) {
   const user = userEvent.setup();
   const view = render(
-    <AgentWizard workspaceId={WORKSPACE} skills={SKILLS} capabilities={CAPABILITIES} />,
+    <AgentWizard workspaceId={WORKSPACE} skills={SKILLS} capabilities={capabilities} />,
   );
   const hidden = (name: string): string => {
     const input = view.container.querySelector<HTMLInputElement>(
@@ -142,5 +142,83 @@ describe("AgentWizard", () => {
     await fillBasics(user);
     await user.type(screen.getByLabelText("Name"), "{Enter}");
     expect(screen.getByRole("heading", { name: "Skills" })).toBeInTheDocument();
+  });
+
+  describe("template picker (AGO-136)", () => {
+    const WITH_TEMPLATE_KEYS: WizardCapability[] = [
+      ...CAPABILITIES,
+      {
+        key: "tasks.manage",
+        name: "Manage tasks",
+        description: "",
+        tier: 1,
+        defaultMode: "automatic",
+      },
+      { key: "code.run", name: "Run code", description: "", tier: 3, defaultMode: "approval" },
+    ];
+
+    it("starts with no template and pre-fills every basic field when one is chosen", async () => {
+      const { user } = setup(WITH_TEMPLATE_KEYS);
+      const picker = screen.getByLabelText("Start from a template (optional)");
+      expect(picker).toHaveValue("");
+
+      await user.selectOptions(picker, "researcher");
+      expect(screen.getByLabelText("Name")).toHaveValue("Researcher");
+      expect(screen.getByLabelText("Role")).toHaveValue("Researcher");
+      expect(screen.getByLabelText("Model")).toHaveValue("claude-sonnet-5-5");
+      expect(screen.getByLabelText("Prompt")).toHaveDisplayValue(/You are a Researcher/);
+    });
+
+    it("keeps everything editable after a template is chosen", async () => {
+      const { user } = setup(WITH_TEMPLATE_KEYS);
+      await user.selectOptions(screen.getByLabelText("Start from a template (optional)"), "writer");
+      const name = screen.getByLabelText("Name");
+      await user.clear(name);
+      await user.type(name, "Editor");
+      expect(name).toHaveValue("Editor");
+    });
+
+    it("pre-ticks the template's capabilities, still reviewable, and forces Tier 3 to approval", async () => {
+      const { user, hidden } = setup(WITH_TEMPLATE_KEYS);
+      await user.selectOptions(
+        screen.getByLabelText("Start from a template (optional)"),
+        "developer",
+      );
+      expect(JSON.parse(hidden("capabilities"))).toEqual([
+        { key: "vault.read", mode: "automatic" },
+        { key: "code.run", mode: "approval" },
+      ]);
+      expect(hidden("dailyBudget")).toBe("10.00");
+
+      await user.click(screen.getByRole("button", { name: "Next" })); // skills
+      await user.click(screen.getByRole("button", { name: "Next" })); // capabilities
+      expect(screen.getByRole("checkbox", { name: /Run code/ })).toBeChecked();
+      expect(screen.getByText("Needs approval every time")).toBeInTheDocument();
+    });
+
+    it("leaves out a capability the workspace does not offer", async () => {
+      const { user, hidden } = setup(); // no tasks.manage in this workspace
+      await user.selectOptions(
+        screen.getByLabelText("Start from a template (optional)"),
+        "manager",
+      );
+      expect(JSON.parse(hidden("capabilities"))).toEqual([
+        { key: "vault.read", mode: "automatic" },
+      ]);
+    });
+
+    it("never sends a mode: the agent still starts in Strict mode", async () => {
+      const { user } = setup(WITH_TEMPLATE_KEYS);
+      await user.selectOptions(
+        screen.getByLabelText("Start from a template (optional)"),
+        "analyst",
+      );
+      for (let i = 0; i < 4; i += 1) {
+        await user.click(screen.getByRole("button", { name: "Next" }));
+      }
+      expect(screen.getByTestId("review")).toHaveTextContent("Strict");
+      expect(document.querySelector('[name="mode"]')).toBeNull();
+      expect(document.querySelector('[name="templateId"]')).toBeNull();
+    });
   });
 });
