@@ -6,6 +6,11 @@
 ## Implementation details
 <Approach, key files, patterns reused.>
 
+## Boundaries
+- **Always:** <e.g. scope by workspace_id, run the policy check before every tool call, validate input with Zod.>
+- **Ask first:** <e.g. schema changes, new dependencies, CI config, anything Tier 3/4.>
+- **Never:** <e.g. commit secrets, let an agent approve its own action, edit run_events.>
+
 ## API changes
 <Endpoints, request and response, auth. "None" if none.>
 
