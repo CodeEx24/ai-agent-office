@@ -34,6 +34,25 @@ describe("buildHealthReport", () => {
     expect(report.status).toBe("ok");
   });
 
+  it("exposes the queue depth when the queue is ok (AC3)", async () => {
+    const depth = { queued: 3, active: 1, failed: 0, dead_letter: 2 };
+    const report = await buildHealthReport(
+      { db: up, queue: () => Promise.resolve({ status: "ok", depth }) },
+      0,
+    );
+    expect(report.status).toBe("ok");
+    expect(report.queue).toEqual({ status: "ok", depth });
+  });
+
+  it("is degraded (200), not down, when only the queue is down or throws", async () => {
+    const queueDown = await buildHealthReport({ db: up, queue: down }, 0);
+    expect(queueDown.status).toBe("degraded");
+    expect(queueDown.queue).toEqual({ status: "down" });
+    expect(httpStatusFor(queueDown)).toBe(200);
+    const queueThrows = await buildHealthReport({ db: up, queue: throws }, 0);
+    expect(queueThrows.queue).toEqual({ status: "down" });
+  });
+
   it("is down (503) when the db is down, whatever the queue says", async () => {
     const report = await buildHealthReport({ db: down, queue: up }, 0);
     expect(report.status).toBe("down");

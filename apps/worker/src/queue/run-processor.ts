@@ -1,0 +1,157 @@
+import {
+  createRunEventEmitter,
+  type RunEventEmitter,
+  type RunEventStore,
+} from "../events/index.js";
+import { scrubString, withContext, type Logger } from "../logger.js";
+import { runJobSchema, type RunJobPayload } from "./run-job.js";
+import { RUN_STATUS, type RunStore } from "./run-store.js";
+
+import type { ErrorTracker } from "../sentry.js";
+
+/** What the agent runtime (AGO-167) is given for one run. */
+export interface RunExecutionContext {
+  readonly workspaceId: string;
+  readonly runId: string;
+  readonly agentId: string;
+  readonly taskId: string | null;
+  /** 0 for the first attempt, then 1, 2... for each retry. */
+  readonly attempt: number;
+  readonly logger: Logger;
+  readonly emitter: RunEventEmitter;
+  /** Aborted when the worker is shutting down past its drain timeout. */
+  readonly signal: AbortSignal;
+}
+
+export interface RunOutcome {
+  readonly steps: number;
+  readonly summary?: string;
+}
+
+/** The seam to the agent tool loop. Throwing means the attempt failed and may be retried. */
+export interface RunExecutor {
+  execute(context: RunExecutionContext): Promise<RunOutcome>;
+}
+
+/** The slice of a pg-boss job the processor needs. */
+export interface RunJob {
+  readonly id: string;
+  readonly data: unknown;
+  readonly retryCount: number;
+  readonly signal: AbortSignal;
+}
+
+export type RunJobResult = "executed" | "skipped_duplicate";
+
+export interface RunProcessorDeps {
+  readonly runs: RunStore;
+  readonly events: RunEventStore;
+  readonly executor: RunExecutor;
+  readonly logger: Logger;
+  readonly errorTracker: ErrorTracker;
+  /** Retries allowed after the first attempt: the attempt with `retryCount` of this is the last. */
+  readonly retryLimit: number;
+  /** Matches the job's expiry; a `running` run older than this has lost its worker. */
+  readonly staleAfterSeconds: number;
+}
+
+const FAILURE_MESSAGE_MAX = 300;
+
+/** A failure message that is safe to store in an append-only log: scrubbed and bounded. */
+function describeFailure(error: unknown): string {
+  const raw = error instanceof Error ? error.message : "unknown error";
+  return scrubString(raw).slice(0, FAILURE_MESSAGE_MAX);
+}
+
+export function createRunProcessor(deps: RunProcessorDeps) {
+  const { runs, events, executor, logger, errorTracker } = deps;
+
+  return async function processRunJob(job: RunJob): Promise<RunJobResult> {
+    const parsed = runJobSchema.safeParse(job.data);
+    if (!parsed.success) {
+      // Paths only: the payload itself is never echoed.
+      const fields = parsed.error.issues.map((issue) => issue.path.join(".") || "(root)");
+      logger.error({ job_id: job.id, fields }, "run job has an invalid payload");
+      throw new Error("invalid run job payload");
+    }
+    const payload: RunJobPayload = parsed.data;
+    const ref = { workspaceId: payload.workspace_id, runId: payload.run_id };
+    const attempt = job.retryCount;
+
+    const run = await runs.claimRun(ref, {
+      allowStaleReclaim: attempt > 0,
+      staleAfterSeconds: deps.staleAfterSeconds,
+    });
+    const jobLogger = withContext(logger, {
+      run_id: payload.run_id,
+      workspace_id: payload.workspace_id,
+      ...(run === null ? {} : { agent_id: run.agentId }),
+    });
+    if (run === null) {
+      // AC1: a second job for the same run finds it already claimed or finished and does nothing.
+      jobLogger.info({ job_id: job.id }, "run already claimed or finished; skipping duplicate job");
+      return "skipped_duplicate";
+    }
+
+    const emitter = createRunEventEmitter({
+      workspaceId: payload.workspace_id,
+      runId: payload.run_id,
+      store: events,
+      logger: jobLogger,
+    });
+
+    const handleFailure = async (error: unknown): Promise<void> => {
+      const isFinalAttempt = attempt >= deps.retryLimit;
+      if (!isFinalAttempt) {
+        // Give the run back so the backoff retry can claim it again.
+        jobLogger.warn({ job_id: job.id, attempt, err: error }, "run attempt failed; will retry");
+        await runs.releaseRun(ref).catch((releaseError: unknown) => {
+          jobLogger.error({ err: releaseError }, "could not release run for retry");
+        });
+        return;
+      }
+      jobLogger.error({ job_id: job.id, attempt, err: error }, "run failed after all retries");
+      errorTracker.captureException(error, {
+        run_id: payload.run_id,
+        agent_id: run.agentId,
+        workspace_id: payload.workspace_id,
+      });
+      await runs.markFinished(ref, RUN_STATUS.failed).catch((markError: unknown) => {
+        jobLogger.error({ err: markError }, "could not mark run failed");
+      });
+      await emitter
+        .emit({
+          type: "run.failed",
+          payload: { reason: "retries_exhausted", message: describeFailure(error) },
+        })
+        .catch(() => undefined); // already logged by the emitter; the job failure must still surface
+    };
+
+    try {
+      await emitter.emit({ type: "run.started", payload: {} });
+      const outcome = await executor.execute({
+        workspaceId: payload.workspace_id,
+        runId: payload.run_id,
+        agentId: run.agentId,
+        taskId: run.taskId,
+        attempt,
+        logger: jobLogger,
+        emitter,
+        signal: job.signal,
+      });
+      await emitter.emit({
+        type: "run.completed",
+        payload: {
+          steps: outcome.steps,
+          ...(outcome.summary === undefined ? {} : { summary: outcome.summary }),
+        },
+      });
+      await runs.markFinished(ref, RUN_STATUS.succeeded);
+      jobLogger.info({ job_id: job.id, attempt }, "run completed");
+      return "executed";
+    } catch (error) {
+      await handleFailure(error);
+      throw error;
+    }
+  };
+}

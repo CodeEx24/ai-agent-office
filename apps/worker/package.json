@@ -16,6 +16,7 @@
     "@ago/shared": "workspace:*",
     "@sentry/node": "11.11.0",
     "pg": "^8.23.1",
+    "pg-boss": "12.38.1",
     "pino": "^10.4.0",
     "zod": "^4.6.7"
   },
