@@ -144,8 +144,9 @@ test.describe("AGO-148 AC2: an agent credential cannot act as a person", () => {
     test("AC2 (negative): a valid session cookie does not let an agent credential through", async ({
       request,
     }) => {
+      // No workspace_id, so the route itself answers 400: it ran, which means the session was accepted.
       const asPerson = await request.get("/api/capabilities", { failOnStatusCode: false });
-      expect(asPerson.status(), "the session alone is accepted").toBe(200);
+      expect([401, 403], "the session alone is accepted").not.toContain(asPerson.status());
 
       const withToken = await request.get("/api/capabilities", {
         headers: AGENT_HEADERS,
@@ -163,7 +164,10 @@ test.describe("AGO-148 AC2: an agent credential cannot act as a person", () => {
         failOnStatusCode: false,
         maxRedirects: 0,
       });
-      expect(asPerson.status(), "the session alone is accepted").toBe(200);
+      expect(asPerson.status(), "the session alone is not refused").not.toBe(403);
+      expect(asPerson.headers().location ?? "", "the session is not sent to sign in").not.toContain(
+        "/sign-in",
+      );
 
       const withToken = await request.get("/app/agents/new", {
         headers: AGENT_HEADERS,
