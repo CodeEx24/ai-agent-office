@@ -1,3 +1,9 @@
 # AGO-164: fake test fixtures (not real secrets) in commit c143d7a, since replaced in a later commit.
 c143d7adf8efc8d86509f91385e60f5345c61da1:scripts/ago-164-acceptance.test.mjs:generic-api-key:210
 c143d7adf8efc8d86509f91385e60f5345c61da1:scripts/ago-164-acceptance.test.mjs:generic-api-key:243
+# AGO-148: fake test fixtures (made-up signing secrets and tokens, not real secrets) in earlier commits.
+18840124f83cdc5b19ddbb0493806cac28c12e2b:packages/shared/src/env/env.test.ts:generic-api-key:32
+96629c7e1a20ab0baf28d168745b14ceb3b2971a:scripts/ago-148-qa.test.mjs:generic-api-key:29
+96629c7e1a20ab0baf28d168745b14ceb3b2971a:scripts/ago-148-qa.test.mjs:generic-api-key:357
+3aef956980b2701e72e47677aebaaf43c5f1dfe5:apps/worker/src/identity/credential-service.test.ts:generic-api-key:23
+96629c7e1a20ab0baf28d168745b14ceb3b2971a:apps/web/e2e/ago-148-acceptance.spec.ts:generic-api-key:12
