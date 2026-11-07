@@ -13,6 +13,8 @@ export interface PolicyToolCall {
   readonly input: unknown;
   /** The registered tool's tier. An unknown tool is reported as tier 4. */
   readonly tier: CapabilityTier;
+  /** The registered tool's catalog capability, when it has one. Undefined for unknown tools and built-ins. */
+  readonly capabilityKey?: string;
   /** False when the model named a tool that is not registered. */
   readonly isRegistered: boolean;
 }
