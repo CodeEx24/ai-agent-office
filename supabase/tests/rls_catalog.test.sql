@@ -161,8 +161,8 @@ select is((select count(distinct tbl)::int from ago107_t.violations() where tbl 
 select is((select count(*)::int from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
     and c.relname not like 'ago107_p_%' and not c.relrowsecurity), 0, 'RLS is on for every real table');
 select is((select count(*)::int from pg_policy p join pg_class c on c.oid = p.polrelid
-    where c.relnamespace = 'public'::regnamespace and c.relname not like 'ago107_p_%'), 39,
-  '39 policies exist on the 15 real tables (3 AGO-82 + 31 AGO-107 + 3 AGO-96 + 2 AGO-125); a new policy needs this number and the role matrix updated');
+    where c.relnamespace = 'public'::regnamespace and c.relname not like 'ago107_p_%'), 41,
+  '41 policies exist on the 17 real tables (3 AGO-82 + 31 AGO-107 + 3 AGO-96 + 2 AGO-125 + 2 AGO-148); a new policy needs this number and the role matrix updated');
 select is(has_table_privilege('authenticated', 'public.run_events', 'INSERT,UPDATE,DELETE,TRUNCATE'), false,
   'authenticated cannot write run_events (append-only, runtime-only)');
 select is(has_table_privilege('authenticated', 'public.claims', 'INSERT,UPDATE,DELETE'), false,

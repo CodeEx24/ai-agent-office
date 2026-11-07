@@ -75,6 +75,7 @@ export const SECRET_VALUE_PATTERNS: readonly (readonly [RegExp, string])[] = [
   // Any `sk-` key of 16+ key characters: plain, `sk-svcacct-`, `sk-admin-`, short or long. Broad on
   // purpose (over-redaction is the safe failure); the two entries above only keep specific labels.
   [/\bsk-[A-Za-z0-9_.-]{16,}/, "OpenAI API key"],
+  [/\bago_agt_[A-Za-z0-9_.-]{20,}/, "Agent Office agent credential"],
   [/\bgh[pousr]_[A-Za-z0-9]{36}\b/, "GitHub token"],
   [/github_pat_[A-Za-z0-9_]{22,}/, "GitHub fine-grained token"],
   [/\bsbp_[0-9a-f]{40}\b/, "Supabase access token"],

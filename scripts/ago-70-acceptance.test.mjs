@@ -284,6 +284,7 @@ test("AC3: the schema defines exactly the documented set of variables", () => {
     "SUPABASE_SERVICE_ROLE_KEY",
     "DATABASE_URL",
     "ANTHROPIC_API_KEY",
+    "AGENT_CREDENTIAL_SIGNING_SECRET",
     "TELEGRAM_BOT_TOKEN",
     "SENTRY_DSN",
     "LANGFUSE_PUBLIC_KEY",

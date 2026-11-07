@@ -37,6 +37,12 @@ export const serverOnlyEnvSchema = z.object({
   /** Postgres connection string used by the worker and pg-boss. */
   DATABASE_URL: z.preprocess(emptyToUndefined, optionalString),
   ANTHROPIC_API_KEY: z.preprocess(emptyToUndefined, optionalString),
+  /**
+   * Server-only key that signs per-run agent credentials (AGO-148). At least 32 characters. Required when
+   * deployed (preview and production); local falls back to a clearly dev-only value so `pnpm dev` works.
+   * Rotating it invalidates every outstanding credential, which is safe: they live at most 15 minutes.
+   */
+  AGENT_CREDENTIAL_SIGNING_SECRET: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
   TELEGRAM_BOT_TOKEN: z.preprocess(emptyToUndefined, optionalString),
   SENTRY_DSN: z.preprocess(emptyToUndefined, z.url().optional()),
   /**
@@ -56,6 +62,7 @@ const REQUIRED_WHEN_DEPLOYED = [
   "NEXT_PUBLIC_SUPABASE_ANON_KEY",
   "SUPABASE_SERVICE_ROLE_KEY",
   "DATABASE_URL",
+  "AGENT_CREDENTIAL_SIGNING_SECRET",
 ] as const;
 
 /** Variables that additionally require https when deployed. */
@@ -95,6 +102,22 @@ export const serverEnvSchema = serverFullShape.superRefine((env, ctx) => {
   }
 });
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
+
+/**
+ * Dev-only signing key for agent credentials, used when APP_ENV is local and no secret is set. Public by
+ * construction (it is in the repo): never valid on a deployment, where the variable is required.
+ */
+export const DEV_ONLY_AGENT_CREDENTIAL_SIGNING_SECRET =
+  "dev-only-agent-credential-signing-key-not-a-secret";
+
+/** The signing secret to use: the configured one, or the dev-only default on a local environment. */
+export function resolveAgentCredentialSigningSecret(
+  env: Pick<ServerEnv, "APP_ENV" | "AGENT_CREDENTIAL_SIGNING_SECRET">,
+): string {
+  if (env.AGENT_CREDENTIAL_SIGNING_SECRET !== undefined) return env.AGENT_CREDENTIAL_SIGNING_SECRET;
+  if (env.APP_ENV === "local") return DEV_ONLY_AGENT_CREDENTIAL_SIGNING_SECRET;
+  throw new Error("AGENT_CREDENTIAL_SIGNING_SECRET is required when APP_ENV is not local");
+}
 
 /** The worker has no browser surface, so it only needs the server variables. */
 export const workerEnvSchema = serverEnvSchema;
