@@ -14,7 +14,7 @@ export type Database = {
                     "agent_id": string,"capability": string,"created_at"?: string,"granted_by"?: string | null,"id"?: string,"mode"?: string,"tier"?: number,"updated_at"?: string,"workspace_id": string
                   }
                   Update: {
-                    "agent_id"?: string,"capability"?: string,"created_at"?: string,"granted_by"?: string | null,"id"?: string,"tier"?: number,"updated_at"?: string,"workspace_id"?: string
+                    "agent_id"?: string,"capability"?: string,"created_at"?: string,"granted_by"?: string | null,"id"?: string,"mode"?: string,"tier"?: number,"updated_at"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -446,9 +446,9 @@ isOneToOne: false
           }
           Functions: {
             "create_agent":
-{ Args: { "p_workspace_id": string; "p_name": string; "p_role": string; "p_model": string; "p_prompt": string; "p_daily_budget_cents": number; "p_skill_ids": string[]; "p_capabilities": Json }; Returns: string
-                           }
-            "onboard_current_user":
+{ Args: { "p_capabilities": Json,"p_daily_budget_cents": number,"p_model": string,"p_name": string,"p_prompt": string,"p_role": string,"p_skill_ids": (string)[],"p_workspace_id": string }; Returns: string
+                           },
+"onboard_current_user":
 { Args: { "p_workspace_name": string }; Returns: string
                            }
           }

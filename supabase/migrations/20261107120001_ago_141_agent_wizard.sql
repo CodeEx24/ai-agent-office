@@ -2,8 +2,6 @@
 -- agent_capabilities; owner-only creation; and public.create_agent(), one transaction that creates the agent,
 -- its skill assignments and its capability grants together.
 --
--- DRAFT: not applied to any database until the coordinator grants the schema slot (AGO-151 holds it). The
--- timestamp is renamed to the next free one on rebase.
 -- Rollback: supabase/rollbacks/20261107120001_ago_141_agent_wizard.down.sql
 --
 -- Decisions:

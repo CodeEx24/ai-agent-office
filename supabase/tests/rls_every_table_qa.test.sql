@@ -30,10 +30,11 @@ select is(
        and has_column_privilege('authenticated', t.oid, a.attnum, 'INSERT')) s),
   (select array_agg(e order by e collate "C") from unnest(array[
      'agents.workspace_id', 'agents.name', 'agents.description',
+     'agents.role', 'agents.model', 'agents.prompt', 'agents.daily_budget_cents',
      'skills.workspace_id', 'skills.name', 'skills.description', 'skills.body',
      'agent_skills.workspace_id', 'agent_skills.agent_id', 'agent_skills.skill_id',
      'agent_capabilities.workspace_id', 'agent_capabilities.agent_id', 'agent_capabilities.capability',
-     'agent_capabilities.tier', 'agent_capabilities.granted_by',
+     'agent_capabilities.tier', 'agent_capabilities.mode', 'agent_capabilities.granted_by',
      'tasks.workspace_id', 'tasks.title', 'tasks.description', 'tasks.status', 'tasks.agent_id', 'tasks.created_by',
      'runs.workspace_id', 'runs.task_id', 'runs.agent_id',
      'budgets_usage.workspace_id', 'budgets_usage.agent_id', 'budgets_usage.period_start',
@@ -108,8 +109,8 @@ select is(
   (select coalesce(array_agg(p.proname::text order by p.proname::text), '{}'::text[]) from pg_proc p
    where p.pronamespace = 'public'::regnamespace and has_function_privilege('authenticated', p.oid, 'EXECUTE')
      and not exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')),
-  array['onboard_current_user'],
-  'authenticated can execute exactly one function in public: onboard_current_user'
+  array['create_agent', 'onboard_current_user'],
+  'authenticated can execute exactly two functions in public: create_agent (AGO-141, owner-checked) and onboard_current_user'
 );
 select is(
   (select coalesce(array_agg(p.proname::text order by p.proname::text), '{}'::text[]) from pg_proc p

@@ -2,10 +2,10 @@
 --   AC1  valid input creates an agent in Strict mode, with its skills and capability grants, in one transaction
 --   +    only owners create; tier 3 and 4 grants are never automatic; other workspaces' skills are refused;
 --        a failure leaves nothing behind
--- Run: pnpm exec supabase test db (inside the db lock). Not run until the schema slot is granted.
+-- Run: pnpm exec supabase test db (inside the db lock).
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(24);
+select plan(23);
 
 -- fixtures (as postgres): o = owner of A, m = member of A, v = viewer of A, b = owner of B
 insert into auth.users (id, instance_id, aud, role, email) values
