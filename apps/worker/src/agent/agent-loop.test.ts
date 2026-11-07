@@ -18,6 +18,7 @@ import {
 } from "./tools.js";
 
 import { ModelProviderError } from "./model-provider.js";
+import { createRunLimitsResolver } from "./run-limits.js";
 
 import type { ModelProvider, ModelRequest, ModelResponse } from "./model-provider.js";
 import type { CapabilityTier } from "@ago/shared";
@@ -101,6 +102,7 @@ function setup(
     tools?: ToolRegistry;
     policy?: PolicyHook;
     limits?: AgentLoopDeps["limits"];
+    limitsResolver?: AgentLoopDeps["limitsResolver"];
     context?: RunContext | null;
     now?: () => number;
     signal?: AbortSignal;
@@ -144,6 +146,7 @@ function setup(
     tools: options.tools ?? createToolRegistry([getCurrentTimeTool]),
     policy: options.policy ?? createDenyByDefaultPolicyHook(),
     ...(options.limits === undefined ? {} : { limits: options.limits }),
+    ...(options.limitsResolver === undefined ? {} : { limitsResolver: options.limitsResolver }),
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.contextMaxChars === undefined ? {} : { contextMaxChars: options.contextMaxChars }),
   });
@@ -723,5 +726,200 @@ describe("agent tool loop: credentials never leak (AC3)", () => {
     for (const surface of [(failure as Error).message, JSON.stringify(rows), logLines.join("\n")]) {
       expect(surface).not.toContain(FAKE_KEY);
     }
+  });
+});
+
+describe("agent tool loop: loop detection (AGO-166 AC1)", () => {
+  const defaults = { maxSteps: 25, maxTokens: 200_000, maxWallMs: 600_000 };
+
+  it("stops with run.loop_detected after the same call returns the same output 3 times", async () => {
+    const tool = fakeTool("lookup", 0, () => Promise.resolve("same answer"));
+    const { provider, requests } = fakeProvider(() =>
+      callTool("lookup", { q: "secret-token-xyz" }),
+    );
+    const { loop, ctx, rows } = setup({
+      provider,
+      tools: createToolRegistry([tool]),
+      policy: allowAll(),
+    });
+
+    const outcome = await loop.execute(ctx);
+
+    expect(outcome).toEqual({ steps: 3, end: "loop_detected" });
+    expect(requests).toHaveLength(3);
+    expect(tool.run).toHaveBeenCalledTimes(3);
+    expect(types(rows).at(-1)).toBe("run.loop_detected");
+    const detected = payloadsOf(rows, "run.loop_detected");
+    expect(detected).toHaveLength(1);
+    expect(detected[0]).toMatchObject({ tool_name: "lookup", repeat_count: 3 });
+    expect(String(detected[0]?.call_hash)).toMatch(/^[a-f0-9]{64}$/);
+    expect(Object.keys(detected[0] ?? {}).sort()).toEqual([
+      "call_hash",
+      "repeat_count",
+      "tool_name",
+    ]);
+    // The event holds the tool name, a hash and a count: never the arguments or the output.
+    const loopRow = JSON.stringify(rows.filter((row) => row.type === "run.loop_detected"));
+    expect(loopRow).not.toContain("secret-token-xyz");
+    expect(loopRow).not.toContain("same answer");
+    expect(types(rows)).not.toContain("run.limit_reached");
+  });
+
+  it("does not stop when the same call returns a different output each time", async () => {
+    let counter = 0;
+    const tool = fakeTool("lookup", 0, () => Promise.resolve(`result ${String((counter += 1))}`));
+    const { provider } = fakeProvider((n) =>
+      n <= 5 ? callTool("lookup", { q: "same" }) : finalAnswer("done"),
+    );
+    const { loop, ctx, rows } = setup({
+      provider,
+      tools: createToolRegistry([tool]),
+      policy: allowAll(),
+    });
+
+    const outcome = await loop.execute(ctx);
+
+    expect(outcome.end).toBe("completed");
+    expect(tool.run).toHaveBeenCalledTimes(5);
+    expect(types(rows)).not.toContain("run.loop_detected");
+  });
+
+  it("treats arguments with the same content in a different key order as the same call", async () => {
+    const tool = fakeTool("lookup", 0);
+    const inputs = [
+      { a: 1, b: { y: 2, x: 1 } },
+      { b: { x: 1, y: 2 }, a: 1 },
+      { a: 1, b: { x: 1, y: 2 } },
+    ];
+    const { provider } = fakeProvider((n) => callTool("lookup", inputs[n - 1] ?? {}));
+    const { loop, ctx, rows } = setup({
+      provider,
+      tools: createToolRegistry([tool]),
+      policy: allowAll(),
+    });
+
+    const outcome = await loop.execute(ctx);
+
+    expect(outcome.end).toBe("loop_detected");
+    expect(payloadsOf(rows, "run.loop_detected")[0]).toMatchObject({ repeat_count: 3 });
+  });
+
+  it("does not stop for calls with different arguments, or repeats that are not consecutive", async () => {
+    const tool = fakeTool("lookup", 0);
+    const inputs = [{ q: 1 }, { q: 1 }, { q: 2 }, { q: 1 }, { q: 1 }];
+    const { provider } = fakeProvider((n) =>
+      n <= inputs.length ? callTool("lookup", inputs[n - 1]) : finalAnswer("done"),
+    );
+    const { loop, ctx, rows } = setup({
+      provider,
+      tools: createToolRegistry([tool]),
+      policy: allowAll(),
+    });
+
+    const outcome = await loop.execute(ctx);
+
+    expect(outcome.end).toBe("completed");
+    expect(types(rows)).not.toContain("run.loop_detected");
+  });
+
+  it("counts a call that is denied the same way every time as a loop", async () => {
+    const tool = fakeTool("danger", 0);
+    const { provider } = fakeProvider(() => callTool("danger", { x: 1 }));
+    const denyAll = hook(() => Promise.resolve({ decision: "deny", reasonCode: "test_deny" }));
+    const { loop, ctx, rows } = setup({
+      provider,
+      tools: createToolRegistry([tool]),
+      policy: denyAll,
+    });
+
+    const outcome = await loop.execute(ctx);
+
+    expect(outcome.end).toBe("loop_detected");
+    expect(tool.run).not.toHaveBeenCalled();
+    expect(payloadsOf(rows, "run.loop_detected")[0]).toMatchObject({ tool_name: "danger" });
+  });
+
+  describe("per-agent limits (AGO-166 AC2)", () => {
+    // A distinct input each step, so loop detection does not end the run before a limit does.
+    const forever = (u = usage()) =>
+      fakeProvider((n) => callTool("get_current_time", { n }, `toolu_${String(n)}`, u));
+
+    it("uses the agent's own step limit over the default and emits run.limit_reached", async () => {
+      const { provider, requests } = forever();
+      const limitsResolver = createRunLimitsResolver({
+        defaults,
+        source: { get: () => Promise.resolve({ maxSteps: 2 }) },
+      });
+      const { loop, ctx, rows } = setup({ provider, limitsResolver });
+
+      const outcome = await loop.execute(ctx);
+
+      expect(outcome).toEqual({ steps: 2, end: "limit_reached" });
+      expect(requests).toHaveLength(2);
+      expect(payloadsOf(rows, "run.limit_reached")).toEqual([
+        { limit: "steps", max: 2, observed: 2 },
+      ]);
+    });
+
+    it("uses the agent's own token limit and stops before running more tools", async () => {
+      const { provider } = forever(usage(600, 600));
+      const limitsResolver = createRunLimitsResolver({
+        defaults,
+        source: { get: () => Promise.resolve({ maxTokens: 1_000 }) },
+      });
+      const { loop, ctx, rows } = setup({ provider, limitsResolver });
+
+      const outcome = await loop.execute(ctx);
+
+      expect(outcome.end).toBe("limit_reached");
+      expect(payloadsOf(rows, "run.limit_reached")).toEqual([
+        { limit: "tokens", max: 1_000, observed: 1_200 },
+      ]);
+      expect(types(rows)).not.toContain("tool_call.requested");
+    });
+
+    it("uses the agent's own wall-time limit", async () => {
+      let clock = 0;
+      const provider = fakeProvider((n) => {
+        clock += 600;
+        return callTool("get_current_time", { n }, `toolu_${String(n)}`);
+      }).provider;
+      const limitsResolver = createRunLimitsResolver({
+        defaults,
+        source: { get: () => Promise.resolve({ maxWallMs: 1_000 }) },
+      });
+      const { loop, ctx, rows } = setup({ provider, limitsResolver, now: () => clock });
+
+      const outcome = await loop.execute(ctx);
+
+      expect(outcome.end).toBe("limit_reached");
+      expect(payloadsOf(rows, "run.limit_reached")[0]).toMatchObject({ limit: "time", max: 1_000 });
+    });
+
+    it("caps an override above the allowed maximum instead of running unbounded", async () => {
+      const { provider, requests } = forever();
+      const limitsResolver = createRunLimitsResolver({
+        defaults,
+        source: { get: () => Promise.resolve({ maxSteps: 1_000_000 }) },
+      });
+      const { loop, ctx, rows } = setup({ provider, limitsResolver });
+
+      const outcome = await loop.execute(ctx);
+
+      expect(outcome.end).toBe("limit_reached");
+      expect(requests).toHaveLength(200);
+      expect(payloadsOf(rows, "run.limit_reached")[0]).toMatchObject({ limit: "steps", max: 200 });
+    });
+
+    it("falls back to the worker-wide limits when the limits lookup throws", async () => {
+      const { provider } = forever();
+      const limitsResolver = { resolve: () => Promise.reject(new Error("db down")) };
+      const { loop, ctx, rows } = setup({ provider, limitsResolver, limits: { maxSteps: 3 } });
+
+      const outcome = await loop.execute(ctx);
+
+      expect(outcome).toEqual({ steps: 3, end: "limit_reached" });
+      expect(payloadsOf(rows, "run.limit_reached")[0]).toMatchObject({ limit: "steps", max: 3 });
+    });
   });
 });

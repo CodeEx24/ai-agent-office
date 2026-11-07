@@ -2,6 +2,7 @@ import { createContextBuilder, createPgRunContextSource } from "../context/index
 import { createAgentLoop } from "./agent-loop.js";
 import { createClaudeProvider } from "./claude-provider.js";
 import { createDenyByDefaultPolicyHook } from "./policy-hook.js";
+import { createRunLimitsResolver } from "./run-limits.js";
 import { createToolRegistry, getCurrentTimeTool } from "./tools.js";
 
 import type { WorkerConfig } from "../config.js";
@@ -42,6 +43,18 @@ export function createProductionAgentExecutor(options: {
       maxTokens: config.agentMaxTokens,
       maxWallMs: config.agentMaxWallMs,
     },
+    // Per-agent limits (AGO-166). No source yet: the column that stores them needs the schema slot, so every
+    // agent runs on the defaults above until a source is passed here.
+    limitsResolver: createRunLimitsResolver({
+      defaults: {
+        maxSteps: config.agentMaxSteps,
+        maxTokens: config.agentMaxTokens,
+        maxWallMs: config.agentMaxWallMs,
+      },
+      onSourceError: (error) => {
+        logger.error({ err: error }, "could not read an agent's run limits; using defaults");
+      },
+    }),
     contextMaxChars: config.contextMaxChars,
   });
 }

@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   CONTEXT_TEXT_MAX_LENGTH,
   DEFAULT_CONTEXT_MAX_CHARS,
+  LOOP_REPEAT_THRESHOLD,
   MIN_NEVER_AUTOMATIC_TIER,
 } from "@ago/shared";
 import { z } from "zod";
@@ -18,6 +19,7 @@ import {
 
 import { ModelProviderError, type ModelProvider, type ModelToolCall } from "./model-provider.js";
 import type { PolicyDecision, PolicyHook } from "./policy-hook.js";
+import type { RunLimitsResolver } from "./run-limits.js";
 import type { ToolRegistry } from "./tools.js";
 import type { CapabilityTier, RetrievedItem } from "@ago/shared";
 
@@ -72,6 +74,11 @@ export interface AgentLoopDeps {
   readonly tools: ToolRegistry;
   readonly policy: PolicyHook;
   readonly limits?: Partial<AgentLoopLimits>;
+  /**
+   * Per-agent step, token and wall-time limits (AGO-166), looked up at the start of each run. They replace the
+   * same three fields of `limits`; a resolver that throws falls back to `limits` (the safe values).
+   */
+  readonly limitsResolver?: RunLimitsResolver;
   /** The context builder's own cap, used to keep the tool history inside it. */
   readonly contextMaxChars?: number;
   readonly approvalTtlMs?: number;
@@ -179,7 +186,14 @@ interface ToolRecord {
 }
 
 type ToolCallResult =
-  | { readonly kind: "result"; readonly record: ToolRecord; readonly isError: boolean }
+  | {
+      readonly kind: "result";
+      readonly record: ToolRecord;
+      readonly isError: boolean;
+      /** Hash of (tool name, canonical input, output); equal fingerprints mean an identical call and result. */
+      readonly fingerprint: string;
+      readonly toolName: string;
+    }
   | { readonly kind: "needs_approval" };
 
 export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
@@ -192,11 +206,33 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
   const now = deps.now ?? Date.now;
   const approvalTtlMs = deps.approvalTtlMs ?? DEFAULT_APPROVAL_TTL_MS;
   // Well below the wall-time limit, so a silent hook costs a deny, never the run.
-  const policyTimeoutMs = Math.max(
-    1,
-    Math.min(deps.policyTimeoutMs ?? DEFAULT_POLICY_TIMEOUT_MS, Math.floor(limits.maxWallMs / 4)),
-  );
+  const policyTimeoutFor = (maxWallMs: number): number =>
+    Math.max(
+      1,
+      Math.min(deps.policyTimeoutMs ?? DEFAULT_POLICY_TIMEOUT_MS, Math.floor(maxWallMs / 4)),
+    );
   const historyBudgetChars = Math.floor((deps.contextMaxChars ?? DEFAULT_CONTEXT_MAX_CHARS) / 2);
+
+  /** This run's limits: the worker-wide ones, with the agent's own step, token and time limits on top. */
+  async function resolveRunLimits(ctx: RunExecutionContext): Promise<AgentLoopLimits> {
+    if (deps.limitsResolver === undefined) return limits;
+    try {
+      const own = await deps.limitsResolver.resolve({
+        workspaceId: ctx.workspaceId,
+        agentId: ctx.agentId,
+      });
+      return {
+        ...limits,
+        maxSteps: own.maxSteps,
+        maxTokens: own.maxTokens,
+        maxWallMs: own.maxWallMs,
+      };
+    } catch (error) {
+      // Never run unbounded because a lookup failed: the worker-wide limits are the safe fallback.
+      ctx.logger.error({ err: error }, "could not resolve the agent's run limits; using defaults");
+      return limits;
+    }
+  }
 
   /** The single place a tool runs. Policy first, always. */
   async function executeToolCall(
@@ -205,6 +241,7 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
     step: number,
     index: number,
     signal: AbortSignal,
+    policyTimeoutMs: number,
   ): Promise<ToolCallResult> {
     const { emitter } = ctx;
     const callId = VALID_CALL_ID.test(call.id) ? call.id : `call_${String(step)}_${String(index)}`;
@@ -216,6 +253,9 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
     const fail = (text: string): ToolCallResult => ({
       kind: "result",
       isError: true,
+      toolName,
+      // A call that fails the same way every time is as much a loop as one that succeeds the same way.
+      fingerprint: sha256(`${toolName}\n${inputHash}\nerror:${text}`),
       record: { source, content: `status: error\n${text}` },
     });
 
@@ -380,6 +420,9 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
     return {
       kind: "result",
       isError: false,
+      toolName,
+      // The hash is of the full scrubbed output, not the truncated copy the model sees.
+      fingerprint: sha256(`${toolName}\n${inputHash}\nok:${sha256(safeOutput)}`),
       record: { source, content: `status: ok\ninput: ${inputPreview}\n\n${kept}` },
     };
   }
@@ -404,9 +447,14 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
   return {
     async execute(ctx: RunExecutionContext): Promise<RunOutcome> {
       const { emitter } = ctx;
+      const runLimits = await resolveRunLimits(ctx);
+      const policyTimeoutMs = policyTimeoutFor(runLimits.maxWallMs);
       const startedAt = now();
-      const deadline = startedAt + limits.maxWallMs;
+      const deadline = startedAt + runLimits.maxWallMs;
       const history: ToolRecord[] = [];
+      // Loop detection: the fingerprint of the last tool result and how many in a row were identical.
+      let lastFingerprint = "";
+      let repeatCount = 0;
       // A function, not a read of `ctx.signal.aborted`, so the check is re-evaluated after each await.
       const isShuttingDown = (): boolean => ctx.signal.aborted;
       let reportedDropped = 0;
@@ -427,14 +475,16 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
 
       // One signal for the whole run: shutdown, or the wall-time limit. Every pending await (model call,
       // policy hook, tool) is raced against it, so nothing can hold the run past `maxWallMs`.
-      const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(limits.maxWallMs)]);
+      const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(runLimits.maxWallMs)]);
 
       const runSteps = async (): Promise<RunOutcome> => {
         for (;;) {
           if (isShuttingDown()) throw interruption(ctx.signal);
-          if (steps >= limits.maxSteps) return stopForLimit("steps", limits.maxSteps, steps);
-          if (now() >= deadline) return stopForLimit("time", limits.maxWallMs, now() - startedAt);
-          if (tokens >= limits.maxTokens) return stopForLimit("tokens", limits.maxTokens, tokens);
+          if (steps >= runLimits.maxSteps) return stopForLimit("steps", runLimits.maxSteps, steps);
+          if (now() >= deadline)
+            return stopForLimit("time", runLimits.maxWallMs, now() - startedAt);
+          if (tokens >= runLimits.maxTokens)
+            return stopForLimit("tokens", runLimits.maxTokens, tokens);
 
           steps += 1;
           const step = steps;
@@ -485,7 +535,7 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
                   system: built.system,
                   messages: built.messages,
                   tools: deps.tools.list(),
-                  maxOutputTokens: limits.maxOutputTokens,
+                  maxOutputTokens: runLimits.maxOutputTokens,
                   signal,
                 }),
               ),
@@ -527,7 +577,8 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
           }
 
           // Over budget with more tool work requested: stop before running anything else.
-          if (tokens >= limits.maxTokens) return stopForLimit("tokens", limits.maxTokens, tokens);
+          if (tokens >= runLimits.maxTokens)
+            return stopForLimit("tokens", runLimits.maxTokens, tokens);
 
           const calls = response.toolCalls.slice(0, MAX_TOOL_CALLS_PER_STEP);
           if (calls.length < response.toolCalls.length) {
@@ -538,7 +589,7 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
           }
           let hadError = false;
           for (const [index, call] of calls.entries()) {
-            const result = await executeToolCall(ctx, call, step, index, signal);
+            const result = await executeToolCall(ctx, call, step, index, signal, policyTimeoutMs);
             if (result.kind === "needs_approval") {
               await emitter.emit({ type: "step.completed", payload: { step, outcome: "ok" } });
               return {
@@ -549,6 +600,26 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
             }
             history.push(result.record);
             hadError ||= result.isError;
+
+            // Loop detection (AGO-166): the same call with the same result, in a row, is not progress.
+            repeatCount = result.fingerprint === lastFingerprint ? repeatCount + 1 : 1;
+            lastFingerprint = result.fingerprint;
+            if (repeatCount >= LOOP_REPEAT_THRESHOLD) {
+              await emitter.emit({
+                type: "step.completed",
+                payload: { step, outcome: hadError ? "error" : "ok" },
+              });
+              // The event carries the tool name, the fingerprint hash and the count: never the arguments.
+              await emitter.emit({
+                type: "run.loop_detected",
+                payload: {
+                  tool_name: result.toolName,
+                  call_hash: result.fingerprint,
+                  repeat_count: repeatCount,
+                },
+              });
+              return { steps, end: "loop_detected" };
+            }
           }
           await emitter.emit({
             type: "step.completed",
@@ -561,7 +632,7 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
         return await runSteps();
       } catch (error) {
         if (error instanceof RunDeadlineError) {
-          return await stopForLimit("time", limits.maxWallMs, now() - startedAt);
+          return await stopForLimit("time", runLimits.maxWallMs, now() - startedAt);
         }
         throw error;
       }

@@ -187,6 +187,16 @@ describe("run processor", () => {
     expect(runs.state.status).toBe(RUN_STATUS.failed);
   });
 
+  it("ends a run stopped by loop detection as failed, with no run.completed (AGO-166)", async () => {
+    const execute = vi.fn(() => Promise.resolve({ steps: 3, end: "loop_detected" as const }));
+    const { runs, events, process } = setup({ execute });
+
+    await expect(process(job())).resolves.toBe("executed");
+
+    expect(eventTypes(events.rows)).toEqual(["run.started"]);
+    expect(runs.state.status).toBe(RUN_STATUS.failed);
+  });
+
   it("pauses a run that stopped for an approval instead of finishing it (AGO-167)", async () => {
     const execute = vi.fn(() => Promise.resolve({ steps: 2, end: "paused" as const }));
     const { runs, events, process } = setup({ execute });
