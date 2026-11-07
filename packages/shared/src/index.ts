@@ -2,6 +2,7 @@ export * from "./env/index.js";
 export * from "./redaction/index.js";
 export * from "./workspace/roles.js";
 export * from "./policy/policy-schemas.js";
+export * from "./policy/policy-engine.js";
 export * from "./capabilities/capability-schemas.js";
 export * from "./capabilities/starter-capabilities.js";
 export * from "./skills/skill-schemas.js";

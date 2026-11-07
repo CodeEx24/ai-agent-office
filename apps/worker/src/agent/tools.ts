@@ -12,6 +12,12 @@ export interface AgentTool {
   readonly name: string;
   readonly description: string;
   readonly tier: CapabilityTier;
+  /**
+   * The catalog capability (AGO-125) an agent needs a grant for to use this tool, e.g. `vault.read`.
+   * Left out only by a built-in, side-effect free tier-0 tool; the policy engine (AGO-34) denies any other
+   * tool without a key.
+   */
+  readonly capabilityKey?: string;
   /** Validates the model's input. Failing it means the tool is not run. */
   readonly inputSchema: z.ZodType;
   /** JSON Schema sent to the model; must describe the same shape as `inputSchema`. */

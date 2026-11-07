@@ -1,7 +1,7 @@
 import { createContextBuilder, createPgRunContextSource } from "../context/index.js";
 import { createAgentLoop } from "./agent-loop.js";
 import { createClaudeProvider } from "./claude-provider.js";
-import { createDenyByDefaultPolicyHook } from "./policy-hook.js";
+import { createPgPolicySource, createPolicyEngineHook } from "../policy/index.js";
 import { createToolRegistry, getCurrentTimeTool } from "./tools.js";
 
 import type { WorkerConfig } from "../config.js";
@@ -34,8 +34,8 @@ export function createProductionAgentExecutor(options: {
       logger,
       maxChars: config.contextMaxChars,
     }),
-    // The policy engine (AGO-34) replaces this hook; until then everything but tier 0 is denied.
-    policy: createDenyByDefaultPolicyHook(),
+    // The deterministic policy engine (AGO-34): grants and layered policies are read from the database.
+    policy: createPolicyEngineHook({ source: createPgPolicySource(pool) }),
     tools: createToolRegistry([getCurrentTimeTool]),
     limits: {
       maxSteps: config.agentMaxSteps,
