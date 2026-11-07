@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { isAgentModelId } from "../agents/agent-limits.js";
 import {
   SEED_AGENTS,
   SEED_COUNTS,
@@ -54,6 +55,19 @@ describe("seed fixtures match supabase/seed.sql", () => {
     const guards = seedSql.match(/^on conflict do nothing;/gm) ?? [];
     expect(inserts.length).toBeGreaterThan(0);
     expect(guards.length).toBe(inserts.length);
+  });
+
+  it("every seed agent has a model from the shared allowlist (AGO-94), or its runs fail", () => {
+    const block =
+      /insert into public\.agents \(([^)]*)\) values([\s\S]*?)on conflict do nothing;/.exec(
+        seedSql,
+      );
+    expect(block?.[1]).toContain("model");
+    const models = [...(block?.[2] ?? "").matchAll(/'(claude-[a-z0-9-]+)'/g)].map(
+      (m) => m[1] ?? "",
+    );
+    expect(models).toHaveLength(SEED_AGENTS.length);
+    for (const model of models) expect(isAgentModelId(model)).toBe(true);
   });
 
   it("never fakes history or approvals", () => {
