@@ -374,6 +374,52 @@ describe("agent tool loop: every tool call passes the policy hook (AC2)", () => 
     expect(requests[1]?.messages[0]?.content).toContain("policy denied");
   });
 
+  it("denies with policy_invalid_response when the hook's answer is malformed, and the run ends cleanly", async () => {
+    const tool = fakeTool("lookup", 0);
+    const malformed = hook(() => Promise.resolve({ decision: "allow" } as never));
+    const { provider } = fakeProvider((n) => (n === 1 ? callTool("lookup") : finalAnswer("ok")));
+    const { loop, ctx, rows } = setup({
+      provider,
+      tools: createToolRegistry([tool]),
+      policy: malformed,
+    });
+
+    const outcome = await loop.execute(ctx);
+
+    expect(outcome.end).toBe("completed");
+    expect(tool.run).not.toHaveBeenCalled();
+    expect(payloadsOf(rows, "policy.decision")[0]).toMatchObject({
+      decision: "deny",
+      reason_code: "policy_invalid_response",
+    });
+  });
+
+  it("denies with policy_timeout when the hook does not answer in time, and aborts the hook's signal", async () => {
+    const tool = fakeTool("lookup", 0);
+    let hookSignal: AbortSignal | undefined;
+    const silent = hook((_call, context) => {
+      hookSignal = context.signal;
+      return new Promise(() => undefined);
+    });
+    const { provider } = fakeProvider((n) => (n === 1 ? callTool("lookup") : finalAnswer("ok")));
+    const { loop, ctx, rows } = setup({
+      provider,
+      tools: createToolRegistry([tool]),
+      policy: silent,
+      limits: { maxWallMs: 400 },
+    });
+
+    const outcome = await loop.execute(ctx);
+
+    expect(outcome.end).toBe("completed");
+    expect(tool.run).not.toHaveBeenCalled();
+    expect(hookSignal?.aborted).toBe(true);
+    expect(payloadsOf(rows, "policy.decision")[0]).toMatchObject({
+      decision: "deny",
+      reason_code: "policy_timeout",
+    });
+  });
+
   it("denies by default: a tier-1 tool is not run by the default hook", async () => {
     const tool = fakeTool("write_note", 1);
     const { provider } = fakeProvider((n) =>

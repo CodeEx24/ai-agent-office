@@ -4,7 +4,13 @@ import { createDenyByDefaultPolicyHook, DEFAULT_TIER0_ALLOWLIST } from "./policy
 
 import type { PolicyContext, PolicyToolCall } from "./policy-hook.js";
 
-const context: PolicyContext = { workspaceId: "w", runId: "r", agentId: "a", step: 1 };
+const context: PolicyContext = {
+  workspaceId: "w",
+  runId: "r",
+  agentId: "a",
+  step: 1,
+  signal: new AbortController().signal,
+};
 const call = (over: Partial<PolicyToolCall>): PolicyToolCall => ({
   callId: "c1",
   toolName: "get_current_time",

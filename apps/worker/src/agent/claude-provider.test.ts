@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ANTHROPIC_MESSAGES_URL, createClaudeProvider } from "./claude-provider.js";
+import { ANTHROPIC_MESSAGES_URL, createClaudeProvider, scrubApiKey } from "./claude-provider.js";
 import { ModelProviderError } from "./model-provider.js";
 
 import type { ModelRequest } from "./model-provider.js";
@@ -100,7 +100,7 @@ describe("Claude provider (fake fetch only)", () => {
     expect((bad as ModelProviderError).message).not.toContain(KEY);
   });
 
-  it("redacts its own key from an error body even when the key has a shape no pattern knows", async () => {
+  it("never keeps the provider's error body: only the status and a fixed category", async () => {
     const oddKey = "plainly-custom-key-value-1234";
     const provider = createClaudeProvider({
       apiKey: oddKey,
@@ -110,8 +110,25 @@ describe("Claude provider (fake fetch only)", () => {
 
     const error = await provider.complete(request()).catch((e: unknown) => e);
 
-    expect((error as Error).message).toContain("status 400");
-    expect((error as Error).message).not.toContain(oddKey);
+    expect((error as Error).message).toBe("model request failed with status 400 (invalid_request)");
+  });
+
+  it("scrubApiKey removes the key in raw, base64, base64url, hex and URL-encoded forms", () => {
+    const key = "plainly custom/key+value=1234";
+    const bytes = Buffer.from(key);
+    const forms = [
+      key,
+      bytes.toString("base64"),
+      bytes.toString("base64").replace(/=+$/, ""),
+      bytes.toString("base64url"),
+      bytes.toString("hex"),
+      bytes.toString("hex").toUpperCase(),
+      encodeURIComponent(key),
+    ];
+
+    const cleaned = scrubApiKey(forms.join(" | "), key);
+
+    for (const form of forms) expect(cleaned).not.toContain(form);
   });
 
   it("rejects a response that is not in the expected shape", async () => {

@@ -22,6 +22,11 @@ export interface PolicyContext {
   readonly runId: string;
   readonly agentId: string;
   readonly step: number;
+  /**
+   * Aborted when the hook's time budget runs out or the run stops. A hook that is still working then
+   * must stop; the loop has already treated the call as denied (timeout means deny).
+   */
+  readonly signal: AbortSignal;
 }
 
 export interface PolicyDecision {

@@ -23,7 +23,40 @@ import type { ModelProvider, ModelRequest, ModelResponse } from "./model-provide
 
 export const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
-const ERROR_BODY_MAX = 200;
+
+/** Fixed, key-free label for an error status. */
+function categorizeStatus(status: number): string {
+  if (status === 401 || status === 403) return "authentication_error";
+  if (status === 429) return "rate_limited";
+  if (status === 529) return "overloaded";
+  if (status >= 500) return "server_error";
+  if (status >= 400) return "invalid_request";
+  return "unexpected_status";
+}
+
+/**
+ * Remove the key from text in every form it is likely to take: raw, base64 (standard and URL-safe, with
+ * and without padding), hex (both cases) and URL-encoded. Pattern scrubbing runs first for keys in a
+ * shape the shared patterns know.
+ */
+export function scrubApiKey(text: string, apiKey: string): string {
+  const bytes = Buffer.from(apiKey);
+  const base64 = bytes.toString("base64");
+  const forms = new Set<string>([
+    apiKey,
+    base64,
+    base64.replace(/=+$/, ""),
+    bytes.toString("base64url"),
+    bytes.toString("hex"),
+    bytes.toString("hex").toUpperCase(),
+    encodeURIComponent(apiKey),
+  ]);
+  let result = scrubString(text);
+  for (const form of [...forms].filter((f) => f !== "").sort((a, b) => b.length - a.length)) {
+    result = result.split(form).join("[redacted]");
+  }
+  return result;
+}
 
 export interface ClaudeProviderOptions {
   readonly apiKey: string;
@@ -82,13 +115,16 @@ export function createClaudeProvider(options: ClaudeProviderOptions): ModelProvi
       }
 
       if (!response.ok) {
-        // Pattern scrubbing first, then the literal key: a key in a shape no pattern knows still goes.
-        const raw = scrubString(await response.text().catch(() => ""));
-        const body = raw.split(apiKey).join("[redacted]").slice(0, ERROR_BODY_MAX);
+        // The provider's error body is never kept: it is provider-controlled text and can echo the key
+        // in any encoding. Only a fixed category and the status code survive.
+        await response.body?.cancel().catch(() => undefined);
         const isRetryable =
           response.status === 429 || response.status === 529 || response.status >= 500;
         throw new ModelProviderError(
-          `model request failed with status ${String(response.status)}: ${body}`,
+          scrubApiKey(
+            `model request failed with status ${String(response.status)} (${categorizeStatus(response.status)})`,
+            apiKey,
+          ),
           response.status,
           isRetryable,
         );

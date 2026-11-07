@@ -5,6 +5,7 @@ import {
   DEFAULT_CONTEXT_MAX_CHARS,
   MIN_NEVER_AUTOMATIC_TIER,
 } from "@ago/shared";
+import { z } from "zod";
 
 import { ContextBuildError, type ContextBuilder } from "../context/index.js";
 import { scrubString } from "../logger.js";
@@ -74,6 +75,8 @@ export interface AgentLoopDeps {
   /** The context builder's own cap, used to keep the tool history inside it. */
   readonly contextMaxChars?: number;
   readonly approvalTtlMs?: number;
+  /** Per-call time budget for the policy hook; capped well below `maxWallMs`. Timeout means deny. */
+  readonly policyTimeoutMs?: number;
   /** Tests inject a clock. */
   readonly now?: () => number;
 }
@@ -104,8 +107,71 @@ function describeError(error: unknown): string {
 }
 
 const VALID_CALL_ID = /^[\w.:-]{1,128}$/;
-const DECISIONS: readonly string[] = ["allow", "deny", "needs_approval"];
 const REASON_CODE = /^[a-z0-9_.-]{1,100}$/;
+
+/** The hook's whole answer is untrusted until it parses. Anything else is a deny. */
+const policyDecisionSchema = z.strictObject({
+  decision: z.enum(["allow", "deny", "needs_approval"]),
+  reasonCode: z.string().regex(REASON_CODE),
+  ruleId: z.string().max(128).optional(),
+});
+
+/** Longest a policy hook may take, unless configured lower. Timeout means deny. */
+export const DEFAULT_POLICY_TIMEOUT_MS = 10_000;
+
+/** The run's wall-time limit passed while something was still pending. */
+class RunDeadlineError extends Error {
+  constructor() {
+    super("run wall-time limit reached");
+    this.name = "RunDeadlineError";
+  }
+}
+
+/** The hook's own time budget ran out. */
+class PolicyTimeoutError extends Error {
+  constructor() {
+    super("policy hook timed out");
+    this.name = "PolicyTimeoutError";
+  }
+}
+
+/** Run `fn` so a synchronous throw becomes a rejection. */
+function callSafely<T>(fn: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve) => {
+    resolve(fn());
+  });
+}
+
+/** Why a pending await was cut short: a worker shutdown (the queue retries) or the wall-time limit. */
+function interruption(shutdown: AbortSignal): Error {
+  return shutdown.aborted
+    ? new Error("run aborted: the worker is shutting down")
+    : new RunDeadlineError();
+}
+
+/**
+ * Settle with `promise`, or reject with `makeError()` the moment `signal` aborts, whichever is first.
+ * The abandoned promise is still observed, so a late rejection is not an unhandled one.
+ */
+function abortable<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+  makeError: () => Error,
+): Promise<T> {
+  if (signal.aborted) {
+    promise.catch(() => undefined);
+    return Promise.reject(makeError());
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      reject(makeError());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
+}
 
 interface ToolRecord {
   readonly source: string;
@@ -125,6 +191,11 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
   }
   const now = deps.now ?? Date.now;
   const approvalTtlMs = deps.approvalTtlMs ?? DEFAULT_APPROVAL_TTL_MS;
+  // Well below the wall-time limit, so a silent hook costs a deny, never the run.
+  const policyTimeoutMs = Math.max(
+    1,
+    Math.min(deps.policyTimeoutMs ?? DEFAULT_POLICY_TIMEOUT_MS, Math.floor(limits.maxWallMs / 4)),
+  );
   const historyBudgetChars = Math.floor((deps.contextMaxChars ?? DEFAULT_CONTEXT_MAX_CHARS) / 2);
 
   /** The single place a tool runs. Policy first, always. */
@@ -153,24 +224,47 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
       payload: { call_id: callId, tool_name: toolName, tier, input_hash: inputHash },
     });
 
+    // The hook gets its own time budget and an abort signal. It also ends with the run: shutdown or the
+    // wall-time limit preempts a hook that never answers.
+    const hookSignal = AbortSignal.any([signal, AbortSignal.timeout(policyTimeoutMs)]);
     let decision: PolicyDecision;
     try {
-      decision = await deps.policy.check(
-        {
-          callId,
-          toolName: call.name,
-          input: call.input,
-          tier,
-          isRegistered: tool !== undefined,
-        },
-        { workspaceId: ctx.workspaceId, runId: ctx.runId, agentId: ctx.agentId, step },
+      const answer = await abortable(
+        callSafely(() =>
+          deps.policy.check(
+            {
+              callId,
+              toolName: call.name,
+              input: call.input,
+              tier,
+              isRegistered: tool !== undefined,
+            },
+            {
+              workspaceId: ctx.workspaceId,
+              runId: ctx.runId,
+              agentId: ctx.agentId,
+              step,
+              signal: hookSignal,
+            },
+          ),
+        ),
+        hookSignal,
+        () => (signal.aborted ? interruption(ctx.signal) : new PolicyTimeoutError()),
       );
-      const isWellFormed =
-        DECISIONS.includes(decision.decision) && REASON_CODE.test(decision.reasonCode);
-      if (!isWellFormed) decision = { decision: "deny", reasonCode: "policy_invalid_decision" };
+      const parsed = policyDecisionSchema.safeParse(answer);
+      decision = parsed.success
+        ? parsed.data
+        : { decision: "deny", reasonCode: "policy_invalid_response" };
     } catch (error) {
-      ctx.logger.error({ err: error, call_id: callId }, "policy hook failed; denying the call");
-      decision = { decision: "deny", reasonCode: "policy_hook_error" };
+      if (signal.aborted) throw interruption(ctx.signal);
+      const isTimeout = error instanceof PolicyTimeoutError;
+      if (!isTimeout) {
+        ctx.logger.error({ err: error, call_id: callId }, "policy hook failed; denying the call");
+      }
+      decision = {
+        decision: "deny",
+        reasonCode: isTimeout ? "policy_timeout" : "policy_hook_error",
+      };
     }
     // Nothing can be executed that is not registered, whatever the hook says.
     if (tool === undefined && decision.decision !== "deny") {
@@ -236,13 +330,20 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
     const startedAt = now();
     let output: string;
     try {
-      output = await tool.execute(parsedInput.data, {
-        workspaceId: ctx.workspaceId,
-        runId: ctx.runId,
-        agentId: ctx.agentId,
+      output = await abortable(
+        callSafely(() =>
+          tool.execute(parsedInput.data, {
+            workspaceId: ctx.workspaceId,
+            runId: ctx.runId,
+            agentId: ctx.agentId,
+            signal,
+          }),
+        ),
         signal,
-      });
+        () => interruption(ctx.signal),
+      );
     } catch (error) {
+      if (signal.aborted) throw interruption(ctx.signal);
       const message = describeError(error);
       await emitter.emit({
         type: "tool_call.failed",
@@ -324,124 +425,145 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
         return { steps, end: "limit_reached" };
       };
 
-      for (;;) {
-        if (isShuttingDown()) throw new Error("run aborted: the worker is shutting down");
-        if (steps >= limits.maxSteps) return stopForLimit("steps", limits.maxSteps, steps);
-        if (now() >= deadline) return stopForLimit("time", limits.maxWallMs, now() - startedAt);
-        if (tokens >= limits.maxTokens) return stopForLimit("tokens", limits.maxTokens, tokens);
+      // One signal for the whole run: shutdown, or the wall-time limit. Every pending await (model call,
+      // policy hook, tool) is raced against it, so nothing can hold the run past `maxWallMs`.
+      const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(limits.maxWallMs)]);
 
-        steps += 1;
-        const step = steps;
-        await emitter.emit({ type: "step.started", payload: { step } });
+      const runSteps = async (): Promise<RunOutcome> => {
+        for (;;) {
+          if (isShuttingDown()) throw interruption(ctx.signal);
+          if (steps >= limits.maxSteps) return stopForLimit("steps", limits.maxSteps, steps);
+          if (now() >= deadline) return stopForLimit("time", limits.maxWallMs, now() - startedAt);
+          if (tokens >= limits.maxTokens) return stopForLimit("tokens", limits.maxTokens, tokens);
 
-        const { kept, dropped } = windowHistory(history);
-        for (const record of dropped.slice(reportedDropped)) {
-          await emitter.emit({
-            type: "context.cut",
-            payload: {
-              section: "retrieved",
-              source: record.source,
-              action: "dropped",
-              original_chars: record.content.length,
-              kept_chars: 0,
-            },
-          });
-        }
-        reportedDropped = dropped.length;
+          steps += 1;
+          const step = steps;
+          await emitter.emit({ type: "step.started", payload: { step } });
 
-        let built;
-        try {
-          built = await deps.contextBuilder.build(ctx.runId, { retrieved: kept });
-        } catch (error) {
-          if (error instanceof ContextBuildError) {
-            throw new NonRetryableRunError(error.code, error.message);
-          }
-          throw error;
-        }
-        for (const cut of built.metadata.cuts) {
-          await emitter.emit({
-            type: "context.cut",
-            payload: {
-              section: cut.section,
-              source: cut.source,
-              action: cut.action,
-              original_chars: cut.original_chars,
-              kept_chars: cut.kept_chars,
-            },
-          });
-        }
-
-        const timeout = AbortSignal.timeout(Math.max(1, deadline - now()));
-        const signal = AbortSignal.any([ctx.signal, timeout]);
-        let response;
-        try {
-          response = await deps.provider.complete({
-            system: built.system,
-            messages: built.messages,
-            tools: deps.tools.list(),
-            maxOutputTokens: limits.maxOutputTokens,
-            signal,
-          });
-        } catch (error) {
-          if (timeout.aborted && !isShuttingDown()) {
-            return stopForLimit("time", limits.maxWallMs, now() - startedAt);
-          }
-          if (error instanceof ModelProviderError && !error.isRetryable) {
-            // A rejected request or a bad credential fails the same way on every retry; do not replay the run.
-            throw new NonRetryableRunError("model_request_rejected", error.message);
-          }
-          throw error;
-        }
-
-        tokens += response.usage.inputTokens + response.usage.outputTokens;
-        await emitter.emit({
-          type: "budget.usage",
-          payload: {
-            input_tokens: response.usage.inputTokens,
-            output_tokens: response.usage.outputTokens,
-          },
-        });
-
-        if (response.toolCalls.length === 0) {
-          const text = scrubString(response.text).trim();
-          await emitter.emit({ type: "step.completed", payload: { step, outcome: "ok" } });
-          if (text !== "") {
+          const { kept, dropped } = windowHistory(history);
+          for (const record of dropped.slice(reportedDropped)) {
             await emitter.emit({
-              type: "message.emitted",
-              payload: { role: "agent", summary: text.slice(0, MESSAGE_MAX) },
+              type: "context.cut",
+              payload: {
+                section: "retrieved",
+                source: record.source,
+                action: "dropped",
+                original_chars: record.content.length,
+                kept_chars: 0,
+              },
             });
           }
-          return {
-            steps,
-            end: "completed",
-            ...(text === "" ? {} : { summary: text.slice(0, SUMMARY_MAX) }),
-          };
-        }
+          reportedDropped = dropped.length;
 
-        // Over budget with more tool work requested: stop before running anything else.
-        if (tokens >= limits.maxTokens) return stopForLimit("tokens", limits.maxTokens, tokens);
-
-        const calls = response.toolCalls.slice(0, MAX_TOOL_CALLS_PER_STEP);
-        if (calls.length < response.toolCalls.length) {
-          ctx.logger.warn(
-            { requested: response.toolCalls.length, handled: calls.length },
-            "model asked for more tool calls than one step handles; the rest were ignored",
-          );
-        }
-        let hadError = false;
-        for (const [index, call] of calls.entries()) {
-          const result = await executeToolCall(ctx, call, step, index, signal);
-          if (result.kind === "needs_approval") {
-            await emitter.emit({ type: "step.completed", payload: { step, outcome: "ok" } });
-            return { steps, end: "paused", summary: "waiting for a human to approve a tool call" };
+          let built;
+          try {
+            built = await deps.contextBuilder.build(ctx.runId, { retrieved: kept });
+          } catch (error) {
+            if (error instanceof ContextBuildError) {
+              throw new NonRetryableRunError(error.code, error.message);
+            }
+            throw error;
           }
-          history.push(result.record);
-          hadError ||= result.isError;
+          for (const cut of built.metadata.cuts) {
+            await emitter.emit({
+              type: "context.cut",
+              payload: {
+                section: cut.section,
+                source: cut.source,
+                action: cut.action,
+                original_chars: cut.original_chars,
+                kept_chars: cut.kept_chars,
+              },
+            });
+          }
+
+          let response;
+          try {
+            response = await abortable(
+              callSafely(() =>
+                deps.provider.complete({
+                  system: built.system,
+                  messages: built.messages,
+                  tools: deps.tools.list(),
+                  maxOutputTokens: limits.maxOutputTokens,
+                  signal,
+                }),
+              ),
+              signal,
+              () => interruption(ctx.signal),
+            );
+          } catch (error) {
+            if (signal.aborted) throw interruption(ctx.signal);
+            if (error instanceof ModelProviderError && !error.isRetryable) {
+              // A rejected request or a bad credential fails the same way on every retry; do not replay the run.
+              throw new NonRetryableRunError("model_request_rejected", error.message);
+            }
+            throw error;
+          }
+
+          tokens += response.usage.inputTokens + response.usage.outputTokens;
+          await emitter.emit({
+            type: "budget.usage",
+            payload: {
+              input_tokens: response.usage.inputTokens,
+              output_tokens: response.usage.outputTokens,
+            },
+          });
+
+          if (response.toolCalls.length === 0) {
+            const text = scrubString(response.text).trim();
+            await emitter.emit({ type: "step.completed", payload: { step, outcome: "ok" } });
+            if (text !== "") {
+              await emitter.emit({
+                type: "message.emitted",
+                payload: { role: "agent", summary: text.slice(0, MESSAGE_MAX) },
+              });
+            }
+            return {
+              steps,
+              end: "completed",
+              ...(text === "" ? {} : { summary: text.slice(0, SUMMARY_MAX) }),
+            };
+          }
+
+          // Over budget with more tool work requested: stop before running anything else.
+          if (tokens >= limits.maxTokens) return stopForLimit("tokens", limits.maxTokens, tokens);
+
+          const calls = response.toolCalls.slice(0, MAX_TOOL_CALLS_PER_STEP);
+          if (calls.length < response.toolCalls.length) {
+            ctx.logger.warn(
+              { requested: response.toolCalls.length, handled: calls.length },
+              "model asked for more tool calls than one step handles; the rest were ignored",
+            );
+          }
+          let hadError = false;
+          for (const [index, call] of calls.entries()) {
+            const result = await executeToolCall(ctx, call, step, index, signal);
+            if (result.kind === "needs_approval") {
+              await emitter.emit({ type: "step.completed", payload: { step, outcome: "ok" } });
+              return {
+                steps,
+                end: "paused",
+                summary: "waiting for a human to approve a tool call",
+              };
+            }
+            history.push(result.record);
+            hadError ||= result.isError;
+          }
+          await emitter.emit({
+            type: "step.completed",
+            payload: { step, outcome: hadError ? "error" : "ok" },
+          });
         }
-        await emitter.emit({
-          type: "step.completed",
-          payload: { step, outcome: hadError ? "error" : "ok" },
-        });
+      };
+
+      try {
+        return await runSteps();
+      } catch (error) {
+        if (error instanceof RunDeadlineError) {
+          return await stopForLimit("time", limits.maxWallMs, now() - startedAt);
+        }
+        throw error;
       }
     },
   };
