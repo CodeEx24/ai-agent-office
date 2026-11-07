@@ -1,6 +1,8 @@
 import "server-only";
 
 import {
+  AGENT_MESSAGES,
+  isAgentModelId,
   resolveCapabilityGrants,
   type AgentField,
   type Capability,
@@ -122,6 +124,12 @@ function toLibraryError(error: RpcError): AgentLibraryError {
 export const agentCreator: AgentCreator = {
   async createAgent(input) {
     const access = await requireWorkspaceRole(input.workspaceId, "owner");
+
+    // AGO-94: the RPC does not check the model (a DB CHECK needs a migration; see docs/tickets/AGO-94.md),
+    // so refuse an unknown one here, before the call, whatever path got us here.
+    if (!isAgentModelId(input.model)) {
+      throw new AgentLibraryError("invalid", "model", AGENT_MESSAGES.modelUnknown);
+    }
 
     const catalog = await listCapabilities(access.workspaceId);
     const resolved = resolveCapabilityGrants(input.capabilities, catalog);

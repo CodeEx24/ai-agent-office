@@ -65,6 +65,21 @@ AGO-167 (tool loop, `ModelProvider`), AGO-141 (`agents.model` and the allowlist)
 New: `apps/worker/src/agent/model-routing.test.ts`, two cases in `apps/web/src/features/agents/create-agent.test.ts`.
 No live database test was added, so no db lock was needed.
 
+## Fix round 1 (QA findings)
+- **Seed agents had no model** (blocking): `supabase/seed.sql` now gives Scout, Scribe and Reviewer `claude-sonnet-5-5`, so
+  seeded agents can run. Still idempotent (fixed ids, `on conflict do nothing`). `seed-ids.test.ts` now fails if a seed agent
+  has no model or one off the shared allowlist.
+- **Save-time validation, every path**: the wizard server action validates with `createAgentSchema` (zod enum). `createAgentWith`
+  and `agentCreator.createAgent` now also check `isAgentModelId` before the `create_agent` RPC, so a caller that skipped the
+  schema still cannot save an unknown model; the error names the Model field. There is no AGO-136 template path on main; when
+  one lands it must go through `createAgentWith` or the schema.
+- **AC2 in a browser**: `apps/web/e2e/agent-model-routing-live.spec.ts` tampers with the hidden model field and expects a
+  field-named error and no agent row (plus a positive control).
+
 ## Follow-up tasks
+- **DB-level model check**: the `create_agent` RPC does not validate `p_model`, and `agents.model` has no CHECK. Adding RPC
+  validation or a CHECK needs a migration; the schema slot is held by AGO-166, so none is added here. The app-level guards
+  above are the only save-time defence until then (direct Data API inserts by an owner could still store any text; the worker
+  still fails such a run with `model_not_allowed`).
 - Edit-agent flow (changing a model after creation) must validate with `agentModelSchema`.
 - Per-model pricing for budget accounting, once budgets (EP-02) land.
