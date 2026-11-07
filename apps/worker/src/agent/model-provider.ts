@@ -46,3 +46,19 @@ export interface ModelResponse {
 export interface ModelProvider {
   complete(request: ModelRequest): Promise<ModelResponse>;
 }
+
+/**
+ * A provider call failed. `isRetryable` tells the loop whether another attempt can help: rate limits,
+ * overload and 5xx can; a rejected request or a bad credential cannot, so the run fails at once rather
+ * than replaying every step. The message never contains the credential.
+ */
+export class ModelProviderError extends Error {
+  readonly status: number | undefined;
+  readonly isRetryable: boolean;
+  constructor(message: string, status: number | undefined, isRetryable: boolean) {
+    super(message);
+    this.name = "ModelProviderError";
+    this.status = status;
+    this.isRetryable = isRetryable;
+  }
+}

@@ -15,7 +15,7 @@ import {
   type RunOutcome,
 } from "../queue/run-processor.js";
 
-import type { ModelProvider, ModelToolCall } from "./model-provider.js";
+import { ModelProviderError, type ModelProvider, type ModelToolCall } from "./model-provider.js";
 import type { PolicyDecision, PolicyHook } from "./policy-hook.js";
 import type { ToolRegistry } from "./tools.js";
 import type { CapabilityTier, RetrievedItem } from "@ago/shared";
@@ -118,8 +118,10 @@ type ToolCallResult =
 
 export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
   const limits: AgentLoopLimits = { ...DEFAULT_AGENT_LIMITS, ...deps.limits };
-  if (limits.maxToolResultChars > CONTEXT_TEXT_MAX_LENGTH) {
-    throw new Error("maxToolResultChars is above what the context builder accepts");
+  // Each stored record adds a status line and an input preview to the result, and the builder throws on
+  // an item over CONTEXT_TEXT_MAX_LENGTH, so leave room for them.
+  if (limits.maxToolResultChars > CONTEXT_TEXT_MAX_LENGTH - INPUT_PREVIEW_MAX - 1_000) {
+    throw new Error("maxToolResultChars leaves no room under what the context builder accepts");
   }
   const now = deps.now ?? Date.now;
   const approvalTtlMs = deps.approvalTtlMs ?? DEFAULT_APPROVAL_TTL_MS;
@@ -383,6 +385,10 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
         } catch (error) {
           if (timeout.aborted && !isShuttingDown()) {
             return stopForLimit("time", limits.maxWallMs, now() - startedAt);
+          }
+          if (error instanceof ModelProviderError && !error.isRetryable) {
+            // A rejected request or a bad credential fails the same way on every retry; do not replay the run.
+            throw new NonRetryableRunError("model_request_rejected", error.message);
           }
           throw error;
         }

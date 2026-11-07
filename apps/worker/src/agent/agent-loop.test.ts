@@ -17,6 +17,8 @@ import {
   type ToolRegistry,
 } from "./tools.js";
 
+import { ModelProviderError } from "./model-provider.js";
+
 import type { ModelProvider, ModelRequest, ModelResponse } from "./model-provider.js";
 import type { CapabilityTier } from "@ago/shared";
 
@@ -312,6 +314,30 @@ describe("agent tool loop: limits (AC1)", () => {
 
     expect(outcome.end).toBe("limit_reached");
     expect(payloadsOf(rows, "run.limit_reached")[0]).toMatchObject({ limit: "time", max: 30 });
+  });
+
+  it("fails the run at once, without a replay, when the provider rejects the request for good", async () => {
+    const rejecting: ModelProvider = {
+      complete: () => Promise.reject(new ModelProviderError("bad request", 400, false)),
+    };
+    const { loop, ctx } = setup({ provider: rejecting });
+
+    const failure = await loop.execute(ctx).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(NonRetryableRunError);
+    expect((failure as NonRetryableRunError).reason).toBe("model_request_rejected");
+  });
+
+  it("rethrows a retryable provider error so the queue retries the job", async () => {
+    const flaky: ModelProvider = {
+      complete: () => Promise.reject(new ModelProviderError("overloaded", 529, true)),
+    };
+    const { loop, ctx } = setup({ provider: flaky });
+
+    const failure = await loop.execute(ctx).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ModelProviderError);
+    expect(failure).not.toBeInstanceOf(NonRetryableRunError);
   });
 
   it("throws (so the job is retried) when the worker shuts down mid-run", async () => {

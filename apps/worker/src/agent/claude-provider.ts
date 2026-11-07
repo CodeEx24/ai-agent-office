@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { scrubString } from "../logger.js";
 
+import { ModelProviderError } from "./model-provider.js";
+
 import type { ModelProvider, ModelRequest, ModelResponse } from "./model-provider.js";
 
 /**
@@ -22,18 +24,6 @@ import type { ModelProvider, ModelRequest, ModelResponse } from "./model-provide
 export const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 const ERROR_BODY_MAX = 200;
-
-export class ModelProviderError extends Error {
-  readonly status: number | undefined;
-  /** Rate limits, overload and 5xx are worth a retry; a bad request or auth failure is not. */
-  readonly isRetryable: boolean;
-  constructor(message: string, status: number | undefined, isRetryable: boolean) {
-    super(message);
-    this.name = "ModelProviderError";
-    this.status = status;
-    this.isRetryable = isRetryable;
-  }
-}
 
 export interface ClaudeProviderOptions {
   readonly apiKey: string;
@@ -92,7 +82,9 @@ export function createClaudeProvider(options: ClaudeProviderOptions): ModelProvi
       }
 
       if (!response.ok) {
-        const body = scrubString(await response.text().catch(() => "")).slice(0, ERROR_BODY_MAX);
+        // Pattern scrubbing first, then the literal key: a key in a shape no pattern knows still goes.
+        const raw = scrubString(await response.text().catch(() => ""));
+        const body = raw.split(apiKey).join("[redacted]").slice(0, ERROR_BODY_MAX);
         const isRetryable =
           response.status === 429 || response.status === 529 || response.status >= 500;
         throw new ModelProviderError(

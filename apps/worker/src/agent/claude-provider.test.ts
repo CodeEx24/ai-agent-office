@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  ANTHROPIC_MESSAGES_URL,
-  createClaudeProvider,
-  ModelProviderError,
-} from "./claude-provider.js";
+import { ANTHROPIC_MESSAGES_URL, createClaudeProvider } from "./claude-provider.js";
+import { ModelProviderError } from "./model-provider.js";
 
 import type { ModelRequest } from "./model-provider.js";
 
@@ -101,6 +98,20 @@ describe("Claude provider (fake fetch only)", () => {
     const bad = await failWith(401, `bad key ${KEY}`).catch((e: unknown) => e);
     expect((bad as ModelProviderError).isRetryable).toBe(false);
     expect((bad as ModelProviderError).message).not.toContain(KEY);
+  });
+
+  it("redacts its own key from an error body even when the key has a shape no pattern knows", async () => {
+    const oddKey = "plainly-custom-key-value-1234";
+    const provider = createClaudeProvider({
+      apiKey: oddKey,
+      model: "m",
+      fetch: () => Promise.resolve(new Response(`rejected: ${oddKey}`, { status: 400 })),
+    });
+
+    const error = await provider.complete(request()).catch((e: unknown) => e);
+
+    expect((error as Error).message).toContain("status 400");
+    expect((error as Error).message).not.toContain(oddKey);
   });
 
   it("rejects a response that is not in the expected shape", async () => {
