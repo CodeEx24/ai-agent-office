@@ -129,14 +129,14 @@ isOneToOne: false
                   ]
                 },"agents": {
                   Row: {
-                    "archived_at": string | null,"created_at": string,"daily_budget_cents": number | null,"department_id": string | null,"description": string,"id": string,"mode": string,"model": string,"name": string,"prompt": string,"role": string,"status": string,"updated_at": string,"workspace_id": string
+                    "archived_at": string | null,"created_at": string,"daily_budget_cents": number | null,"department_id": string | null,"description": string,"id": string,"mode": string,"model": string,"name": string,"prompt": string,"role": string,"run_limits": Json | null,"status": string,"updated_at": string,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "archived_at"?: string | null,"created_at"?: string,"daily_budget_cents"?: number | null,"department_id"?: string | null,"description"?: string,"id"?: string,"mode"?: string,"model"?: string,"name": string,"prompt"?: string,"role"?: string,"status"?: string,"updated_at"?: string,"workspace_id": string
+                    "archived_at"?: string | null,"created_at"?: string,"daily_budget_cents"?: number | null,"department_id"?: string | null,"description"?: string,"id"?: string,"mode"?: string,"model"?: string,"name": string,"prompt"?: string,"role"?: string,"run_limits"?: Json | null,"status"?: string,"updated_at"?: string,"workspace_id": string
                   }
                   Update: {
-                    "archived_at"?: string | null,"created_at"?: string,"daily_budget_cents"?: number | null,"department_id"?: string | null,"description"?: string,"id"?: string,"mode"?: string,"model"?: string,"name"?: string,"prompt"?: string,"role"?: string,"status"?: string,"updated_at"?: string,"workspace_id"?: string
+                    "archived_at"?: string | null,"created_at"?: string,"daily_budget_cents"?: number | null,"department_id"?: string | null,"description"?: string,"id"?: string,"mode"?: string,"model"?: string,"name"?: string,"prompt"?: string,"role"?: string,"run_limits"?: Json | null,"status"?: string,"updated_at"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -508,6 +508,9 @@ isOneToOne: false
                            },
 "onboard_current_user":
 { Args: { "p_workspace_name": string }; Returns: string
+                           },
+"set_agent_run_limits":
+{ Args: { "p_agent_id": string,"p_limits": Json,"p_workspace_id": string }; Returns: undefined
                            }
           }
           Enums: {

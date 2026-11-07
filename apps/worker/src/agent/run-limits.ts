@@ -4,8 +4,7 @@ import { RUN_LIMIT_NAMES, clampRunLimit, type RunLimitName } from "@ago/shared";
 export type ResolvedRunLimits = Readonly<Record<RunLimitName, number>>;
 
 /**
- * Where one agent's stored overrides come from. The database column is pending (AGO-166 follow-up, waiting for the
- * schema slot), so production wiring passes no source yet and every agent runs on the workspace defaults.
+ * Where one agent's stored overrides come from (production: `agents.run_limits`, see pg-run-limits-source.ts).
  * The answer is untrusted: it is validated and clamped by `mergeRunLimits`.
  */
 export interface AgentRunLimitsSource {
