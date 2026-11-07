@@ -1,3 +1,4 @@
+import { DEFAULT_CONTEXT_MAX_CHARS } from "@ago/shared";
 import { z } from "zod";
 
 import { loadWorkerEnv } from "./env.js";
@@ -34,6 +35,30 @@ export const workerRuntimeSchema = z.object({
     emptyToUndefined,
     z.coerce.number().int().min(0).max(300_000).default(25_000),
   ),
+  /** Model for agent runs until per-agent routing (AGO-94) exists. */
+  AGENT_MODEL: z.preprocess(
+    emptyToUndefined,
+    z.string().min(1).max(100).default("claude-sonnet-5-5"),
+  ),
+  /** Run limits (AGO-167): a run stops with `run.limit_reached` at the first one it hits. */
+  AGENT_MAX_STEPS: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1).max(200).default(25),
+  ),
+  AGENT_MAX_TOKENS: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1_000).max(5_000_000).default(200_000),
+  ),
+  /** Under the job expiry (900 s) so the loop stops itself before pg-boss gives up on the job. */
+  AGENT_MAX_WALL_MS: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1_000).max(840_000).default(600_000),
+  ),
+  /** Cap on one built context, in characters (about 4 per token). */
+  CONTEXT_MAX_CHARS: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().min(1_000).max(2_000_000).default(DEFAULT_CONTEXT_MAX_CHARS),
+  ),
 });
 
 export interface WorkerConfig {
@@ -47,6 +72,11 @@ export interface WorkerConfig {
   readonly queueShutdownTimeoutMs: number;
   /** `SENTRY_DSN`; undefined keeps error tracking off (AGO-104). */
   readonly sentryDsn: string | undefined;
+  readonly agentModel: string;
+  readonly agentMaxSteps: number;
+  readonly agentMaxTokens: number;
+  readonly agentMaxWallMs: number;
+  readonly contextMaxChars: number;
 }
 
 /**
@@ -70,5 +100,10 @@ export function loadWorkerConfig(source: EnvSource = process.env): WorkerConfig 
     queueConcurrency: parsed.data.QUEUE_CONCURRENCY,
     queueShutdownTimeoutMs: parsed.data.QUEUE_SHUTDOWN_TIMEOUT_MS,
     sentryDsn: env.SENTRY_DSN,
+    agentModel: parsed.data.AGENT_MODEL,
+    agentMaxSteps: parsed.data.AGENT_MAX_STEPS,
+    agentMaxTokens: parsed.data.AGENT_MAX_TOKENS,
+    agentMaxWallMs: parsed.data.AGENT_MAX_WALL_MS,
+    contextMaxChars: parsed.data.CONTEXT_MAX_CHARS,
   };
 }

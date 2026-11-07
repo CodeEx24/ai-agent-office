@@ -24,6 +24,13 @@ const VALID: Record<string, Record<string, unknown>> = {
   "run.stopped": { stopped_by: "budget", reason: "budget_exceeded" },
   "run.limit_reached": { limit: "steps", max: 20, observed: 20 },
   "run.loop_detected": { tool_name: "search", call_hash: HASH, repeat_count: 3 },
+  "context.cut": {
+    section: "tool_result",
+    source: "tool:search#c1",
+    action: "truncated",
+    original_chars: 150000,
+    kept_chars: 20000,
+  },
   "step.started": { step: 1 },
   "step.completed": { step: 1, outcome: "ok" },
   "tool_call.requested": { call_id: "c1", tool_name: "search", tier: 1, input_hash: HASH },

@@ -54,7 +54,7 @@ const HASH = "a".repeat(64);
 const UUID = "11111111-1111-4111-8111-111111111111";
 const FUTURE = "2030-01-01T00:00:00Z";
 
-/** One valid payload per event type of the approved v1 list (24). */
+/** One valid payload per event type of the v1 list (24 approved in AGO-164, plus context.cut from AGO-167 = 25). */
 const VALID = {
   "run.created": { agent_id: UUID, task_id: null },
   "run.started": {},
@@ -65,6 +65,7 @@ const VALID = {
   "run.stopped": { stopped_by: "human", reason: "user_request" },
   "run.limit_reached": { limit: "steps", max: 10, observed: 10 },
   "run.loop_detected": { tool_name: "search", call_hash: HASH, repeat_count: 3 },
+  "context.cut": { section: "tool_result", source: "tool:search#c1", action: "truncated", original_chars: 150000, kept_chars: 20000 },
   "step.started": { step: 1 },
   "step.completed": { step: 1, outcome: "ok" },
   "tool_call.requested": { call_id: "c1", tool_name: "search", tier: 1, input_hash: HASH },
@@ -87,7 +88,7 @@ const ev = (type, payload = VALID[type], version = 1) => ({ type, version, paylo
 
 describe("AC1: every event matches a Zod schema", () => {
   test("AC1: every one of the 24 event types accepts its valid sample", () => {
-    expect(V1_LIST).toHaveLength(24);
+    expect(V1_LIST).toHaveLength(25);
     for (const type of V1_LIST) {
       const result = runEventSchema.safeParse(ev(type));
       expect(result.success, `${type} should be valid`).toBe(true);
@@ -183,8 +184,8 @@ describe("AC1: every event matches a Zod schema", () => {
 describe("AC3: all events in the v1 event list are defined", () => {
   test("AC3: every type of the approved v1 list exists and nothing else is defined", () => {
     expect([...RUN_EVENT_TYPES].sort()).toEqual([...V1_LIST].sort());
-    expect(RUN_EVENT_SCHEMAS).toHaveLength(24);
-    expect(new Set(RUN_EVENT_TYPES).size).toBe(24);
+    expect(RUN_EVENT_SCHEMAS).toHaveLength(25);
+    expect(new Set(RUN_EVENT_TYPES).size).toBe(25);
   });
 
   test("AC3: approval.requested carries payload_hash (and it must be a sha256)", () => {

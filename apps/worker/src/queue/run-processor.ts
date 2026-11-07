@@ -23,9 +23,27 @@ export interface RunExecutionContext {
   readonly signal: AbortSignal;
 }
 
+/**
+ * How the loop ended. `completed` (the default) is a result. `limit_reached`: the loop already emitted
+ * `run.limit_reached`, so the run is marked failed and no `run.completed` is written. `paused`: a tool
+ * call needs a human; the loop already emitted `approval.requested` and the run waits (resume is AGO-30).
+ */
+export type RunEnd = "completed" | "limit_reached" | "paused";
+
 export interface RunOutcome {
   readonly steps: number;
   readonly summary?: string;
+  readonly end?: RunEnd;
+}
+
+/** A failure a retry cannot fix (archived agent, missing run). The run fails at once, with `reason`. */
+export class NonRetryableRunError extends Error {
+  readonly reason: string;
+  constructor(reason: string, message: string) {
+    super(message);
+    this.name = "NonRetryableRunError";
+    this.reason = reason;
+  }
 }
 
 /** The seam to the agent tool loop. Throwing means the attempt failed and may be retried. */
@@ -41,7 +59,7 @@ export interface RunJob {
   readonly signal: AbortSignal;
 }
 
-export type RunJobResult = "executed" | "skipped_duplicate";
+export type RunJobResult = "executed" | "skipped_duplicate" | "failed_permanently";
 
 export interface RunProcessorDeps {
   readonly runs: RunStore;
@@ -101,7 +119,7 @@ export function createRunProcessor(deps: RunProcessorDeps) {
     });
 
     const handleFailure = async (error: unknown): Promise<void> => {
-      const isFinalAttempt = attempt >= deps.retryLimit;
+      const isFinalAttempt = error instanceof NonRetryableRunError || attempt >= deps.retryLimit;
       if (!isFinalAttempt) {
         // Give the run back so the backoff retry can claim it again.
         jobLogger.warn({ job_id: job.id, attempt, err: error }, "run attempt failed; will retry");
@@ -122,7 +140,10 @@ export function createRunProcessor(deps: RunProcessorDeps) {
       await emitter
         .emit({
           type: "run.failed",
-          payload: { reason: "retries_exhausted", message: describeFailure(error) },
+          payload: {
+            reason: error instanceof NonRetryableRunError ? error.reason : "retries_exhausted",
+            message: describeFailure(error),
+          },
         })
         .catch(() => undefined); // already logged by the emitter; the job failure must still surface
     };
@@ -139,6 +160,22 @@ export function createRunProcessor(deps: RunProcessorDeps) {
         emitter,
         signal: job.signal,
       });
+      const end = outcome.end ?? "completed";
+      if (end === "limit_reached") {
+        // The loop wrote run.limit_reached, the terminal event. A run that hit a limit has no result.
+        await runs.markFinished(ref, RUN_STATUS.failed);
+        jobLogger.warn({ job_id: job.id, attempt, steps: outcome.steps }, "run stopped at a limit");
+        return "executed";
+      }
+      if (end === "paused") {
+        await emitter.emit({
+          type: "run.paused",
+          payload: { requested_by: "policy", reason: "approval_required" },
+        });
+        await runs.markPaused(ref);
+        jobLogger.info({ job_id: job.id, attempt }, "run paused for a human approval");
+        return "executed";
+      }
       await emitter.emit({
         type: "run.completed",
         payload: {
@@ -151,6 +188,8 @@ export function createRunProcessor(deps: RunProcessorDeps) {
       return "executed";
     } catch (error) {
       await handleFailure(error);
+      // A retry cannot fix this one: the run is already failed, so do not spend the backoff retries.
+      if (error instanceof NonRetryableRunError) return "failed_permanently";
       throw error;
     }
   };

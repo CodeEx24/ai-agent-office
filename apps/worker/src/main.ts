@@ -1,3 +1,6 @@
+import pg from "pg";
+
+import { createProductionAgentExecutor } from "./agent/index.js";
 import { loadWorkerConfig } from "./config.js";
 import { createPgDatabaseCheck } from "./health.js";
 import { createLogger, scrubString, type Logger } from "./logger.js";
@@ -62,11 +65,23 @@ export async function startWorker(
     },
   });
   const db = createPgDatabaseCheck(config.databaseUrl, config.healthDbTimeoutMs);
+  // The agent runtime reads runs, agents and skills; it gets its own small pool. No pool when a test
+  // injects an executor or there is no model key.
+  const agentPool =
+    options.runExecutor === undefined && config.env.ANTHROPIC_API_KEY !== undefined
+      ? new pg.Pool({ connectionString: config.databaseUrl, max: 4 })
+      : undefined;
+  agentPool?.on("error", () => undefined);
+  const runExecutor =
+    options.runExecutor ??
+    (agentPool === undefined
+      ? undefined
+      : createProductionAgentExecutor({ config, pool: agentPool, logger }));
   const queue = createJobQueue({
     connectionString: config.databaseUrl,
     logger,
     errorTracker,
-    executor: options.runExecutor,
+    executor: runExecutor,
     concurrency: config.queueConcurrency,
     shutdownTimeoutMs: config.queueShutdownTimeoutMs,
   });
@@ -93,6 +108,7 @@ export async function startWorker(
         }),
       );
       await db.close();
+      await agentPool?.end().catch(() => undefined);
       logger.info("worker stopped");
       await errorTracker.close();
     },
