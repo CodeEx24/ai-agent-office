@@ -37,6 +37,64 @@ isOneToOne: false
       referencedColumns: ["workspace_id","id"]
     }
                   ]
+                },"agent_credentials": {
+                  Row: {
+                    "agent_id": string,"capabilities": (string)[],"expires_at": string,"id": string,"issued_at": string,"revoked_at": string | null,"run_id": string,"token_hash": string,"workspace_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "agent_id": string,"capabilities"?: (string)[],"expires_at": string,"id"?: string,"issued_at"?: string,"revoked_at"?: string | null,"run_id": string,"token_hash": string,"workspace_id": string
+                  }
+                  Update: {
+                    "agent_id"?: string,"capabilities"?: (string)[],"expires_at"?: string,"id"?: string,"issued_at"?: string,"revoked_at"?: string | null,"run_id"?: string,"token_hash"?: string,"workspace_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "agent_credentials_workspace_id_agent_id_fkey"
+      columns: ["workspace_id","agent_id"]
+isOneToOne: false
+      referencedRelation: "agents"
+      referencedColumns: ["workspace_id","id"]
+    },{
+      foreignKeyName: "agent_credentials_workspace_id_fkey"
+      columns: ["workspace_id"]
+isOneToOne: false
+      referencedRelation: "workspaces"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "agent_credentials_workspace_id_run_id_fkey"
+      columns: ["workspace_id","run_id"]
+isOneToOne: false
+      referencedRelation: "runs"
+      referencedColumns: ["workspace_id","id"]
+    }
+                  ]
+                },"agent_identities": {
+                  Row: {
+                    "agent_id": string,"created_at": string,"id": string,"workspace_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "agent_id": string,"created_at"?: string,"id"?: string,"workspace_id": string
+                  }
+                  Update: {
+                    "agent_id"?: string,"created_at"?: string,"id"?: string,"workspace_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "agent_identities_workspace_id_agent_id_fkey"
+      columns: ["workspace_id","agent_id"]
+isOneToOne: true
+      referencedRelation: "agents"
+      referencedColumns: ["workspace_id","id"]
+    },{
+      foreignKeyName: "agent_identities_workspace_id_fkey"
+      columns: ["workspace_id"]
+isOneToOne: false
+      referencedRelation: "workspaces"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"agent_skills": {
                   Row: {
                     "agent_id": string,"created_at": string,"id": string,"skill_id": string,"updated_at": string,"workspace_id": string

@@ -4,6 +4,9 @@ import { test } from "vitest";
 
 import {
   CLIENT_ENV_NAMES,
+  DEV_ONLY_AGENT_CREDENTIAL_SIGNING_SECRET,
+  NON_SECRET_SERVER_ENV_NAMES,
+  resolveAgentCredentialSigningSecret,
   EnvValidationError,
   SERVER_ONLY_ENV_NAMES,
   clientEnvSchema,
@@ -26,6 +29,7 @@ const deployed = (appEnv: string, overrides: Source = {}): Source => ({
   SUPABASE_URL: "https://project.example.test",
   SUPABASE_SERVICE_ROLE_KEY: SENTINEL,
   DATABASE_URL: "postgres://placeholder",
+  AGENT_CREDENTIAL_SIGNING_SECRET: "placeholder-signing-secret-at-least-32-chars",
   ...overrides,
 });
 
@@ -314,4 +318,47 @@ test("parseServerEnv says secret-like and server-only public names must not be p
     assert.ok(!message.includes("is not declared"), `${name} must not get the undeclared message`);
     assert.ok(!message.includes(SENTINEL), "message leaked a value");
   }
+});
+
+test("AGO-148: the agent credential signing secret is required when deployed and never printed", () => {
+  for (const appEnv of ["preview", "production"]) {
+    const source = deployed(appEnv);
+    delete source.AGENT_CREDENTIAL_SIGNING_SECRET;
+    assert.match(
+      messageOf(() => parseEnv(serverEnvSchema, source)),
+      /AGENT_CREDENTIAL_SIGNING_SECRET: missing/,
+    );
+  }
+  const tooShort = messageOf(() =>
+    parseEnv(
+      serverEnvSchema,
+      deployed("production", { AGENT_CREDENTIAL_SIGNING_SECRET: SENTINEL.slice(0, 20) }),
+    ),
+  );
+  assert.match(tooShort, /AGENT_CREDENTIAL_SIGNING_SECRET: invalid/);
+  assert.ok(!tooShort.includes(SENTINEL.slice(0, 20)), "message leaked the secret");
+});
+
+test("AGO-148: local falls back to a dev-only signing secret, deployed never does", () => {
+  const local = parseEnv(serverEnvSchema, { APP_ENV: "local" });
+  assert.equal(
+    resolveAgentCredentialSigningSecret(local),
+    DEV_ONLY_AGENT_CREDENTIAL_SIGNING_SECRET,
+  );
+  assert.ok(DEV_ONLY_AGENT_CREDENTIAL_SIGNING_SECRET.startsWith("dev-only"));
+  const configured = parseEnv(serverEnvSchema, deployed("production"));
+  assert.equal(
+    resolveAgentCredentialSigningSecret(configured),
+    "placeholder-signing-secret-at-least-32-chars",
+  );
+  assert.throws(
+    () =>
+      resolveAgentCredentialSigningSecret({
+        APP_ENV: "production",
+        AGENT_CREDENTIAL_SIGNING_SECRET: undefined,
+      }),
+    /required/,
+  );
+  assert.ok(SERVER_ONLY_ENV_NAMES.includes("AGENT_CREDENTIAL_SIGNING_SECRET"));
+  assert.ok(!NON_SECRET_SERVER_ENV_NAMES.includes("AGENT_CREDENTIAL_SIGNING_SECRET"));
 });

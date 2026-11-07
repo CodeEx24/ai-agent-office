@@ -105,6 +105,20 @@ Both are listed, empty, in `.env.example`.
   (container runtime, Vercel, or whatever the human picks) collects stdout; no paid log service is
   used. Log lines at info and above also become Sentry breadcrumbs on later errors, with the run id.
 
+## Agent credential signing secret (AGO-148)
+
+`AGENT_CREDENTIAL_SIGNING_SECRET` is a server-only key (at least 32 characters) that signs the short-lived
+per-run credentials the worker hands to an agent's tool loop. It is never sent to a browser and never printed:
+an error names the variable, not its value.
+
+- **Deployed (preview, production):** required. Startup fails with `AGENT_CREDENTIAL_SIGNING_SECRET: missing`
+  when it is unset. Generate it with `openssl rand -base64 48` and keep it in the host's secret manager.
+- **Local:** optional. When unset, `resolveAgentCredentialSigningSecret` falls back to a clearly dev-only
+  constant that is public by construction (it is in the repo). It is never valid on a deployment, where the
+  variable is required.
+- **Rotation:** change the value and restart. Every outstanding credential stops verifying, which is safe: a
+  credential lives at most 15 minutes and the next issuance uses the new key.
+
 ## Build check
 
 `pnpm build` runs `scripts/check-client-bundle.mjs` against `apps/web/.next/static` after

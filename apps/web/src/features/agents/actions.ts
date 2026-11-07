@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { AGENT_TEMPLATE_IDS, createAgentSchema } from "@ago/shared";
 import { z } from "zod";
 
+import { AgentCredentialRejectedError, requireHumanRequest } from "../../lib/auth/human-only";
 import { formDataToRecord, parseInput } from "../../lib/validation/parse-input";
 import { agentCreator } from "./agent-library";
 import {
@@ -21,6 +22,19 @@ const createFromTemplateSchema = z.strictObject({
   templateId: z.enum(AGENT_TEMPLATE_IDS),
 });
 
+const AGENT_CREDENTIAL_ERROR = "Agents cannot create agents. This action is for people only.";
+
+/** AGO-148: creating an agent is a human decision; an agent credential can never call these actions. */
+async function rejectAgentCredential(): Promise<AgentWizardState | null> {
+  try {
+    await requireHumanRequest();
+    return null;
+  } catch (error) {
+    if (error instanceof AgentCredentialRejectedError) return { error: AGENT_CREDENTIAL_ERROR };
+    throw error;
+  }
+}
+
 /**
  * Creates an agent from the wizard (AGO-141). Owners only; the agent, its skills and its capability grants
  * are created in one transaction and the agent is always Strict. Error mapping lives in `create-agent.ts` so
@@ -30,6 +44,9 @@ export async function createAgentAction(
   _prev: AgentWizardState,
   formData: FormData,
 ): Promise<AgentWizardState> {
+  const rejected = await rejectAgentCredential();
+  if (rejected) return rejected;
+
   const parsed = parseInput(createAgentSchema, agentFormRecord(formData), GENERIC_ERROR);
   if (!parsed.success) return invalidInputState(parsed.issues);
 
@@ -49,6 +66,9 @@ export async function createAgentFromTemplateAction(
   _prev: AgentWizardState,
   formData: FormData,
 ): Promise<AgentWizardState> {
+  const rejected = await rejectAgentCredential();
+  if (rejected) return rejected;
+
   const parsed = parseInput(
     createFromTemplateSchema,
     formDataToRecord(formData),
