@@ -31,7 +31,10 @@ export default async function WorkspaceHomePage() {
             Signed in as <strong>{user?.email}</strong> ·{" "}
             <span data-testid="workspace-role">{workspace.role}</span>
           </p>
-          <p>
+          <p className="flex gap-4">
+            <Link href="/app/agents" className="text-sm text-primary underline underline-offset-4">
+              Agents
+            </Link>
             <Link href="/app/skills" className="text-sm text-primary underline underline-offset-4">
               Skills
             </Link>

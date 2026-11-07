@@ -45,7 +45,7 @@ export const ROLE_MATRIX: Record<
 > = {
   workspaces: { select: "viewer", insert: null, update: "owner", delete: null },
   members: { select: "viewer", insert: null, update: null, delete: null },
-  agents: { select: "viewer", insert: "member", update: "member", delete: "owner" },
+  agents: { select: "viewer", insert: "owner", update: "member", delete: "owner" },
   skills: { select: "viewer", insert: "owner", update: "owner", delete: null },
   agent_skills: { select: "viewer", insert: "owner", update: null, delete: "owner" },
   agent_capabilities: { select: "viewer", insert: "owner", update: null, delete: "owner" },

@@ -7,14 +7,14 @@ export type Database = {
           Tables: {
             "agent_capabilities": {
                   Row: {
-                    "agent_id": string,"capability": string,"created_at": string,"granted_by": string | null,"id": string,"tier": number,"updated_at": string,"workspace_id": string
+                    "agent_id": string,"capability": string,"created_at": string,"granted_by": string | null,"id": string,"mode": string,"tier": number,"updated_at": string,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "agent_id": string,"capability": string,"created_at"?: string,"granted_by"?: string | null,"id"?: string,"tier"?: number,"updated_at"?: string,"workspace_id": string
+                    "agent_id": string,"capability": string,"created_at"?: string,"granted_by"?: string | null,"id"?: string,"mode"?: string,"tier"?: number,"updated_at"?: string,"workspace_id": string
                   }
                   Update: {
-                    "agent_id"?: string,"capability"?: string,"created_at"?: string,"granted_by"?: string | null,"id"?: string,"tier"?: number,"updated_at"?: string,"workspace_id"?: string
+                    "agent_id"?: string,"capability"?: string,"created_at"?: string,"granted_by"?: string | null,"id"?: string,"mode"?: string,"tier"?: number,"updated_at"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -71,14 +71,14 @@ isOneToOne: false
                   ]
                 },"agents": {
                   Row: {
-                    "archived_at": string | null,"created_at": string,"department_id": string | null,"description": string,"id": string,"mode": string,"name": string,"status": string,"updated_at": string,"workspace_id": string
+                    "archived_at": string | null,"created_at": string,"daily_budget_cents": number | null,"department_id": string | null,"description": string,"id": string,"mode": string,"model": string,"name": string,"prompt": string,"role": string,"status": string,"updated_at": string,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "archived_at"?: string | null,"created_at"?: string,"department_id"?: string | null,"description"?: string,"id"?: string,"mode"?: string,"name": string,"status"?: string,"updated_at"?: string,"workspace_id": string
+                    "archived_at"?: string | null,"created_at"?: string,"daily_budget_cents"?: number | null,"department_id"?: string | null,"description"?: string,"id"?: string,"mode"?: string,"model"?: string,"name": string,"prompt"?: string,"role"?: string,"status"?: string,"updated_at"?: string,"workspace_id": string
                   }
                   Update: {
-                    "archived_at"?: string | null,"created_at"?: string,"department_id"?: string | null,"description"?: string,"id"?: string,"mode"?: string,"name"?: string,"status"?: string,"updated_at"?: string,"workspace_id"?: string
+                    "archived_at"?: string | null,"created_at"?: string,"daily_budget_cents"?: number | null,"department_id"?: string | null,"description"?: string,"id"?: string,"mode"?: string,"model"?: string,"name"?: string,"prompt"?: string,"role"?: string,"status"?: string,"updated_at"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -445,7 +445,10 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            "onboard_current_user":
+            "create_agent":
+{ Args: { "p_capabilities": Json,"p_daily_budget_cents": number,"p_model": string,"p_name": string,"p_prompt": string,"p_role": string,"p_skill_ids": (string)[],"p_workspace_id": string }; Returns: string
+                           },
+"onboard_current_user":
 { Args: { "p_workspace_name": string }; Returns: string
                            }
           }

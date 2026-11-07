@@ -14,6 +14,10 @@
       "types": "./dist/env/client-entry.d.ts",
       "default": "./dist/env/client-entry.js"
     },
+    "./agent-limits": {
+      "types": "./dist/agents/agent-limits.d.ts",
+      "default": "./dist/agents/agent-limits.js"
+    },
     "./skill-limits": {
       "types": "./dist/skills/skill-limits.d.ts",
       "default": "./dist/skills/skill-limits.js"
