@@ -73,6 +73,10 @@ function wireSignals(stop) {
   process.once("SIGINT", () => shutdown("SIGINT"));
 }
 
+// QA_START_AT: a start barrier so several processes begin pg-boss start (and its hardening) at the same instant.
+const startAt = Number(process.env.QA_START_AT ?? 0);
+if (startAt > Date.now()) await new Promise((r) => setTimeout(r, startAt - Date.now()));
+
 if (role === "worker") {
   const { startWorker } = await load("main.js");
   const handle = await startWorker(process.env, {
