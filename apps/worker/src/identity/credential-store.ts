@@ -9,6 +9,10 @@ export interface StoredCredential {
   readonly capabilities: readonly string[];
   readonly expiresAt: Date;
   readonly revokedAt: Date | null;
+  /** Current state, read in the same query: the agent has been archived since issue. */
+  readonly agentArchived: boolean;
+  /** Current state: the subset of `capabilities` the agent still holds and the catalog still enables. */
+  readonly liveCapabilities: readonly string[];
 }
 
 export interface NewCredentialRecord {
@@ -29,6 +33,8 @@ export interface NewCredentialRecord {
 export interface CredentialStore {
   /** Capabilities the agent holds that the workspace catalog has enabled. */
   grantedCapabilities(ref: { workspaceId: string; agentId: string }): Promise<string[]>;
+  /** True when the agent exists in the workspace and is not archived. */
+  isAgentActive(ref: { workspaceId: string; agentId: string }): Promise<boolean>;
   /** Append one issuance row. Rejects when the database refuses it. */
   insert(record: NewCredentialRecord): Promise<void>;
   findByTokenHash(tokenHash: string): Promise<StoredCredential | null>;
@@ -44,6 +50,8 @@ interface CredentialRow {
   capabilities: string[];
   expires_at: Date | string;
   revoked_at: Date | string | null;
+  agent_archived: boolean;
+  live_capabilities: string[];
 }
 
 const toDate = (value: Date | string): Date => (value instanceof Date ? value : new Date(value));
@@ -61,6 +69,14 @@ export function createPgCredentialStore(pool: pg.Pool): CredentialStore {
         [workspaceId, agentId],
       );
       return result.rows.map((row) => row.capability);
+    },
+
+    async isAgentActive({ workspaceId, agentId }) {
+      const result = await pool.query(
+        "select 1 from public.agents where workspace_id = $1 and id = $2 and archived_at is null",
+        [workspaceId, agentId],
+      );
+      return (result.rowCount ?? 0) > 0;
     },
 
     async insert(record) {
@@ -83,8 +99,19 @@ export function createPgCredentialStore(pool: pg.Pool): CredentialStore {
 
     async findByTokenHash(tokenHash) {
       const result = await pool.query<CredentialRow>(
-        `select id, workspace_id, agent_id, run_id, capabilities, expires_at, revoked_at
-           from public.agent_credentials where token_hash = $1`,
+        `select c.id, c.workspace_id, c.agent_id, c.run_id, c.capabilities, c.expires_at, c.revoked_at,
+                a.archived_at is not null as agent_archived,
+                coalesce(array(
+                  select ac.capability
+                    from public.agent_capabilities ac
+                    join public.capabilities cap
+                      on cap.workspace_id = ac.workspace_id and cap.key = ac.capability
+                   where ac.workspace_id = c.workspace_id and ac.agent_id = c.agent_id
+                     and cap.enabled and ac.capability = any (c.capabilities)
+                   order by ac.capability), '{}'::text[]) as live_capabilities
+           from public.agent_credentials c
+           join public.agents a on a.workspace_id = c.workspace_id and a.id = c.agent_id
+          where c.token_hash = $1`,
         [tokenHash],
       );
       const row = result.rows[0];
@@ -97,6 +124,8 @@ export function createPgCredentialStore(pool: pg.Pool): CredentialStore {
         capabilities: row.capabilities,
         expiresAt: toDate(row.expires_at),
         revokedAt: row.revoked_at === null ? null : toDate(row.revoked_at),
+        agentArchived: row.agent_archived,
+        liveCapabilities: row.live_capabilities,
       };
     },
 

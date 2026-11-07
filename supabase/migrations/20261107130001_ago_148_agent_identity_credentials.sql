@@ -78,6 +78,10 @@ declare
   v_run record;
   v_ungranted text[];
 begin
+  if exists (select 1 from public.agents a
+              where a.workspace_id = new.workspace_id and a.id = new.agent_id and a.archived_at is not null) then
+    raise exception 'no credential can be issued to an archived agent' using errcode = '42501';
+  end if;
   select r.agent_id, r.status into v_run from public.runs r
    where r.workspace_id = new.workspace_id and r.id = new.run_id;
   if not found or v_run.agent_id is distinct from new.agent_id then
@@ -164,6 +168,43 @@ $$;
 revoke all on function private.revoke_credentials_on_run_end() from public, anon, authenticated;
 create trigger revoke_credentials_on_run_end after update of status on public.runs
   for each row execute function private.revoke_credentials_on_run_end();
+
+-- 4b. An archived agent, or a removed capability grant, leaves no live credential behind. Verification also
+-- re-checks the current state at use time (the worker), so these revokes are defense in depth, not the control.
+create function private.revoke_credentials_on_agent_archive()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if old.archived_at is null and new.archived_at is not null then
+    update public.agent_credentials set revoked_at = now()
+     where workspace_id = new.workspace_id and agent_id = new.id and revoked_at is null;
+  end if;
+  return null;
+end
+$$;
+revoke all on function private.revoke_credentials_on_agent_archive() from public, anon, authenticated;
+create trigger revoke_credentials_on_agent_archive after update of archived_at on public.agents
+  for each row execute function private.revoke_credentials_on_agent_archive();
+
+create function private.revoke_credentials_on_grant_removed()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.agent_credentials set revoked_at = now()
+   where workspace_id = old.workspace_id and agent_id = old.agent_id
+     and revoked_at is null and old.capability = any (capabilities);
+  return null;
+end
+$$;
+revoke all on function private.revoke_credentials_on_grant_removed() from public, anon, authenticated;
+create trigger revoke_credentials_on_grant_removed after delete on public.agent_capabilities
+  for each row execute function private.revoke_credentials_on_grant_removed();
 
 -- 5. RLS and grants: members read their workspace's log and identities; nobody writes through the API.
 alter table public.agent_identities enable row level security;

@@ -7,7 +7,7 @@
 -- Run: pnpm exec supabase test db (inside the db lock).
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(47);
+select plan(51);
 
 insert into auth.users (id, instance_id, aud, role, email) values
   ('14800000-0000-4000-8000-00000000000a', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'ago148-a@example.test'),
@@ -178,7 +178,27 @@ select lives_ok($$delete from public.agents where id = '14800000-0000-4000-8000-
 select lives_ok($$delete from public.workspaces where id = '148bbbbb-0000-4000-8000-000000000001'$$,
   'deleting a whole workspace still cascades through the issuance log');
 
--- 46-47. grants
+-- 46-49. AC2 at use time: archiving an agent or removing a grant revokes its live credentials, and an archived agent gets none
+insert into public.agents (id, workspace_id, name) values ('14800000-0000-4000-8000-0000000002c1', '148aaaaa-0000-4000-8000-000000000001', 'Agent C');
+insert into public.agent_capabilities (workspace_id, agent_id, capability, tier) values
+  ('148aaaaa-0000-4000-8000-000000000001', '14800000-0000-4000-8000-0000000002c1', 'vault.read', 0), ('148aaaaa-0000-4000-8000-000000000001', '14800000-0000-4000-8000-0000000002c1', 'web.search', 1);
+insert into public.runs (id, workspace_id, agent_id, status) values ('14800000-0000-4000-8000-0000000003c1', '148aaaaa-0000-4000-8000-000000000001', '14800000-0000-4000-8000-0000000002c1', 'running');
+insert into public.agent_credentials (workspace_id, agent_id, run_id, token_hash, capabilities, issued_at, expires_at) values
+  ('148aaaaa-0000-4000-8000-000000000001', '14800000-0000-4000-8000-0000000002c1', '14800000-0000-4000-8000-0000000003c1', repeat('7', 64), array['vault.read'], now(), now() + interval '5 minutes'),
+  ('148aaaaa-0000-4000-8000-000000000001', '14800000-0000-4000-8000-0000000002c1', '14800000-0000-4000-8000-0000000003c1', repeat('8', 64), array['web.search'], now(), now() + interval '5 minutes');
+delete from public.agent_capabilities where agent_id = '14800000-0000-4000-8000-0000000002c1' and capability = 'web.search';
+select is((select count(*)::int from public.agent_credentials where agent_id = '14800000-0000-4000-8000-0000000002c1' and revoked_at is not null), 1,
+  'AC2: removing a grant revokes only the credentials that carry that capability');
+update public.agents set archived_at = now() where id = '14800000-0000-4000-8000-0000000002c1';
+select is((select count(*)::int from public.agent_credentials where agent_id = '14800000-0000-4000-8000-0000000002c1' and revoked_at is null), 0,
+  'AC2: archiving an agent revokes all of its live credentials');
+select throws_ok($$insert into public.agent_credentials (workspace_id, agent_id, run_id, token_hash, capabilities, issued_at, expires_at)
+  values ('148aaaaa-0000-4000-8000-000000000001', '14800000-0000-4000-8000-0000000002c1', '14800000-0000-4000-8000-0000000003c1', repeat('9', 64), array[]::text[], now(), now() + interval '5 minutes')$$,
+  '42501', null, 'AC2: no credential can be issued to an archived agent');
+select is((select count(*)::int from public.agent_credentials where token_hash = repeat('9', 64)), 0,
+  'AC2: the refused issuance wrote no row');
+
+-- 50-51. grants
 select is((select count(*)::int from unnest(array['anon', 'authenticated', 'service_role']) r,
     unnest(array['agent_credentials', 'agent_identities']) t
   where has_table_privilege(r, 'public.' || t, 'DELETE,TRUNCATE,TRIGGER,REFERENCES')),

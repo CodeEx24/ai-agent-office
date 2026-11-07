@@ -21,7 +21,7 @@ const STAMP = '20261107130001_ago_148_agent_identity_credentials';
 const UP = readFileSync(path.join(ROOT, 'supabase', 'migrations', `${STAMP}.sql`), 'utf8');
 const DOWN = readFileSync(path.join(ROOT, 'supabase', 'rollbacks', `${STAMP}.down.sql`), 'utf8');
 const enabled = process.env.RUN_DB_TESTS === '1';
-const FUNCTIONS = ['create_agent_identity', 'check_agent_credential_issue', 'agent_credentials_block_change', 'revoke_credentials_on_run_end'];
+const FUNCTIONS = ['create_agent_identity', 'check_agent_credential_issue', 'agent_credentials_block_change', 'revoke_credentials_on_run_end', 'revoke_credentials_on_agent_archive', 'revoke_credentials_on_grant_removed'];
 
 function docker(args, input) {
   return execFileSync('docker', ['exec', '-i', localDbContainer(), ...args], { encoding: 'utf8', input, maxBuffer: 64 * 1024 * 1024 });
@@ -60,7 +60,7 @@ describe('AGO-148 migration files', () => {
   });
 
   it('pins the search_path of every function and makes the definers unreachable for API roles', () => {
-    expect((UP.match(/security definer\s+set search_path = ''/g) ?? []).length).toBe(4);
+    expect((UP.match(/security definer\s+set search_path = ''/g) ?? []).length).toBe(6);
     for (const fn of FUNCTIONS) {
       expect(UP).toContain(`revoke all on function private.${fn}() from public, anon, authenticated`);
     }

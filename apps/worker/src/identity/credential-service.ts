@@ -14,6 +14,14 @@ import {
 
 import type { CredentialStore } from "./credential-store.js";
 
+/** Issuance refused: the agent is archived, or is not in the run's workspace. Carries no ids. */
+export class AgentNotActiveError extends Error {
+  constructor() {
+    super("the agent is not active in this workspace: no credential is issued");
+    this.name = "AgentNotActiveError";
+  }
+}
+
 /** The slice of the logger the issuer needs. Never given a token. */
 interface IssuanceLogger {
   info(fields: Record<string, unknown>, message: string): void;
@@ -68,6 +76,7 @@ export function createCredentialIssuer(deps: CredentialIssuerDeps): CredentialIs
     async issue(request) {
       const issuedAt = new Date(Math.floor(now().getTime() / 1000) * 1000);
       const expiresAt = computeCredentialExpiry({ now: issuedAt, taskEndsAt: request.taskEndsAt });
+      if (!(await deps.store.isAgentActive(request))) throw new AgentNotActiveError();
       const granted = await deps.store.grantedCapabilities(request);
       const capabilities = intersectCapabilities(granted, request.requestedCapabilities);
       const droppedCapabilities = (request.requestedCapabilities ?? []).filter(
@@ -174,6 +183,8 @@ export function createCredentialVerifier(deps: CredentialVerifierDeps): Credenti
       const stored = await deps.store.findByTokenHash(hashCredentialToken(token));
       if (stored?.id !== claims.jti) return reject("unknown_credential");
       if (stored.revokedAt !== null) return reject("revoked");
+      // Current state beats the snapshot: an archived agent's credential is dead even if not yet revoked.
+      if (stored.agentArchived) return reject("revoked");
       if (stored.expiresAt.getTime() <= nowMs) return reject("expired");
 
       if (
@@ -191,9 +202,12 @@ export function createCredentialVerifier(deps: CredentialVerifierDeps): Credenti
       if (stored.runId !== request.runId || claims.run_id !== request.runId) {
         return reject("wrong_run");
       }
+      // The snapshot (claims and stored row) is only an upper bound: the grant and the catalog entry must
+      // still hold now. `liveCapabilities` is read in the same query as the row.
       if (
         !claims.caps.includes(request.capability) ||
-        !stored.capabilities.includes(request.capability)
+        !stored.capabilities.includes(request.capability) ||
+        !stored.liveCapabilities.includes(request.capability)
       ) {
         return reject("missing_capability");
       }
@@ -201,7 +215,7 @@ export function createCredentialVerifier(deps: CredentialVerifierDeps): Credenti
         ok: true,
         credentialId: stored.id,
         agentId: stored.agentId,
-        capabilities: stored.capabilities,
+        capabilities: stored.liveCapabilities,
         policyCheckRequired: true,
       };
     },

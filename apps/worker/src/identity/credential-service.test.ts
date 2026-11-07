@@ -37,14 +37,22 @@ function setup(granted: string[] = ["vault.read", "web.search", "code.run"]) {
   let nowMs = START.getTime();
   const now = () => new Date(nowMs);
   const rows = new Map<string, Mutable<NewCredentialRecord> & { revokedAt: Date | null }>();
+  const state = { archived: false, live: [...granted] };
   const store: CredentialStore = {
     grantedCapabilities: () => Promise.resolve([...granted]),
+    isAgentActive: () => Promise.resolve(!state.archived),
     insert(record) {
       rows.set(record.tokenHash, { ...record, revokedAt: null });
       return Promise.resolve();
     },
     findByTokenHash(hash): Promise<StoredCredential | null> {
-      return Promise.resolve(rows.get(hash) ?? null);
+      const row = rows.get(hash);
+      if (row === undefined) return Promise.resolve(null);
+      return Promise.resolve({
+        ...row,
+        agentArchived: state.archived,
+        liveCapabilities: row.capabilities.filter((key) => state.live.includes(key)),
+      });
     },
     revokeForRun({ workspaceId, runId }) {
       let count = 0;
@@ -63,6 +71,7 @@ function setup(granted: string[] = ["vault.read", "web.search", "code.run"]) {
     issuer: createCredentialIssuer({ store, secret: SECRET, now, logger: { info } }),
     verifier: createCredentialVerifier({ store, secret: SECRET, now }),
     rows,
+    state,
     info,
     advanceSeconds: (seconds: number) => {
       nowMs += seconds * 1000;
@@ -334,5 +343,34 @@ describe("AC3: every issuance is logged", () => {
       true,
     );
     expect(s.info).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("AC2: the current state is re-checked at use time", () => {
+  it("rejects an archived agent's live credential as revoked and refuses new issuance", async () => {
+    const s = setup();
+    const { token } = await issueFor(s);
+    expect((await s.verifier.verify(token, ask("vault.read"))).ok).toBe(true);
+    s.state.archived = true;
+    expect(await s.verifier.verify(token, ask("vault.read"))).toEqual({
+      ok: false,
+      reason: "revoked",
+    });
+    await expect(issueFor(s)).rejects.toThrow("not active");
+  });
+
+  it("rejects a capability whose grant was removed or whose catalog entry was disabled", async () => {
+    const s = setup();
+    const { token } = await issueFor(s);
+    s.state.live = ["vault.read"];
+    expect(await s.verifier.verify(token, ask("web.search"))).toEqual(MISSING);
+    const kept = await s.verifier.verify(token, ask("vault.read"));
+    expect(kept.ok && kept.capabilities).toEqual(["vault.read"]);
+  });
+
+  it("never lets a live grant widen a credential beyond its snapshot", async () => {
+    const s = setup();
+    const { token } = await issueFor(s, { requestedCapabilities: ["vault.read"] });
+    expect(await s.verifier.verify(token, ask("code.run"))).toEqual(MISSING);
   });
 });
