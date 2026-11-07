@@ -82,6 +82,7 @@ if (role === "worker") {
   const handle = await startWorker(process.env, {
     runExecutor: process.env.QA_NO_EXECUTOR === "1" ? undefined : executor,
     sentryTransport: transport,
+    queueName: process.env.QA_QUEUE_NAME || undefined,
   });
   wireSignals(() => handle.stop());
   console.log("QA_READY");
@@ -96,6 +97,7 @@ if (role === "worker") {
     logger: createLogger({ level: "info" }),
     errorTracker,
     executor: role === "consumer" ? executor : undefined,
+    queueName: process.env.QA_QUEUE_NAME || undefined,
     retryPolicy: policy,
     pollingIntervalSeconds: 0.5,
     shutdownTimeoutMs: Number(process.env.QUEUE_SHUTDOWN_TIMEOUT_MS ?? 10_000),

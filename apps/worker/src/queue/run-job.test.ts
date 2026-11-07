@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { idempotencyKeySchema, runJobKey, runJobSchema } from "./run-job.js";
+import {
+  idempotencyKeySchema,
+  RUN_DEAD_LETTER_QUEUE,
+  RUN_QUEUE,
+  runJobKey,
+  runJobSchema,
+  runQueueNames,
+} from "./run-job.js";
 
 const WORKSPACE = "11111111-1111-4111-8111-111111111111";
 const OTHER_WORKSPACE = "44444444-4444-4444-8444-444444444444";
@@ -38,5 +45,18 @@ describe("idempotency key", () => {
     expect(idempotencyKeySchema.safeParse("").success).toBe(false);
     expect(idempotencyKeySchema.safeParse("has space").success).toBe(false);
     expect(idempotencyKeySchema.safeParse("x".repeat(201)).success).toBe(false);
+  });
+});
+
+describe("run queue names", () => {
+  it("defaults to the production queue and its dead letter", () => {
+    expect(runQueueNames()).toEqual({ queue: RUN_QUEUE, deadLetter: RUN_DEAD_LETTER_QUEUE });
+  });
+
+  it("derives a separate dead-letter queue from a custom name", () => {
+    expect(runQueueNames("agent-run-test-1")).toEqual({
+      queue: "agent-run-test-1",
+      deadLetter: "agent-run-test-1-dead",
+    });
   });
 });

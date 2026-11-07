@@ -16,6 +16,8 @@ export interface StartWorkerOptions {
   readonly sentryTransport?: CreateErrorTrackerOptions["transport"];
   /** The agent runtime (AGO-167). Absent: the queue accepts jobs but nothing consumes them. */
   readonly runExecutor?: RunExecutor;
+  /** Queue base name; tests use a unique one so suites sharing a database stay isolated (AGO-202). */
+  readonly queueName?: string;
 }
 
 export interface WorkerHandle {
@@ -82,6 +84,7 @@ export async function startWorker(
     logger,
     errorTracker,
     executor: runExecutor,
+    queueName: options.queueName,
     concurrency: config.queueConcurrency,
     shutdownTimeoutMs: config.queueShutdownTimeoutMs,
   });

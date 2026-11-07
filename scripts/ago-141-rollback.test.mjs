@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { assertLocalOnly, localDbContainer } from './db-seed.mjs';
+import { normalizeSchemaDump } from './schema-dump.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // The timestamp changes when the migration is renamed to the next free one: find it by its suffix.
@@ -28,10 +29,12 @@ function docker(args, input) {
 }
 const psql = (sql) => docker(['psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q', '-At'], sql).trim();
 const dumpSchema = () =>
-  docker(['pg_dump', '-U', 'postgres', '-s', '--no-owner', '-n', 'public', '-n', 'private', 'postgres'])
-    .split('\n')
-    .filter((line) => !/^\\(un)?restrict /.test(line))
-    .join('\n');
+  normalizeSchemaDump(
+    docker(['pg_dump', '-U', 'postgres', '-s', '--no-owner', '-n', 'public', '-n', 'private', 'postgres'])
+      .split('\n')
+      .filter((line) => !/^\\(un)?restrict /.test(line))
+      .join('\n'),
+  );
 const hasFunction = () => psql(`select to_regprocedure('public.create_agent(uuid,text,text,text,text,integer,uuid[],jsonb)') is not null`) === 't';
 const policyNames = (table) =>
   psql(`select coalesce(string_agg(polname, ',' order by polname), '') from pg_policy where polrelid = 'public.${table}'::regclass`);

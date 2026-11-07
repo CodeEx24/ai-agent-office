@@ -15,6 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { assertLocalOnly, localDbContainer } from './db-seed.mjs';
+import { normalizeSchemaDump } from './schema-dump.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const STAMP = '20261106140001_ago_125_capability_catalog';
@@ -28,10 +29,12 @@ function docker(args, input) {
 const psql = (sql) => docker(['psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q', '-At'], sql).trim();
 // pg_dump prints a random \restrict / \unrestrict token per run; drop those two lines before comparing.
 const dumpSchema = () =>
-  docker(['pg_dump', '-U', 'postgres', '-s', '--no-owner', '-n', 'public', '-n', 'private', 'postgres'])
-    .split('\n')
-    .filter((line) => !/^\\(un)?restrict /.test(line))
-    .join('\n');
+  normalizeSchemaDump(
+    docker(['pg_dump', '-U', 'postgres', '-s', '--no-owner', '-n', 'public', '-n', 'private', 'postgres'])
+      .split('\n')
+      .filter((line) => !/^\\(un)?restrict /.test(line))
+      .join('\n'),
+  );
 const hasTable = () => psql(`select to_regclass('public.capabilities') is not null`) === 't';
 const functionCount = () =>
   Number(psql(`select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'private' and p.proname in ('seed_workspace_capabilities', 'seed_capabilities_for_new_workspace')`));
