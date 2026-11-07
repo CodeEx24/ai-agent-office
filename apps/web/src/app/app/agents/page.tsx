@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { AGENT_MODELS, hasMinRole } from "@ago/shared";
 
 import { listAgents } from "../../../features/agents/agent-library";
+import { TemplateGallery } from "../../../features/agents/TemplateGallery";
 import { getCurrentUser } from "../../../features/auth/current-user";
 import { getActiveWorkspace } from "../../../features/workspaces/workspace-access";
 
@@ -58,11 +59,14 @@ export default async function AgentsPage() {
       )}
 
       {canCreate ? (
-        <p>
-          <Link href="/app/agents/new" className="text-primary underline underline-offset-4">
-            New agent
-          </Link>
-        </p>
+        <>
+          <TemplateGallery workspaceId={workspace.id} />
+          <p>
+            <Link href="/app/agents/new" className="text-primary underline underline-offset-4">
+              New agent
+            </Link>
+          </p>
+        </>
       ) : (
         <p className="text-sm text-muted-foreground">Only workspace owners can create agents.</p>
       )}

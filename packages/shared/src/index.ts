@@ -7,6 +7,7 @@ export * from "./capabilities/starter-capabilities.js";
 export * from "./skills/skill-schemas.js";
 export * from "./context/context-schemas.js";
 export * from "./agents/agent-schemas.js";
+export * from "./agents/agent-template-schemas.js";
 export * from "./seed/seed-ids.js";
 
 /** Project name shared by every workspace package. Placeholder until AGO-61+ add real schemas. */

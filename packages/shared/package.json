@@ -18,6 +18,10 @@
       "types": "./dist/agents/agent-limits.d.ts",
       "default": "./dist/agents/agent-limits.js"
     },
+    "./agent-templates": {
+      "types": "./dist/agents/agent-templates.d.ts",
+      "default": "./dist/agents/agent-templates.js"
+    },
     "./skill-limits": {
       "types": "./dist/skills/skill-limits.d.ts",
       "default": "./dist/skills/skill-limits.js"
