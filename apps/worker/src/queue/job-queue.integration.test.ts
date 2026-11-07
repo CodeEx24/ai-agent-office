@@ -10,9 +10,8 @@ import { LOCAL_DATABASE_URL } from "../config.js";
 import { createLogger } from "../logger.js";
 import {
   createJobQueue,
-  RUN_DEAD_LETTER_QUEUE,
-  RUN_QUEUE,
   RUN_STATUS,
+  runQueueNames,
   type JobQueue,
   type RunExecutionContext,
   type RunExecutor,
@@ -39,6 +38,10 @@ async function isDatabaseUp(): Promise<boolean> {
 
 const live = await isDatabaseUp();
 
+// Its own queue (not the shared `agent-run`): another suite or worktree using this database can neither
+// consume these jobs nor have its own purged by this file (AGO-202).
+const QUEUE_NAME = `agent-run-test-${randomUUID().slice(0, 8)}`;
+const QUEUES = runQueueNames(QUEUE_NAME);
 const WORKSPACE = randomUUID();
 const AGENT = randomUUID();
 const FAST_RETRY = {
@@ -83,6 +86,7 @@ describe.skipIf(!live)("job queue (live database)", () => {
       logger: createLogger({ level: "silent" }),
       errorTracker: tracker,
       executor,
+      queueName: QUEUE_NAME,
       retryPolicy: FAST_RETRY,
       pollingIntervalSeconds: 0.5,
       shutdownTimeoutMs: 10_000,
@@ -117,7 +121,7 @@ describe.skipIf(!live)("job queue (live database)", () => {
 
   const purgeJobs = () =>
     pool
-      .query("delete from pgboss.job where name = any($1)", [[RUN_QUEUE, RUN_DEAD_LETTER_QUEUE]])
+      .query("delete from pgboss.job where name = any($1)", [[QUEUES.queue, QUEUES.deadLetter]])
       .catch(() => undefined);
 
   beforeAll(async () => {
@@ -154,6 +158,10 @@ describe.skipIf(!live)("job queue (live database)", () => {
       delete from public.workspaces where id = '${WORKSPACE}';
       commit;`);
     await purgeJobs();
+    // Unique queue names must not pile up in pgboss.queue run after run.
+    for (const name of [QUEUES.queue, QUEUES.deadLetter]) {
+      await pool.query("select pgboss.delete_queue($1)", [name]).catch(() => undefined);
+    }
     await pool.end();
   });
 
