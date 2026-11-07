@@ -14,6 +14,7 @@ const runRowSchema = z.object({
   agent_id: z.string(),
   agent_name: z.string(),
   agent_description: z.string(),
+  agent_archived: z.boolean(),
   task_id: z.string().nullable(),
   task_title: z.string().nullable(),
   task_description: z.string().nullable(),
@@ -50,6 +51,7 @@ export function createPgRunContextSource(db: Queryable): RunContextSource {
       const result = await db.query(
         `select r.workspace_id, r.agent_id,
                 a.name as agent_name, a.description as agent_description,
+                (a.archived_at is not null) as agent_archived,
                 t.id as task_id, t.title as task_title, t.description as task_description
            from public.runs r
            join public.agents a on a.workspace_id = r.workspace_id and a.id = r.agent_id
@@ -80,6 +82,7 @@ export function createPgRunContextSource(db: Queryable): RunContextSource {
           prompt: null,
         }),
         task,
+        agentArchived: row.agent_archived,
       };
     },
 

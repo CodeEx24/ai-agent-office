@@ -41,6 +41,8 @@ export interface RunContext {
   readonly workspaceId: string;
   readonly agent: AgentProfile;
   readonly task: TaskPacket | null;
+  /** True when the agent was retired (`agents.archived_at`); the builder refuses such runs. */
+  readonly agentArchived?: boolean;
 }
 
 export interface ContextScope {
@@ -73,7 +75,7 @@ export interface ContextBuilder {
   build(runId: string, options?: BuildOptions): Promise<BuiltContext>;
 }
 
-export type ContextBuildErrorCode = "run_not_found" | "budget_too_small";
+export type ContextBuildErrorCode = "run_not_found" | "budget_too_small" | "agent_archived";
 
 /** Carries ids and sizes only, never content. */
 export class ContextBuildError extends Error {
@@ -201,6 +203,10 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       const run = await deps.source.loadRun(runId);
       if (run === null) {
         throw new ContextBuildError("run_not_found", `run ${runId} was not found`);
+      }
+      if (run.agentArchived === true) {
+        // Carry-over from AGO-145: a retired agent never gets a context, so it can never run.
+        throw new ContextBuildError("agent_archived", `the agent of run ${runId} is archived`);
       }
       const { workspaceId, agent, task } = run;
       const scope: ContextScope = { workspaceId, agentId: agent.id };

@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createLogger } from "../logger.js";
-import { createRunProcessor, type RunExecutor, type RunJob } from "./run-processor.js";
+import {
+  createRunProcessor,
+  NonRetryableRunError,
+  type RunExecutor,
+  type RunJob,
+} from "./run-processor.js";
 import { RUN_STATUS, type QueuedRun, type RunRef, type RunStore } from "./run-store.js";
 
 import type { RunEventRow, RunEventStore } from "../events/index.js";
@@ -31,6 +36,10 @@ function fakeRunStore(initial: string = RUN_STATUS.queued) {
     },
     markFinished: (_ref, status) => {
       state.status = status;
+      return Promise.resolve();
+    },
+    markPaused: () => {
+      if (state.status === RUN_STATUS.running) state.status = RUN_STATUS.paused;
       return Promise.resolve();
     },
   };
@@ -166,6 +175,41 @@ describe("run processor", () => {
     await expect(process(job({ retryCount: 2 }))).rejects.toThrow();
 
     expect(JSON.stringify(events.rows)).not.toContain("hunter2");
+  });
+
+  it("ends a run that hit a limit as failed, with no run.completed (AGO-167)", async () => {
+    const execute = vi.fn(() => Promise.resolve({ steps: 25, end: "limit_reached" as const }));
+    const { runs, events, process } = setup({ execute });
+
+    await expect(process(job())).resolves.toBe("executed");
+
+    expect(eventTypes(events.rows)).toEqual(["run.started"]);
+    expect(runs.state.status).toBe(RUN_STATUS.failed);
+  });
+
+  it("pauses a run that stopped for an approval instead of finishing it (AGO-167)", async () => {
+    const execute = vi.fn(() => Promise.resolve({ steps: 2, end: "paused" as const }));
+    const { runs, events, process } = setup({ execute });
+
+    await expect(process(job())).resolves.toBe("executed");
+
+    expect(eventTypes(events.rows)).toEqual(["run.started", "run.paused"]);
+    expect(events.rows[1]?.payload).toMatchObject({
+      requested_by: "policy",
+      reason: "approval_required",
+    });
+    expect(runs.state.status).toBe(RUN_STATUS.paused);
+  });
+
+  it("fails a non-retryable error at once, with its reason, and spends no retries (AGO-167)", async () => {
+    const execute = vi.fn(() => Promise.reject(new NonRetryableRunError("agent_archived", "gone")));
+    const { runs, events, tracking, process } = setup({ execute });
+
+    await expect(process(job({ retryCount: 0 }))).resolves.toBe("failed_permanently");
+
+    expect(runs.state.status).toBe(RUN_STATUS.failed);
+    expect(events.rows[1]?.payload).toMatchObject({ reason: "agent_archived" });
+    expect(tracking.captured).toHaveLength(1);
   });
 
   it("rejects a malformed payload without echoing it and without touching the run", async () => {

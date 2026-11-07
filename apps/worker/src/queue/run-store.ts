@@ -4,6 +4,7 @@ import type pg from "pg";
 export const RUN_STATUS = {
   queued: "queued",
   running: "running",
+  paused: "paused",
   succeeded: "succeeded",
   failed: "failed",
 } as const;
@@ -41,6 +42,8 @@ export interface RunStore {
   /** Give the run back (`running` -> `queued`) so a retry can claim it. */
   releaseRun(ref: RunRef): Promise<void>;
   markFinished(ref: RunRef, status: "succeeded" | "failed"): Promise<void>;
+  /** `running` -> `paused`: the run waits for a human decision (AGO-167). Not finished, no `finished_at`. */
+  markPaused(ref: RunRef): Promise<void>;
 }
 
 interface RunRow {
@@ -89,6 +92,14 @@ export function createPgRunStore(pool: pg.Pool): RunStore {
         `update public.runs set status = $3
           where workspace_id = $1 and id = $2 and status = $4`,
         [workspaceId, runId, RUN_STATUS.queued, RUN_STATUS.running],
+      );
+    },
+
+    async markPaused({ workspaceId, runId }) {
+      await pool.query(
+        `update public.runs set status = $3
+          where workspace_id = $1 and id = $2 and status = $4`,
+        [workspaceId, runId, RUN_STATUS.paused, RUN_STATUS.running],
       );
     },
 

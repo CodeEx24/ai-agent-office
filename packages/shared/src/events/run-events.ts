@@ -62,6 +62,14 @@ export const RUN_EVENT_SCHEMAS = [
     call_hash: sha256,
     repeat_count: z.number().int().min(2),
   }),
+  // Context (AGO-167): counts and source labels only, never the cut text
+  event("context.cut", {
+    section: z.enum(["task", "skills", "vault_map", "retrieved", "tool_result"]),
+    source: shortText,
+    action: z.enum(["dropped", "truncated"]),
+    original_chars: count,
+    kept_chars: count,
+  }),
   // Steps
   event("step.started", { step: z.number().int().min(1) }),
   event("step.completed", { step: z.number().int().min(1), outcome: z.enum(["ok", "error"]) }),
