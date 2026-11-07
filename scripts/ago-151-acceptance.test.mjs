@@ -18,12 +18,12 @@
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { createHmac, randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createHash, createHmac, randomUUID } from "node:crypto";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import net from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 
@@ -31,7 +31,29 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKER_ENTRY = join(ROOT, "apps", "worker", "dist", "index.js");
 const FIXTURE = join(ROOT, "scripts", "fixtures", "ago-151-proc.mjs");
 const MIGRATION = "20261107010001_ago_151_pgboss_schema";
-const IMAGE = "ago-worker-qa-151";
+
+/** Every file under `path`, sorted, so the hash below does not depend on directory order. */
+function filesUnder(path) {
+  if (!existsSync(path)) return [];
+  if (!statSync(path).isDirectory()) return [path];
+  return readdirSync(path)
+    .sort()
+    .filter((entry) => entry !== "node_modules" && entry !== "dist")
+    .flatMap((entry) => filesUnder(join(path, entry)));
+}
+
+// The image tag carries a hash of what goes into the image (worker + shared sources, lockfile, Dockerfile).
+// A fixed tag reused a stale image built from another branch (it ignored the per-suite queue name and consumed
+// the shared queue), so the shutdown tests timed out (AGO-202). A changed source builds a fresh image.
+const IMAGE_INPUTS = ["apps/worker", "packages/shared", "pnpm-lock.yaml"];
+const IMAGE = `ago-worker-qa-151:${createHash("sha256")
+  .update(
+    IMAGE_INPUTS.flatMap((input) => filesUnder(join(ROOT, input)))
+      .map((file) => `${relative(ROOT, file)}\n${readFileSync(file).toString("base64")}`)
+      .join("\n"),
+  )
+  .digest("hex")
+  .slice(0, 12)}`;
 
 if (!existsSync(WORKER_ENTRY)) {
   throw new Error("apps/worker/dist is missing: run `pnpm --filter @ago/worker build` first");
