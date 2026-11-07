@@ -1,6 +1,7 @@
 import { createContextBuilder, createPgRunContextSource } from "../context/index.js";
 import { createAgentLoop } from "./agent-loop.js";
 import { createClaudeProvider } from "./claude-provider.js";
+import { createModelRouter, createPgAgentModelSource } from "./model-routing.js";
 import { createDenyByDefaultPolicyHook } from "./policy-hook.js";
 import { createToolRegistry, getCurrentTimeTool } from "./tools.js";
 
@@ -28,7 +29,11 @@ export function createProductionAgentExecutor(options: {
     return undefined;
   }
   return createAgentLoop({
-    provider: createClaudeProvider({ apiKey, model: config.agentModel }),
+    // AGO-94: each run reads its agent'"'"'s model and gets a provider for exactly that model.
+    modelRouter: createModelRouter({
+      source: createPgAgentModelSource(pool),
+      createProvider: (model) => createClaudeProvider({ apiKey, model }),
+    }),
     contextBuilder: createContextBuilder({
       source: createPgRunContextSource(pool),
       logger,
