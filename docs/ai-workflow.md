@@ -1,4 +1,6 @@
-# AI delivery workflow
+# AI delivery workflow (legacy run-waves / pr-gate loop)
+
+> **Legacy.** New tickets are delivered with `/loop /deliver AGO`: see [workflow/README.md](workflow/README.md) (project values, merge path, risk tiers), [workflow/REVIEW.md](workflow/REVIEW.md) and `~/.claude/workflows/ai-delivery-workflow.md`. This page describes the older `/run-waves` + `/pr-gate` loop, kept only for tickets already in flight when `/deliver` was adopted (AGO-166, AGO-94, AGO-136, AGO-25). It will be retired once they merge. The naming, schema-slot and bot-account sections below still apply to both flows.
 
 How AGO tickets go from Jira to `main` with AI agents doing the work and a human in the loop for anything that costs money or changes the rules.
 

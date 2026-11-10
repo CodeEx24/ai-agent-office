@@ -1,7 +1,8 @@
 ---
 name: run-waves
 description: >-
-  Orchestrate Agent Office delivery wave by wave. Find the current wave's ready AGO tickets,
+  LEGACY (AGO-205): only for tickets already in flight (AGO-166, AGO-94, AGO-136, AGO-25); new
+  tickets use `/loop /deliver AGO` (docs/workflow/README.md). Orchestrate Agent Office delivery wave by wave. Find the current wave's ready AGO tickets,
   spawn one Orca worktree per ticket running /implement-ticket, then dispatch an independent
   /pr-gate reviewer for each PR. Route fixes back to the implementer, let the gate squash-merge
   clean PRs and close the Jira ticket, and move to the next wave when the current one is done.
