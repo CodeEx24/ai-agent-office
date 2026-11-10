@@ -109,8 +109,8 @@ select is(
   (select coalesce(array_agg(p.proname::text order by p.proname::text), '{}'::text[]) from pg_proc p
    where p.pronamespace = 'public'::regnamespace and has_function_privilege('authenticated', p.oid, 'EXECUTE')
      and not exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')),
-  array['create_agent', 'onboard_current_user'],
-  'authenticated can execute exactly two functions in public: create_agent (AGO-141, owner-checked) and onboard_current_user'
+  array['create_agent', 'onboard_current_user', 'set_agent_run_limits'],
+  'authenticated can execute exactly three functions in public: create_agent (AGO-141) and set_agent_run_limits (AGO-166), both owner-checked, and onboard_current_user'
 );
 select is(
   (select coalesce(array_agg(p.proname::text order by p.proname::text), '{}'::text[]) from pg_proc p
@@ -122,8 +122,8 @@ select is(
 select is(
   (select coalesce(array_agg(p.proname::text order by p.proname::text), '{}'::text[]) from pg_proc p
    where p.pronamespace = 'private'::regnamespace and has_function_privilege('authenticated', p.oid, 'EXECUTE')),
-  array['current_member_id', 'is_member'],
-  'authenticated can execute only the two RLS helpers in private (needed by the policies)'
+  array['current_member_id', 'is_member', 'run_limits_valid'],
+  'authenticated can execute only the two RLS helpers and run_limits_valid (AGO-166, the agents.run_limits CHECK) in private'
 );
 select is(has_schema_privilege('anon', 'private', 'USAGE'), false, 'anon has no USAGE on schema private');
 
