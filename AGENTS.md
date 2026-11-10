@@ -21,6 +21,7 @@ Rules for all coding agents. CLAUDE.md is canonical; this mirrors the must-follo
 - Do not change the locked stack without an ADR.
 
 ## Workflow
+Delivery runs under `/loop /deliver AGO`; project values, merge path and risk tiers are in `docs/workflow/README.md`, review rules in `docs/workflow/REVIEW.md`, the gate in `scripts/workflow/checks.sh` / `checks.ps1`. `/run-waves` and `/pr-gate` are legacy, only for tickets already in flight (see `docs/ai-workflow.md`). Where this file says only `/pr-gate` merges, read it as "the independent gate (`/pr-gate` for in-flight tickets, `/merge-ticket` after the approver under `/deliver`)"; human-merge paths stay human-merge.
 1. Read the ticket and `docs/tickets/AGO-###.md` (create it from `_TEMPLATE.md`).
 2. Confirm the Definition of Ready; stop and ask if blocked.
 3. Implement against the acceptance criteria; write tests first for policy, approval and RLS code.

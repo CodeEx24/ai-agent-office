@@ -25,13 +25,15 @@ insert into public.members (id, workspace_id, user_id, role) values
    '12200010-0000-4000-8000-000000000001', 'owner')
 on conflict do nothing;
 
-insert into public.agents (id, workspace_id, name, description, mode, status) values
+-- `model` must be on the shared allowlist (AGENT_MODELS in packages/shared); AGO-94 fails a run whose
+-- agent has an empty or unknown model, so a seed agent without one could never run.
+insert into public.agents (id, workspace_id, name, description, model, mode, status) values
   ('12200020-0000-4000-8000-000000000001', '12200001-0000-4000-8000-000000000001',
-   'Scout', 'Researches topics and files findings as vault notes.', 'strict', 'idle'),
+   'Scout', 'Researches topics and files findings as vault notes.', 'claude-sonnet-5-5', 'strict', 'idle'),
   ('12200020-0000-4000-8000-000000000002', '12200001-0000-4000-8000-000000000001',
-   'Scribe', 'Drafts and tidies Markdown notes and documents.', 'strict', 'idle'),
+   'Scribe', 'Drafts and tidies Markdown notes and documents.', 'claude-sonnet-5-5', 'strict', 'idle'),
   ('12200020-0000-4000-8000-000000000003', '12200001-0000-4000-8000-000000000001',
-   'Reviewer', 'Reviews drafts and proposed changes; never approves its own work.', 'strict', 'idle')
+   'Reviewer', 'Reviews drafts and proposed changes; never approves its own work.', 'claude-sonnet-5-5', 'strict', 'idle')
 on conflict do nothing;
 
 insert into public.skills (id, workspace_id, name, description, body) values
