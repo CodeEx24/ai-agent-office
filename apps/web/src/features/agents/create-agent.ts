@@ -1,4 +1,10 @@
-import { fieldErrorsFromIssues, type AgentField, type CreateAgentInput } from "@ago/shared";
+import {
+  AGENT_MESSAGES,
+  fieldErrorsFromIssues,
+  isAgentModelId,
+  type AgentField,
+  type CreateAgentInput,
+} from "@ago/shared";
 
 import { formDataToRecord } from "../../lib/validation/parse-input";
 import { WorkspaceAccessError } from "../workspaces/workspace-access";
@@ -56,6 +62,7 @@ function stateFor(error: unknown): AgentWizardState {
               },
             };
       case "invalid":
+        if (error.field === "model") return { fieldErrors: { model: AGENT_MESSAGES.modelUnknown } };
         return {
           fieldErrors: {
             capabilities: error.message.startsWith("Capabilities:")
@@ -88,6 +95,11 @@ export async function createAgentWith(
   creator: AgentCreator,
   input: CreateAgentInput,
 ): Promise<AgentWizardState & { createdId?: string }> {
+  // AGO-94 defence in depth: the input was validated upstream, but a caller that skipped that must not
+  // reach the RPC with a model off the allowlist (the database does not check it).
+  if (!isAgentModelId(input.model)) {
+    return { fieldErrors: { model: AGENT_MESSAGES.modelUnknown } };
+  }
   try {
     const { id } = await creator.createAgent(input);
     return { createdId: id };

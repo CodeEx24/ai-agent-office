@@ -91,6 +91,45 @@ describe("createAgentWith", () => {
     expect(result.fieldErrors?.dailyBudget).toContain("Daily budget");
   });
 
+  it("rejects an unknown model name at save time and never calls the creator (AGO-94)", async () => {
+    const { creator, createAgent } = creatorThatReturns();
+    for (const model of ["gpt-9", "claude-sonnet-4", "CLAUDE-SONNET-5-5", " claude-opus-5-5 x"]) {
+      const result = await createAgentWith(creator, form({ model }));
+      expect(result.createdId).toBeUndefined();
+      expect(result.fieldErrors?.model).toContain("Model");
+    }
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown model even when the input skipped schema validation (AGO-94)", async () => {
+    const { creator, createAgent } = creatorThatReturns();
+    const parsed = parseInput(createAgentSchema, agentFormRecord(form()));
+    if (!parsed.success) throw new Error("fixture must be valid");
+    const result = await createWith(creator, { ...parsed.data, model: "gpt-9" as never });
+    expect(result.createdId).toBeUndefined();
+    expect(result.fieldErrors?.model).toContain("Model");
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it("maps a creator-side invalid model to the Model field (AGO-94)", async () => {
+    const result = await createAgentWith(
+      creatorThatThrows(new AgentLibraryError("invalid", "model", "unknown")),
+      form(),
+    );
+    expect(result.createdId).toBeUndefined();
+    expect(result.fieldErrors?.model).toContain("Model");
+    expect(result.fieldErrors?.capabilities).toBeUndefined();
+  });
+
+  it("accepts each routed model: Sonnet, Opus and Fable (AGO-94)", async () => {
+    for (const model of ["claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1"]) {
+      const { creator, createAgent } = creatorThatReturns();
+      const result = await createAgentWith(creator, form({ model }));
+      expect(result.createdId).toBe("agent-1");
+      expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ model }));
+    }
+  });
+
   it("refuses a mode, a status or any other field the wizard does not have", async () => {
     const { creator, createAgent } = creatorThatReturns();
     const extras: Record<string, string>[] = [

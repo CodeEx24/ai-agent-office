@@ -18,6 +18,7 @@ import {
 } from "../queue/run-processor.js";
 
 import { ModelProviderError, type ModelProvider, type ModelToolCall } from "./model-provider.js";
+import type { ModelRouter } from "./model-routing.js";
 import type { PolicyDecision, PolicyHook } from "./policy-hook.js";
 import type { RunLimitsResolver } from "./run-limits.js";
 import type { ToolRegistry } from "./tools.js";
@@ -69,7 +70,12 @@ const INPUT_PREVIEW_MAX = 2_000;
 const TRUNCATION_MARKER = "\n[truncated]";
 
 export interface AgentLoopDeps {
-  readonly provider: ModelProvider;
+  /**
+   * The model for a run: either one fixed provider, or (production) a router that picks the provider from
+   * the agent's own model setting once per run (AGO-94). Exactly one of the two is required.
+   */
+  readonly provider?: ModelProvider;
+  readonly modelRouter?: ModelRouter;
   readonly contextBuilder: ContextBuilder;
   readonly tools: ToolRegistry;
   readonly policy: PolicyHook;
@@ -202,6 +208,9 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
   // an item over CONTEXT_TEXT_MAX_LENGTH, so leave room for them.
   if (limits.maxToolResultChars > CONTEXT_TEXT_MAX_LENGTH - INPUT_PREVIEW_MAX - 1_000) {
     throw new Error("maxToolResultChars leaves no room under what the context builder accepts");
+  }
+  if ((deps.provider === undefined) === (deps.modelRouter === undefined)) {
+    throw new Error("createAgentLoop needs exactly one of provider or modelRouter");
   }
   const now = deps.now ?? Date.now;
   const approvalTtlMs = deps.approvalTtlMs ?? DEFAULT_APPROVAL_TTL_MS;
@@ -478,6 +487,20 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
       // policy hook, tool) is raced against it, so nothing can hold the run past `maxWallMs`.
       const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(runLimits.maxWallMs)]);
 
+      // AGO-94: the model is chosen once, here, from the agent row, so every call of this run uses it and
+      // a model change made mid-run waits for the next run. An unknown model fails the run (non-retryable).
+      const provider =
+        deps.provider ??
+        (await abortable(
+          callSafely(() => {
+            const router = deps.modelRouter;
+            if (router === undefined) throw new Error("no model router");
+            return router.resolve({ workspaceId: ctx.workspaceId, agentId: ctx.agentId });
+          }),
+          signal,
+          () => interruption(ctx.signal),
+        ));
+
       const runSteps = async (): Promise<RunOutcome> => {
         for (;;) {
           if (isShuttingDown()) throw interruption(ctx.signal);
@@ -532,7 +555,7 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
           try {
             response = await abortable(
               callSafely(() =>
-                deps.provider.complete({
+                provider.complete({
                   system: built.system,
                   messages: built.messages,
                   tools: deps.tools.list(),
