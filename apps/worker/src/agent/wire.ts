@@ -2,6 +2,8 @@ import { createContextBuilder, createPgRunContextSource } from "../context/index
 import { createAgentLoop } from "./agent-loop.js";
 import { createClaudeProvider } from "./claude-provider.js";
 import { createPgPolicySource, createPolicyEngineHook } from "../policy/index.js";
+import { createPgCredentialStore } from "../identity/index.js";
+import { createPgGrantedCapabilitySource, createToolOffer } from "./tool-offer.js";
 import { createToolRegistry, getCurrentTimeTool } from "./tools.js";
 
 import type { WorkerConfig } from "../config.js";
@@ -37,6 +39,10 @@ export function createProductionAgentExecutor(options: {
     // The deterministic policy engine (AGO-34): grants and layered policies are read from the database.
     policy: createPolicyEngineHook({ source: createPgPolicySource(pool) }),
     tools: createToolRegistry([getCurrentTimeTool]),
+    // Only granted, catalog-enabled tools are shown to the model (AGO-25), re-read before every model call.
+    toolOffer: createToolOffer({
+      source: createPgGrantedCapabilitySource(createPgCredentialStore(pool)),
+    }),
     limits: {
       maxSteps: config.agentMaxSteps,
       maxTokens: config.agentMaxTokens,

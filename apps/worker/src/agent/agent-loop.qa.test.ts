@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { offerAllTools } from "./tool-offer.test-helpers.js";
 
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -130,6 +131,7 @@ function setup(
     logger,
   });
   const loop = createAgentLoop({
+    toolOffer: offerAllTools,
     provider: options.provider ?? scripted(() => answer("done")).provider,
     contextBuilder,
     tools: options.tools ?? createToolRegistry([getCurrentTimeTool]),

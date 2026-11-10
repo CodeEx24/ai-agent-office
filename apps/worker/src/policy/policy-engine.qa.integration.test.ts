@@ -3,6 +3,7 @@
 // Skips itself when the local Supabase stack is down.
 // Run it inside the db lock:  node scripts/db-lock.mjs acquire AGO-34-qa ... release AGO-34-qa
 import { createHash, randomUUID } from "node:crypto";
+import { offerAllTools } from "../agent/tool-offer.test-helpers.js";
 import { readFileSync } from "node:fs";
 
 import pg from "pg";
@@ -133,6 +134,7 @@ describe.skipIf(!live)(
         },
       });
       const loop = createAgentLoop({
+        toolOffer: offerAllTools,
         provider: callOnce(options.tool.name, options.input ?? {}),
         contextBuilder: createContextBuilder({
           source: {

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { offerAllTools } from "./tool-offer.test-helpers.js";
 import { z } from "zod";
 
 import { createContextBuilder, type RunContext } from "../context/index.js";
@@ -124,6 +125,7 @@ function setup(
     logger,
   });
   const loop = createAgentLoop({
+    toolOffer: offerAllTools,
     provider: options.provider ?? scripted(() => answer("done")).provider,
     contextBuilder,
     tools: options.tools ?? createToolRegistry([getCurrentTimeTool]),
