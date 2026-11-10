@@ -9,6 +9,7 @@ import { type RunExecutionContext } from "../queue/run-processor.js";
 import { createAgentLoop } from "./agent-loop.js";
 import { createRunLimitsResolver } from "./run-limits.js";
 import { createToolRegistry, type AgentTool } from "./tools.js";
+import { offerAllTools } from "./tool-offer.test-helpers.js";
 
 import type { ModelProvider, ModelResponse } from "./model-provider.js";
 
@@ -87,6 +88,7 @@ function setup(options: {
     },
   };
   const loop = createAgentLoop({
+    toolOffer: offerAllTools,
     provider,
     contextBuilder: createContextBuilder({
       source: {
@@ -196,7 +198,7 @@ describe("AGO-166 QA with the real policy engine (AGO-34)", () => {
     expect(payloadsOf(rows, "policy.decision")).toHaveLength(3);
   });
 
-  it("AC1: an unregistered tool the model keeps calling is denied by the engine, never runs, and ends as a loop", async () => {
+  it("AC1: an unregistered tool the model keeps calling is denied before the engine, never runs, and ends as a loop", async () => {
     const registered = tool("registered_tool", "web.search");
     const { loop, ctx, rows } = setup({ registered, calledName: "does_not_exist" });
 
@@ -208,7 +210,7 @@ describe("AGO-166 QA with the real policy engine (AGO-34)", () => {
     expect(decisions).toHaveLength(3);
     for (const decision of decisions) {
       expect(decision).toEqual(
-        expect.objectContaining({ decision: "deny", reason_code: "unknown_tool" }),
+        expect.objectContaining({ decision: "deny", reason_code: "tool_not_offered" }),
       );
     }
   });

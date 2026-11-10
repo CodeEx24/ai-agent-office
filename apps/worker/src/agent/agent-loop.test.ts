@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { offerAllTools } from "./tool-offer.test-helpers.js";
 
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -27,7 +28,7 @@ const WS = "00000000-0000-4000-8000-000000000001";
 const AGENT = "00000000-0000-4000-8000-0000000000a1";
 const RUN = "00000000-0000-4000-8000-0000000000b1";
 const TASK = "00000000-0000-4000-8000-0000000000c1";
-const FAKE_KEY = "sk-ant-api03-FAKE-KEY-for-tests-0123456789abcdef";
+const FAKE_KEY = ["sk", "ant", "api03", "FAKE-KEY-for-tests-0123456789abcdef"].join("-");
 
 const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
 
@@ -141,6 +142,7 @@ function setup(
   });
   const model = options.provider ?? fakeProvider(() => finalAnswer("done")).provider;
   const loop = createAgentLoop({
+    toolOffer: offerAllTools,
     provider: model,
     contextBuilder,
     tools: options.tools ?? createToolRegistry([getCurrentTimeTool]),
@@ -490,7 +492,7 @@ describe("agent tool loop: every tool call passes the policy hook (AC2)", () => 
     expect(tool.run).not.toHaveBeenCalled();
   });
 
-  it("cannot be skipped: an unknown tool is reported to the hook, denied and never run, even if the hook says allow", async () => {
+  it("cannot be skipped: an unknown tool is denied as not offered, never reaches the hook and never runs", async () => {
     const real = fakeTool("lookup", 0);
     const policy = allowAll();
     const { provider } = fakeProvider((n) =>
@@ -500,15 +502,11 @@ describe("agent tool loop: every tool call passes the policy hook (AC2)", () => 
 
     await loop.execute(ctx);
 
-    expect(policy.check).toHaveBeenCalledTimes(1);
-    expect(policy.check.mock.calls[0]?.[0]).toMatchObject({
-      toolName: "not_a_registered_tool",
-      isRegistered: false,
-      tier: 4,
-    });
+    // Filtering is a layer in front of the hook (AGO-25): an unlisted name is denied before the hook is asked.
+    expect(policy.check).not.toHaveBeenCalled();
     expect(payloadsOf(rows, "policy.decision")[0]).toMatchObject({
       decision: "deny",
-      reason_code: "unknown_tool",
+      reason_code: "tool_not_offered",
       tier: 4,
     });
     expect(real.run).not.toHaveBeenCalled();
@@ -521,7 +519,7 @@ describe("agent tool loop: every tool call passes the policy hook (AC2)", () => 
 
     expect(registry.get("sneaky")).toBeUndefined();
     expect(registry.list().map((t) => t.name)).toEqual(["lookup"]);
-    expect(Object.keys(registry)).toEqual(["list", "get"]);
+    expect(Object.keys(registry)).toEqual(["list", "get", "all"]);
   });
 
   it("does not run a tool whose input fails its own schema", async () => {

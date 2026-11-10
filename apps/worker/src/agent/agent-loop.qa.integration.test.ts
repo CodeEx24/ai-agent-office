@@ -2,6 +2,7 @@
 // a scripted fake model. No network, no API key. Skips itself when the local Supabase stack is down.
 // Run it inside the db lock:  node scripts/db-lock.mjs acquire AGO-167-qa ... release AGO-167-qa
 import { randomUUID } from "node:crypto";
+import { offerAllTools } from "./tool-offer.test-helpers.js";
 
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -98,6 +99,7 @@ describe.skipIf(!live)("AGO-167 QA through the queue (live database)", { timeout
     };
     const logger = createLogger({ level: "silent" });
     const executor = createAgentLoop({
+      toolOffer: offerAllTools,
       provider,
       contextBuilder: createContextBuilder({ source: createPgRunContextSource(pool), logger }),
       tools: createToolRegistry(options.tools ?? [getCurrentTimeTool]),
@@ -251,7 +253,10 @@ describe.skipIf(!live)("AGO-167 QA through the queue (live database)", { timeout
     expect(guarded).not.toHaveBeenCalled();
     expect(requests[0]?.tools.map((t) => t.name)).toEqual(["read_secrets"]);
     const decisions = (await events(runId)).filter((row) => row.type === "policy.decision");
-    expect(decisions[0]?.payload).toMatchObject({ decision: "deny", reason_code: "unknown_tool" });
+    expect(decisions[0]?.payload).toMatchObject({
+      decision: "deny",
+      reason_code: "tool_not_offered",
+    });
   });
 
   it("AC2: a job that names a run from another workspace is refused at enqueue, never reaches the model and leaves the run untouched", async () => {

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { offerAllTools } from "./tool-offer.test-helpers.js";
 
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -130,6 +131,7 @@ function setup(
     logger,
   });
   const loop = createAgentLoop({
+    toolOffer: offerAllTools,
     provider: options.provider ?? scripted(() => answer("done")).provider,
     contextBuilder,
     tools: options.tools ?? createToolRegistry([getCurrentTimeTool]),
@@ -255,9 +257,9 @@ describe("AGO-167 QA, AC1: the loop ends with a result or a limit event", () => 
     expect(tool.run).not.toHaveBeenCalled();
     const decisions = payloadsOf(rows, "policy.decision");
     expect(decisions).toHaveLength(bad.length);
-    expect(decisions.every((d) => d.decision === "deny" && d.reason_code === "unknown_tool")).toBe(
-      true,
-    );
+    expect(
+      decisions.every((d) => d.decision === "deny" && d.reason_code === "tool_not_offered"),
+    ).toBe(true);
     const requested = payloadsOf(rows, "tool_call.requested");
     expect(
       requested.every((p) => String(p.call_id).length <= 128 && String(p.tool_name).length <= 128),
@@ -460,11 +462,13 @@ describe("AGO-167 QA, AC2: every tool call passes the policy hook", () => {
     await loop.execute(ctx);
 
     expect(tool.run).not.toHaveBeenCalled();
-    // MAX_TOOL_CALLS_PER_STEP of them reach the hook; each is reported unregistered at tier 4.
-    expect(policy.check.mock.calls.length).toBeGreaterThan(0);
-    expect(policy.check.mock.calls.every(([call]) => !call.isRegistered && call.tier === 4)).toBe(
-      true,
-    );
+    // None of them was offered to the model, so each is denied before the policy hook is consulted (AGO-25).
+    expect(policy.check).not.toHaveBeenCalled();
+    const decisions = payloadsOf(rows, "policy.decision");
+    expect(decisions.length).toBeGreaterThan(0);
+    expect(
+      decisions.every((d) => d.decision === "deny" && d.reason_code === "tool_not_offered"),
+    ).toBe(true);
     expect(payloadsOf(rows, "tool_call.started")).toEqual([]);
   });
 
@@ -472,7 +476,7 @@ describe("AGO-167 QA, AC2: every tool call passes the policy hook", () => {
     const registry = createToolRegistry([getCurrentTimeTool]);
     const before = registry.list().map((t) => t.name);
 
-    expect(Object.keys(registry).sort()).toEqual(["get", "list"]);
+    expect(Object.keys(registry).sort()).toEqual(["all", "get", "list"]);
     expect(registry.get("late_tool")).toBeUndefined();
     expect(registry.list().map((t) => t.name)).toEqual(before);
   });

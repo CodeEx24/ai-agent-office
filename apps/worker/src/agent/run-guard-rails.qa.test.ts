@@ -10,6 +10,7 @@ import { createAgentLoop } from "./agent-loop.js";
 import { createDenyByDefaultPolicyHook, type PolicyHook } from "./policy-hook.js";
 import { createRunLimitsResolver, type AgentRunLimitsSource } from "./run-limits.js";
 import { createToolRegistry, type AgentTool } from "./tools.js";
+import { offerAllTools } from "./tool-offer.test-helpers.js";
 
 import type {
   ModelProvider,
@@ -111,6 +112,7 @@ function setup(options: SetupOptions) {
     },
   });
   const loop = createAgentLoop({
+    toolOffer: offerAllTools,
     provider: options.provider,
     contextBuilder: createContextBuilder({
       source: {

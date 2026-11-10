@@ -3,6 +3,7 @@
 // It skips itself when the shared local Supabase stack is down, so CI without Docker stays green.
 // Run it inside the db lock:  node scripts/db-lock.mjs acquire AGO-167 ... release AGO-167
 import { randomUUID } from "node:crypto";
+import { offerAllTools } from "./tool-offer.test-helpers.js";
 
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -102,6 +103,7 @@ describe.skipIf(!live)(
       };
       const logger = createLogger({ level: "silent" });
       const executor = createAgentLoop({
+        toolOffer: offerAllTools,
         provider,
         contextBuilder: createContextBuilder({ source: createPgRunContextSource(pool), logger }),
         tools: createToolRegistry(options.tools ?? [getCurrentTimeTool]),

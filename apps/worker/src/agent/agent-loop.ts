@@ -21,6 +21,7 @@ import { ModelProviderError, type ModelProvider, type ModelToolCall } from "./mo
 import type { ModelRouter } from "./model-routing.js";
 import type { PolicyDecision, PolicyHook } from "./policy-hook.js";
 import type { RunLimitsResolver } from "./run-limits.js";
+import type { ToolOffer } from "./tool-offer.js";
 import type { ToolRegistry } from "./tools.js";
 import type { CapabilityTier, RetrievedItem } from "@ago/shared";
 
@@ -32,6 +33,9 @@ import type { CapabilityTier, RetrievedItem } from "@ago/shared";
  * Invariants (each has a test in agent-loop.test.ts):
  * - `executeToolCall` is the only function that calls `tool.execute`, and it calls the policy hook first.
  *   The registry is fixed at creation, so a tool cannot be added mid-run to skip the hook.
+ * - The model is shown only the tools `toolOffer` returns for that step (granted and enabled, AGO-25), and a
+ *   call for any other name is denied `tool_not_offered` without reaching the hook or the tool. This is an
+ *   extra layer: a tool that was offered still goes through the policy hook.
  * - A hook that throws, or answers with anything but allow, deny or needs_approval, is a deny.
  * - Tier 3 and 4 tools never run on `allow`: they stop for a human (AGO-125, human in the loop).
  * - `needs_approval` emits `approval.requested` (bound to a payload hash) and ends the run as paused.
@@ -78,6 +82,11 @@ export interface AgentLoopDeps {
   readonly modelRouter?: ModelRouter;
   readonly contextBuilder: ContextBuilder;
   readonly tools: ToolRegistry;
+  /**
+   * Decides which registered tools the model is shown (AGO-25), asked before every model call. The model can
+   * only call what it was shown in that step: any other name is denied before the policy hook runs.
+   */
+  readonly toolOffer: ToolOffer;
   readonly policy: PolicyHook;
   readonly limits?: Partial<AgentLoopLimits>;
   /**
@@ -118,6 +127,14 @@ function sliceSafe(text: string, length: number): string {
 function describeError(error: unknown): string {
   return scrubString(error instanceof Error ? error.message : "unknown error").slice(0, 300);
 }
+
+/** Reason code when the model names a tool outside the list it was shown. */
+export const TOOL_NOT_OFFERED = "tool_not_offered";
+/**
+ * Recorded instead of the model's tool name when the call is for a tool it was not offered (AGO-25). The name
+ * is model-controlled text, so it is never stored or logged for a call that did not match an offered tool.
+ */
+export const NOT_OFFERED_TOOL_NAME = "<not_offered>";
 
 const VALID_CALL_ID = /^[\w.:-]{1,128}$/;
 const REASON_CODE = /^[a-z0-9_.-]{1,100}$/;
@@ -251,20 +268,25 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
     index: number,
     signal: AbortSignal,
     policyTimeoutMs: number,
+    offered: ReadonlySet<string>,
   ): Promise<ToolCallResult> {
     const { emitter } = ctx;
     const callId = VALID_CALL_ID.test(call.id) ? call.id : `call_${String(step)}_${String(index)}`;
-    const toolName = call.name.slice(0, 128) === "" ? "unnamed" : call.name.slice(0, 128);
     const tool = deps.tools.get(call.name);
+    // Only the catalog's own name for an offered tool is ever stored; anything else gets the placeholder.
+    const toolName =
+      tool !== undefined && offered.has(call.name) ? tool.name : NOT_OFFERED_TOOL_NAME;
     const tier: CapabilityTier = tool?.tier ?? 4;
     const inputHash = sha256(canonicalJson(call.input));
+    // Only ever hashed: different unlisted names still count as different calls for loop detection.
+    const fingerprintName = call.name.slice(0, 128);
     const source = `tool:${toolName}#${callId}`.slice(0, 200);
     const fail = (text: string): ToolCallResult => ({
       kind: "result",
       isError: true,
       toolName,
       // A call that fails the same way every time is as much a loop as one that succeeds the same way.
-      fingerprint: sha256(`${toolName}\n${inputHash}\nerror:${text}`),
+      fingerprint: sha256(`${fingerprintName}\n${inputHash}\nerror:${text}`),
       record: { source, content: `status: error\n${text}` },
     });
 
@@ -275,46 +297,56 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
 
     // The hook gets its own time budget and an abort signal. It also ends with the run: shutdown or the
     // wall-time limit preempts a hook that never answers.
-    const hookSignal = AbortSignal.any([signal, AbortSignal.timeout(policyTimeoutMs)]);
-    let decision: PolicyDecision;
-    try {
-      const answer = await abortable(
-        callSafely(() =>
-          deps.policy.check(
-            {
-              callId,
-              toolName: call.name,
-              input: call.input,
-              tier,
-              ...(tool?.capabilityKey === undefined ? {} : { capabilityKey: tool.capabilityKey }),
-              isRegistered: tool !== undefined,
-            },
-            {
-              workspaceId: ctx.workspaceId,
-              runId: ctx.runId,
-              agentId: ctx.agentId,
-              step,
-              signal: hookSignal,
-            },
+    const consultPolicy = async (): Promise<PolicyDecision> => {
+      const hookSignal = AbortSignal.any([signal, AbortSignal.timeout(policyTimeoutMs)]);
+      try {
+        const answer = await abortable(
+          callSafely(() =>
+            deps.policy.check(
+              {
+                callId,
+                toolName: call.name,
+                input: call.input,
+                tier,
+                ...(tool?.capabilityKey === undefined ? {} : { capabilityKey: tool.capabilityKey }),
+                isRegistered: tool !== undefined,
+              },
+              {
+                workspaceId: ctx.workspaceId,
+                runId: ctx.runId,
+                agentId: ctx.agentId,
+                step,
+                signal: hookSignal,
+              },
+            ),
           ),
-        ),
-        hookSignal,
-        () => (signal.aborted ? interruption(ctx.signal) : new PolicyTimeoutError()),
-      );
-      const parsed = policyDecisionSchema.safeParse(answer);
-      decision = parsed.success
-        ? parsed.data
-        : { decision: "deny", reasonCode: "policy_invalid_response" };
-    } catch (error) {
-      if (signal.aborted) throw interruption(ctx.signal);
-      const isTimeout = error instanceof PolicyTimeoutError;
-      if (!isTimeout) {
-        ctx.logger.error({ err: error, call_id: callId }, "policy hook failed; denying the call");
+          hookSignal,
+          () => (signal.aborted ? interruption(ctx.signal) : new PolicyTimeoutError()),
+        );
+        const parsed = policyDecisionSchema.safeParse(answer);
+        return parsed.success
+          ? parsed.data
+          : { decision: "deny", reasonCode: "policy_invalid_response" };
+      } catch (error) {
+        if (signal.aborted) throw interruption(ctx.signal);
+        const isTimeout = error instanceof PolicyTimeoutError;
+        if (!isTimeout) {
+          ctx.logger.error({ err: error, call_id: callId }, "policy hook failed; denying the call");
+        }
+        return { decision: "deny", reasonCode: isTimeout ? "policy_timeout" : "policy_hook_error" };
       }
-      decision = {
-        decision: "deny",
-        reasonCode: isTimeout ? "policy_timeout" : "policy_hook_error",
-      };
+    };
+    // A tool the model was not shown this step is denied outright (AGO-25): the hook is not asked, nothing
+    // runs, and the event carries a fixed reason, never the arguments. An unknown or renamed tool lands here too.
+    let decision: PolicyDecision;
+    if (offered.has(call.name)) {
+      decision = await consultPolicy();
+    } else {
+      ctx.logger.warn(
+        { call_id: callId, step },
+        "model asked for a tool it was not offered; denied",
+      );
+      decision = { decision: "deny", reasonCode: TOOL_NOT_OFFERED };
     }
     // Nothing can be executed that is not registered, whatever the hook says.
     if (tool === undefined && decision.decision !== "deny") {
@@ -432,7 +464,7 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
       isError: false,
       toolName,
       // The hash is of the full scrubbed output, not the truncated copy the model sees.
-      fingerprint: sha256(`${toolName}\n${inputHash}\nok:${sha256(safeOutput)}`),
+      fingerprint: sha256(`${fingerprintName}\n${inputHash}\nok:${sha256(safeOutput)}`),
       record: { source, content: `status: ok\ninput: ${inputPreview}\n\n${kept}` },
     };
   }
@@ -551,6 +583,20 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
             });
           }
 
+          // Re-evaluated at every step, so a grant revoked mid-run drops the tool from the next model call.
+          const offeredNames = await abortable(
+            callSafely(() =>
+              deps.toolOffer.offeredToolNames(deps.tools.all(), {
+                workspaceId: ctx.workspaceId,
+                runId: ctx.runId,
+                agentId: ctx.agentId,
+              }),
+            ),
+            signal,
+            () => interruption(ctx.signal),
+          );
+          const offeredTools = deps.tools.list().filter((tool) => offeredNames.has(tool.name));
+
           let response;
           try {
             response = await abortable(
@@ -558,7 +604,7 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
                 provider.complete({
                   system: built.system,
                   messages: built.messages,
-                  tools: deps.tools.list(),
+                  tools: offeredTools,
                   maxOutputTokens: runLimits.maxOutputTokens,
                   signal,
                 }),
@@ -613,7 +659,15 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
           }
           let hadError = false;
           for (const [index, call] of calls.entries()) {
-            const result = await executeToolCall(ctx, call, step, index, signal, policyTimeoutMs);
+            const result = await executeToolCall(
+              ctx,
+              call,
+              step,
+              index,
+              signal,
+              policyTimeoutMs,
+              offeredNames,
+            );
             if (result.kind === "needs_approval") {
               await emitter.emit({ type: "step.completed", payload: { step, outcome: "ok" } });
               return {

@@ -1,4 +1,5 @@
 import { AGENT_MODEL_IDS, type AgentModelId } from "@ago/shared";
+import { offerAllTools } from "./tool-offer.test-helpers.js";
 import { describe, expect, it } from "vitest";
 
 import { createContextBuilder } from "../context/index.js";
@@ -69,6 +70,7 @@ function harness(source: AgentModelSource, onCall: () => void = () => undefined)
   });
   const factory = fakeProviderFactory(onCall);
   const loop = createAgentLoop({
+    toolOffer: offerAllTools,
     modelRouter: createModelRouter({ source, createProvider: factory.createProvider }),
     contextBuilder: createContextBuilder({
       source: {
@@ -191,6 +193,7 @@ describe("createAgentLoop model deps", () => {
       contextBuilder: { build: () => Promise.reject(new Error("unused")) },
       tools: createToolRegistry([]),
       policy: createDenyByDefaultPolicyHook(),
+      toolOffer: offerAllTools,
     };
     expect(() => createAgentLoop(base)).toThrow(/exactly one/);
   });

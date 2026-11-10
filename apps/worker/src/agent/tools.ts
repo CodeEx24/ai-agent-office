@@ -38,6 +38,8 @@ const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
 export interface ToolRegistry {
   list(): readonly ModelToolDefinition[];
   get(name: string): AgentTool | undefined;
+  /** Every registered tool. The tool offer (AGO-25) picks which of them the model is shown. */
+  all(): readonly AgentTool[];
 }
 
 export function createToolRegistry(tools: readonly AgentTool[]): ToolRegistry {
@@ -55,6 +57,7 @@ export function createToolRegistry(tools: readonly AgentTool[]): ToolRegistry {
   return {
     list: () => definitions,
     get: (name) => byName.get(name),
+    all: () => [...byName.values()],
   };
 }
 

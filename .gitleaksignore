@@ -10,3 +10,6 @@ c143d7adf8efc8d86509f91385e60f5345c61da1:scripts/ago-164-acceptance.test.mjs:gen
 dcc4d189ceba7a23d5b9cc034caf2d1c7ccc3b48:scripts/ago-148-qa-round1.test.mjs:generic-api-key:30
 # AGO-136: replaced fake agent-credential fixture (prefix-only guard test), not a real token.
 271a4a1dfbe47b29929969f7483b5d79d2e7d30a:apps/web/e2e/agent-templates-credential-live.spec.ts:generic-api-key:25
+# AGO-25: fake secret fixtures (built at runtime in tests, not real secrets) in the QA test commit.
+7d279840a3e19de5bd091dd5b99482be8cb7ac4c:apps/worker/src/agent/tool-offer.qa.test.ts:generic-api-key:29
+7d279840a3e19de5bd091dd5b99482be8cb7ac4c:apps/worker/src/agent/tool-offer.qa.integration.test.ts:generic-api-key:240
