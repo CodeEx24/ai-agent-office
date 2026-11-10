@@ -8,3 +8,5 @@ c143d7adf8efc8d86509f91385e60f5345c61da1:scripts/ago-164-acceptance.test.mjs:gen
 3aef956980b2701e72e47677aebaaf43c5f1dfe5:apps/worker/src/identity/credential-service.test.ts:generic-api-key:23
 96629c7e1a20ab0baf28d168745b14ceb3b2971a:apps/web/e2e/ago-148-acceptance.spec.ts:generic-api-key:12
 dcc4d189ceba7a23d5b9cc034caf2d1c7ccc3b48:scripts/ago-148-qa-round1.test.mjs:generic-api-key:30
+# AGO-136: replaced fake agent-credential fixture (prefix-only guard test), not a real token.
+271a4a1dfbe47b29929969f7483b5d79d2e7d30a:apps/web/e2e/agent-templates-credential-live.spec.ts:generic-api-key:25

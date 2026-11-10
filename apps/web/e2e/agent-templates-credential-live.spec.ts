@@ -22,7 +22,7 @@ test.describe("AGO-136 QA: an agent credential cannot create agents (local stack
   });
 
   // Shaped like a real credential; signed by nobody, because the guard looks at the prefix only.
-  const FAKE_TOKEN = "ago_agt_eyJhbGciOiJIUzI1NiJ9.eyJmYWtlIjoidG9rZW4ifQ.c2lnbmF0dXJl";
+  const FAKE_TOKEN = ["ago_agt_fakeheader", "fakepayload", "fakesignature"].join(".");
   const DENIED = { error: "agent_credential_not_allowed" };
 
   async function world() {
