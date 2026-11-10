@@ -91,6 +91,9 @@ None. No migration. One read-only query per model call against `agent_capabiliti
 - Team-level policy is not loaded yet (AGO-108); unaffected by this ticket.
 
 ## Testing notes
+- Older AGO-167/AGO-166 tests that sent an unregistered tool name and expected the policy hook to see it now expect
+  the earlier, fixed `tool_not_offered` deny with the hook never consulted (the registry also gained a read-only
+  `all()`). Tests of the rest of the loop use `offerAllTools`. The live fixture grants use `mode = 'automatic'`.
 - `pnpm --filter @ago/worker exec vitest run --maxWorkers=1 src/agent/tool-offer.test.ts src/agent/agent-loop.offer.test.ts`
   (no database).
 - Live test, inside the db lock:

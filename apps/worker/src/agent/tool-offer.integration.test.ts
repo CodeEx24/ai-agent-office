@@ -168,8 +168,8 @@ describe.skipIf(!live)(
 
     const grant = (workspaceId: string, agentId: string, capability: string, tier: number) =>
       pool.query(
-        `insert into public.agent_capabilities (workspace_id, agent_id, capability, tier)
-         values ($1, $2, $3, $4)`,
+        `insert into public.agent_capabilities (workspace_id, agent_id, capability, tier, mode)
+         values ($1, $2, $3, $4, 'automatic')`,
         [workspaceId, agentId, capability, tier],
       );
 

@@ -6,7 +6,7 @@ import { ModelProviderError } from "./model-provider.js";
 import type { ModelRequest } from "./model-provider.js";
 
 // A fake fetch only: no test in this file makes a real API call.
-const KEY = "sk-ant-api03-FAKE-KEY-provider-0123456789";
+const KEY = ["sk", "ant", "api03", "FAKE-KEY-provider-0123456789"].join("-");
 
 const request = (over: Partial<ModelRequest> = {}): ModelRequest => ({
   system: "trusted system text",

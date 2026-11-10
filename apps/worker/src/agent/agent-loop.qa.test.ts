@@ -174,7 +174,8 @@ async function settlesWithin<T>(work: Promise<T>, ms: number): Promise<T | "hung
 
 describe("AGO-167 QA, AC1: the loop ends with a result or a limit event", () => {
   it("AC1: a model that asks for a tool forever is stopped by the step limit, and the run has no result", async () => {
-    const { provider, requests } = scripted(() => one("get_current_time"));
+    // A different input each step: the same call 3 times in a row would be a loop (AGO-166) first.
+    const { provider, requests } = scripted((n) => one("get_current_time", { n }));
     const { loop, ctx, rows } = setup({ provider, limits: { maxSteps: 4 } });
 
     const outcome = await loop.execute(ctx);
@@ -256,9 +257,9 @@ describe("AGO-167 QA, AC1: the loop ends with a result or a limit event", () => 
     expect(tool.run).not.toHaveBeenCalled();
     const decisions = payloadsOf(rows, "policy.decision");
     expect(decisions).toHaveLength(bad.length);
-    expect(decisions.every((d) => d.decision === "deny" && d.reason_code === "unknown_tool")).toBe(
-      true,
-    );
+    expect(
+      decisions.every((d) => d.decision === "deny" && d.reason_code === "tool_not_offered"),
+    ).toBe(true);
     const requested = payloadsOf(rows, "tool_call.requested");
     expect(
       requested.every((p) => String(p.call_id).length <= 128 && String(p.tool_name).length <= 128),
@@ -266,7 +267,8 @@ describe("AGO-167 QA, AC1: the loop ends with a result or a limit event", () => 
   });
 
   it("AC1: an unknown tool asked for on every step ends at the step limit and never executes", async () => {
-    const { provider } = scripted(() => one("does_not_exist"));
+    // A different input each step: three identical denied calls in a row would be a loop (AGO-166) first.
+    const { provider } = scripted((n) => one("does_not_exist", { n }));
     const tool = spyTool("get_current_time", 0);
     const { loop, ctx, rows } = setup({
       provider,
@@ -423,7 +425,8 @@ describe("AGO-167 QA, AC2: every tool call passes the policy hook", () => {
     const many = Array.from({ length: MAX_TOOL_CALLS_PER_STEP + 7 }, (_, i) => ({
       id: `c${String(i)}`,
       name: "get_current_time",
-      input: {},
+      // Distinct inputs: identical results in a row would stop the run as a loop (AGO-166).
+      input: { i },
     }));
     const { provider } = scripted((n) => (n === 1 ? calls(many) : answer("ok")));
     const { loop, ctx } = setup({ provider, tools: createToolRegistry([tool]), policy });
@@ -459,11 +462,13 @@ describe("AGO-167 QA, AC2: every tool call passes the policy hook", () => {
     await loop.execute(ctx);
 
     expect(tool.run).not.toHaveBeenCalled();
-    // MAX_TOOL_CALLS_PER_STEP of them reach the hook; each is reported unregistered at tier 4.
-    expect(policy.check.mock.calls.length).toBeGreaterThan(0);
-    expect(policy.check.mock.calls.every(([call]) => !call.isRegistered && call.tier === 4)).toBe(
-      true,
-    );
+    // None of them was offered to the model, so each is denied before the policy hook is consulted (AGO-25).
+    expect(policy.check).not.toHaveBeenCalled();
+    const decisions = payloadsOf(rows, "policy.decision");
+    expect(decisions.length).toBeGreaterThan(0);
+    expect(
+      decisions.every((d) => d.decision === "deny" && d.reason_code === "tool_not_offered"),
+    ).toBe(true);
     expect(payloadsOf(rows, "tool_call.started")).toEqual([]);
   });
 
@@ -471,7 +476,7 @@ describe("AGO-167 QA, AC2: every tool call passes the policy hook", () => {
     const registry = createToolRegistry([getCurrentTimeTool]);
     const before = registry.list().map((t) => t.name);
 
-    expect(Object.keys(registry).sort()).toEqual(["get", "list"]);
+    expect(Object.keys(registry).sort()).toEqual(["all", "get", "list"]);
     expect(registry.get("late_tool")).toBeUndefined();
     expect(registry.list().map((t) => t.name)).toEqual(before);
   });

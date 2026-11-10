@@ -1,4 +1,4 @@
-import { DEFAULT_CONTEXT_MAX_CHARS } from "@ago/shared";
+import { DEFAULT_CONTEXT_MAX_CHARS, RUN_LIMIT_BOUNDS } from "@ago/shared";
 import { z } from "zod";
 
 import { loadWorkerEnv } from "./env.js";
@@ -43,16 +43,31 @@ export const workerRuntimeSchema = z.object({
   /** Run limits (AGO-167): a run stops with `run.limit_reached` at the first one it hits. */
   AGENT_MAX_STEPS: z.preprocess(
     emptyToUndefined,
-    z.coerce.number().int().min(1).max(200).default(25),
+    z.coerce
+      .number()
+      .int()
+      .min(RUN_LIMIT_BOUNDS.maxSteps.min)
+      .max(RUN_LIMIT_BOUNDS.maxSteps.max)
+      .default(25),
   ),
   AGENT_MAX_TOKENS: z.preprocess(
     emptyToUndefined,
-    z.coerce.number().int().min(1_000).max(5_000_000).default(200_000),
+    z.coerce
+      .number()
+      .int()
+      .min(RUN_LIMIT_BOUNDS.maxTokens.min)
+      .max(RUN_LIMIT_BOUNDS.maxTokens.max)
+      .default(200_000),
   ),
   /** Under the job expiry (900 s) so the loop stops itself before pg-boss gives up on the job. */
   AGENT_MAX_WALL_MS: z.preprocess(
     emptyToUndefined,
-    z.coerce.number().int().min(1_000).max(840_000).default(600_000),
+    z.coerce
+      .number()
+      .int()
+      .min(RUN_LIMIT_BOUNDS.maxWallMs.min)
+      .max(RUN_LIMIT_BOUNDS.maxWallMs.max)
+      .default(600_000),
   ),
   /** Cap on one built context, in characters (about 4 per token). */
   CONTEXT_MAX_CHARS: z.preprocess(

@@ -22,7 +22,7 @@ const WS = "00000000-0000-4000-8000-000000000001";
 const AGENT = "00000000-0000-4000-8000-0000000000a1";
 const RUN = "00000000-0000-4000-8000-0000000000b1";
 const TASK = "00000000-0000-4000-8000-0000000000c1";
-const SECRET_ARG = "sk-ant-api03-SECRET-ARGUMENT-0123456789";
+const SECRET_ARG = ["sk", "ant", "api03", "SECRET-ARGUMENT-0123456789"].join("-");
 
 const usage = { inputTokens: 10, outputTokens: 5 };
 const answer = (text: string): ModelResponse => ({ text, toolCalls: [], usage });

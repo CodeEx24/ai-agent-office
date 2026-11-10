@@ -4,6 +4,8 @@ import { createClaudeProvider } from "./claude-provider.js";
 import { createPgPolicySource, createPolicyEngineHook } from "../policy/index.js";
 import { createPgCredentialStore } from "../identity/index.js";
 import { createPgGrantedCapabilitySource, createToolOffer } from "./tool-offer.js";
+import { createPgAgentRunLimitsSource } from "./pg-run-limits-source.js";
+import { createRunLimitsResolver } from "./run-limits.js";
 import { createToolRegistry, getCurrentTimeTool } from "./tools.js";
 
 import type { WorkerConfig } from "../config.js";
@@ -48,6 +50,18 @@ export function createProductionAgentExecutor(options: {
       maxTokens: config.agentMaxTokens,
       maxWallMs: config.agentMaxWallMs,
     },
+    // Per-agent limits (AGO-166): agents.run_limits overrides the defaults above, always clamped to the caps.
+    limitsResolver: createRunLimitsResolver({
+      defaults: {
+        maxSteps: config.agentMaxSteps,
+        maxTokens: config.agentMaxTokens,
+        maxWallMs: config.agentMaxWallMs,
+      },
+      source: createPgAgentRunLimitsSource(pool),
+      onSourceError: (error) => {
+        logger.error({ err: error }, "could not read an agent's run limits; using defaults");
+      },
+    }),
     contextMaxChars: config.contextMaxChars,
   });
 }

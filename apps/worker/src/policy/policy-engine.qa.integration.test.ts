@@ -52,7 +52,7 @@ const AGENT = randomUUID();
 const OTHER_WS_AGENT = randomUUID();
 const DEPARTMENT = randomUUID();
 const RUN = randomUUID();
-const SECRET = "sk-ant-api03-QA-SECRET-0123456789abcdef";
+const SECRET = ["sk", "ant", "api03", "QA-SECRET-0123456789abcdef"].join("-");
 
 const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
 

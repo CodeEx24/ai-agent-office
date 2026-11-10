@@ -27,8 +27,10 @@ export interface RunExecutionContext {
  * How the loop ended. `completed` (the default) is a result. `limit_reached`: the loop already emitted
  * `run.limit_reached`, so the run is marked failed and no `run.completed` is written. `paused`: a tool
  * call needs a human; the loop already emitted `approval.requested` and the run waits (resume is AGO-30).
+ * `loop_detected` (AGO-166): the loop already emitted `run.loop_detected` after the same tool call repeated with
+ * the same result, so the run is marked failed with no `run.completed`, like a limit.
  */
-export type RunEnd = "completed" | "limit_reached" | "paused";
+export type RunEnd = "completed" | "limit_reached" | "paused" | "loop_detected";
 
 export interface RunOutcome {
   readonly steps: number;
@@ -165,6 +167,15 @@ export function createRunProcessor(deps: RunProcessorDeps) {
         // The loop wrote run.limit_reached, the terminal event. A run that hit a limit has no result.
         await runs.markFinished(ref, RUN_STATUS.failed);
         jobLogger.warn({ job_id: job.id, attempt, steps: outcome.steps }, "run stopped at a limit");
+        return "executed";
+      }
+      if (end === "loop_detected") {
+        // The loop wrote run.loop_detected, the terminal event. A run stuck in a loop has no result.
+        await runs.markFinished(ref, RUN_STATUS.failed);
+        jobLogger.warn(
+          { job_id: job.id, attempt, steps: outcome.steps },
+          "run stopped: loop detected",
+        );
         return "executed";
       }
       if (end === "paused") {
