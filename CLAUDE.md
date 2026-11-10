@@ -1,4 +1,9 @@
 # CLAUDE.md - Agent Office Engineering Guide
+@~/.claude/workflows/ai-delivery-workflow.md
+
+Project-specific delivery rules (concurrency cap, merge path, ticket type mapping, checks and
+cost scripts, device lane): `docs/workflow/README.md`.
+
 Working memory for the Agent Office codebase. Read before writing code.
 > PM project: Agent Office (key AGO). Every branch, commit and PR references AGO-###.
 
@@ -75,5 +80,22 @@ supabase start      supabase db reset  supabase migration new <name>
 ```
 
 ## 10. AI delivery workflow
-`/plan-waves` → `/run-waves` (one Orca worktree per ticket running `/implement-ticket`) → `/pr-gate` (independent review, squash merge, Jira Done with PR link). Runbook, escalation rules and guardrails: `docs/ai-workflow.md`.
+`/loop /deliver AGO` drives delivery: `/plan-waves` (once) → `/implement-ticket` per ready ticket (one Orca worktree each, cap 3) → gate (`scripts/workflow/checks`) → testers → reviewers → approver → explainer → `/merge-ticket` (agent merges; Jira Done with PR link). Project values, risk tiers and the merge path: `docs/workflow/README.md`; review rules: `docs/workflow/REVIEW.md`; local backend recipe: `docs/setup/local-backend.md`.
+The old `/run-waves` → `/pr-gate` loop is legacy: only for tickets already in flight when `/deliver` was adopted (AGO-166, AGO-94, AGO-136, AGO-25). Its runbook and the shared guardrails: `docs/ai-workflow.md`.
 > Keep CLAUDE.md canonical; critical rules are mirrored in AGENTS.md.
+
+# Compact instructions
+
+State lives in files: `.delivery/orchestrator.json` and `.delivery/jobs/AGO-<n>/`. After
+compaction, re-read them instead of trusting the summary.
+
+When compacting, keep:
+
+- **Orchestrator (`/deliver`, `/loop /deliver`, watcher):** the project key and concurrency
+  cap; every running ticket with its stage, round and worker / dispatch ids; who holds the
+  device lane; pending owner questions (needs-human, ready-to-merge); the last cycle summary.
+- **Ticket worker (`/implement-ticket`):** the ticket key, type and risk; the current stage and
+  round; open CHANGES items; the pending owner question; the branch, worktree path and PR URL.
+
+Drop: file contents already committed, full test logs, review report bodies (they are in
+`.delivery/jobs/AGO-<n>/round-N/`), and screenshots.

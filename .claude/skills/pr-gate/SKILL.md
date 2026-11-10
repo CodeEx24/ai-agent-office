@@ -1,7 +1,8 @@
 ---
 name: pr-gate
 description: >-
-  Independent merge gate for Agent Office pull requests. Wait for green CI, run the local gates,
+  LEGACY (AGO-205): only for PRs of tickets already in flight (AGO-166, AGO-94, AGO-136, AGO-25);
+  new tickets are gated and merged under `/deliver` (docs/workflow/README.md). Independent merge gate for Agent Office pull requests. Wait for green CI, run the local gates,
   verify each acceptance criterion, and review the diff through parallel lenses (correctness,
   security/OWASP, project invariants, database/RLS, React/TS, CI and supply chain). Verify every
   finding, post the verdict on the PR, and squash-merge only when everything is clean. Then
