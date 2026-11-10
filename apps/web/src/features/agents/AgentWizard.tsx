@@ -15,6 +15,7 @@ import {
   type AgentField,
   type AgentFieldErrors,
 } from "@ago/shared/agent-limits";
+import { AGENT_TEMPLATES, findAgentTemplate } from "@ago/shared/agent-templates";
 import { Button, Input, Label } from "@ago/ui";
 
 import { createAgentAction } from "./actions";
@@ -142,6 +143,29 @@ export function AgentWizard({
     setDraft((current) => ({ ...current, ...patch }));
   };
 
+  // A template only pre-fills the draft (AGO-136): everything stays editable and is reviewed before creating.
+  // Capabilities the workspace does not offer are left out, and a Tier 3 or 4 one is always "approval".
+  function applyTemplate(templateId: string) {
+    const template = findAgentTemplate(templateId);
+    if (!template) return;
+    const offered = new Map(capabilities.map((capability) => [capability.key, capability]));
+    const grants: Record<string, CapabilityMode> = {};
+    for (const grant of template.capabilities) {
+      const capability = offered.get(grant.key);
+      if (!capability) continue;
+      grants[grant.key] = capability.tier >= MIN_APPROVAL_ONLY_TIER ? "approval" : grant.mode;
+    }
+    update({
+      name: template.name,
+      role: template.role,
+      model: template.model,
+      prompt: template.prompt,
+      dailyBudget: (template.dailyBudgetCents / 100).toFixed(2),
+      capabilities: grants,
+    });
+    setErrors({});
+  }
+
   function validate(fields: readonly AgentField[]): boolean {
     const all = checkAgentDraft(draft);
     const relevant: AgentFieldErrors = {};
@@ -225,6 +249,27 @@ export function AgentWizard({
 
       {step.id === "basics" ? (
         <div className="grid gap-3">
+          <Label htmlFor="agent-template">Start from a template (optional)</Label>
+          <select
+            id="agent-template"
+            defaultValue=""
+            onChange={(event) => {
+              applyTemplate(event.target.value);
+            }}
+            aria-describedby="agent-template-hint"
+            className={FIELD_CLASS}
+          >
+            <option value="">No template</option>
+            {AGENT_TEMPLATES.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.name}: {template.summary}
+              </option>
+            ))}
+          </select>
+          <p id="agent-template-hint" className="text-sm text-muted-foreground">
+            Fills in the fields below. You can change anything and review it before it is created.
+          </p>
+
           <Label htmlFor={fieldId("name")}>{AGENT_FIELD_LABELS.name}</Label>
           <Input
             id={fieldId("name")}
