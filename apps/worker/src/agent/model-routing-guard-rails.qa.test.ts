@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { offerAllTools } from "./tool-offer.test-helpers.js";
 import { z } from "zod";
 
 import { createContextBuilder, type RunContext } from "../context/index.js";
@@ -81,6 +82,7 @@ function setup(options: { readonly storedModel: string | null; readonly runLimit
   const calls: string[] = [];
   const search = searchTool();
   const loop = createAgentLoop({
+    toolOffer: offerAllTools,
     modelRouter: createModelRouter({
       source: { loadAgentModel: () => Promise.resolve(options.storedModel) },
       createProvider: (model): ModelProvider => {

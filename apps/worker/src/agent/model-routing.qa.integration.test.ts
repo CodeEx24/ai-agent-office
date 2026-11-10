@@ -2,6 +2,7 @@
 // store and context builder, with a fake provider that records the model id of every call. No network, no
 // API key, no real model call. Skips itself when the local Supabase stack is down.
 // Run it inside the db lock:  node scripts/db-lock.mjs acquire AGO-94-qa ... release AGO-94-qa
+import { offerAllTools } from "./tool-offer.test-helpers.js";
 import { randomUUID } from "node:crypto";
 
 import { AGENT_MODEL_IDS } from "@ago/shared";
@@ -104,6 +105,7 @@ describe.skipIf(!live)(
       let step = 0;
       const logger = createLogger({ level: "silent" });
       const executor = createAgentLoop({
+        toolOffer: offerAllTools,
         modelRouter: createModelRouter({
           source: createPgAgentModelSource(pool),
           createProvider: (model): ModelProvider => {

@@ -130,6 +130,11 @@ function describeError(error: unknown): string {
 
 /** Reason code when the model names a tool outside the list it was shown. */
 export const TOOL_NOT_OFFERED = "tool_not_offered";
+/**
+ * Recorded instead of the model's tool name when the call is for a tool it was not offered (AGO-25). The name
+ * is model-controlled text, so it is never stored or logged for a call that did not match an offered tool.
+ */
+export const NOT_OFFERED_TOOL_NAME = "<not_offered>";
 
 const VALID_CALL_ID = /^[\w.:-]{1,128}$/;
 const REASON_CODE = /^[a-z0-9_.-]{1,100}$/;
@@ -267,17 +272,21 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
   ): Promise<ToolCallResult> {
     const { emitter } = ctx;
     const callId = VALID_CALL_ID.test(call.id) ? call.id : `call_${String(step)}_${String(index)}`;
-    const toolName = call.name.slice(0, 128) === "" ? "unnamed" : call.name.slice(0, 128);
     const tool = deps.tools.get(call.name);
+    // Only the catalog's own name for an offered tool is ever stored; anything else gets the placeholder.
+    const toolName =
+      tool !== undefined && offered.has(call.name) ? tool.name : NOT_OFFERED_TOOL_NAME;
     const tier: CapabilityTier = tool?.tier ?? 4;
     const inputHash = sha256(canonicalJson(call.input));
+    // Only ever hashed: different unlisted names still count as different calls for loop detection.
+    const fingerprintName = call.name.slice(0, 128);
     const source = `tool:${toolName}#${callId}`.slice(0, 200);
     const fail = (text: string): ToolCallResult => ({
       kind: "result",
       isError: true,
       toolName,
       // A call that fails the same way every time is as much a loop as one that succeeds the same way.
-      fingerprint: sha256(`${toolName}\n${inputHash}\nerror:${text}`),
+      fingerprint: sha256(`${fingerprintName}\n${inputHash}\nerror:${text}`),
       record: { source, content: `status: error\n${text}` },
     });
 
@@ -455,7 +464,7 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
       isError: false,
       toolName,
       // The hash is of the full scrubbed output, not the truncated copy the model sees.
-      fingerprint: sha256(`${toolName}\n${inputHash}\nok:${sha256(safeOutput)}`),
+      fingerprint: sha256(`${fingerprintName}\n${inputHash}\nok:${sha256(safeOutput)}`),
       record: { source, content: `status: ok\ninput: ${inputPreview}\n\n${kept}` },
     };
   }
