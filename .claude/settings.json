@@ -56,7 +56,16 @@
       "Edit(**/*.json)",
       "Write(**/*.js)",
       "Write(**/*.ts)",
-      "Write(**/*.py)"
+      "Write(**/*.py)",
+      "Bash(gh pr edit*)", 
+      "Bash(gh pr ready*)", 
+      "Bash(gh issue view*)",
+      "Bash(git show*)", 
+      "Bash(git worktree list*)", 
+      "Bash(git push origin *)",
+      "Bash(scripts/workflow/checks*)", 
+      "Bash(scripts/workflow/cost*)",
+      "Bash(bash scripts/workflow/checks.sh*)"
     ],
     "deny": [
       "Read(./.env)",
@@ -72,7 +81,16 @@
       "Read(./config/credentials.json)",
       "Read(./.env*)",
       "Bash(rm -rf:*)",
-      "Bash(sudo:*)"
+      "Bash(sudo:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push origin --force:*)",
+      "Bash(git push origin -f:*)",
+      "Bash(git push origin main:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean -fd:*)",
+      "Bash(git branch -D main:*)",
+      "Bash(gh repo delete:*)"
     ]
   },
   "hooks": {
@@ -96,7 +114,8 @@
   "env": {
     "USE_BUILTIN_RIPGREP": "1",
     "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1",
-    "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "0"
+    "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "0",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "300000"
   },
   "model": "sonnet",
   "advisorModel": "opus"
