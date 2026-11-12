@@ -22,3 +22,4 @@ export function describeWorkspace(packageName: string): string {
 export type { Database, Json } from "./db/database.types.js";
 export * from "./events/index.js";
 export * from "./agents/run-limits.js";
+export * from "./credentials/broker-schemas.js";
