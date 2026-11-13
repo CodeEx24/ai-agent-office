@@ -1,6 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import {
+  APPROVAL_ACTION_MAX_LENGTH,
+  APPROVAL_STATUS,
   CONTEXT_TEXT_MAX_LENGTH,
   DEFAULT_CONTEXT_MAX_CHARS,
   emptyRunCheckpointState,
@@ -12,6 +14,7 @@ import {
 } from "@ago/shared";
 import { z } from "zod";
 
+import { approvalIdFor, type ApprovalStore } from "../approvals/index.js";
 import { ContextBuildError, type ContextBuilder } from "../context/index.js";
 import { scrubString } from "../logger.js";
 import {
@@ -47,9 +50,11 @@ import type { CapabilityTier, RetrievedItem } from "@ago/shared";
  *   extra layer: a tool that was offered still goes through the policy hook.
  * - A hook that throws, or answers with anything but allow, deny or needs_approval, is a deny.
  * - Tier 3 and 4 tools never run on `allow`: they stop for a human (AGO-125, human in the loop).
- * - `needs_approval` emits `approval.requested` (bound to a payload hash) and ends the run as paused.
- *   The tool is never executed here. A resumed run treats the stored call as denied (AGO-30); AGO-21 adds the
- *   decision. An approval nobody decides expires = deny.
+ * - `needs_approval` creates a pending `approvals` row (AGO-21), emits `approval.requested` (bound to a payload
+ *   hash) and ends the run as paused. The tool is never executed here. On resume the call reads its approval:
+ *   still pending and unexpired, the run pauses again; past `expires_at`, the loop expires it itself (timeout
+ *   means deny, even if the sweep is late or down) and the model is told; anything else, including `approved`
+ *   until AGO-47 binds approvals to the payload hash, is a deny. The tool runs in none of these paths.
  * - Checkpoints (AGO-30): the loop saves its state after the model answers, before each tool runs and after each
  *   one finishes. A retry or a resume restores it: finished calls are not run again, and a call that started
  *   but has no saved result is never re-run (its outcome is recorded as unknown).
@@ -106,6 +111,11 @@ export interface AgentLoopDeps {
    * starting over. Omitted: nothing is saved and a retried run starts from step 1, as before.
    */
   readonly checkpoints?: CheckpointStore;
+  /**
+   * Where approval requests are kept (AGO-21). A call that needs approval gets a `pending` row here before the
+   * run pauses. Omitted: no row is made, and a resumed call is denied (nothing can ever approve it).
+   */
+  readonly approvals?: ApprovalStore;
   readonly limits?: Partial<AgentLoopLimits>;
   /**
    * Per-agent step, token and wall-time limits (AGO-166), looked up at the start of each run. They replace the
@@ -441,14 +451,31 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
 
     if (decision.decision === "needs_approval" || tool === undefined) {
       const payloadHash = sha256(canonicalJson({ tool_name: call.name, input: call.input }));
+      // The id comes from the run, step and call, so a retry finds the row it already made (AGO-21).
+      const approvalId = approvalIdFor({ runId: ctx.runId, step, callId });
+      let expiresAt = new Date(now() + approvalTtlMs);
+      if (deps.approvals !== undefined) {
+        // The row exists before the event and before the run pauses. A failure here throws: the run errors and
+        // the queue retries, and the tool is never run.
+        const stored = await deps.approvals.create({
+          workspaceId: ctx.workspaceId,
+          runId: ctx.runId,
+          agentId: ctx.agentId,
+          approvalId,
+          action: toolName.slice(0, APPROVAL_ACTION_MAX_LENGTH),
+          payloadHash,
+          expiresAt,
+        });
+        expiresAt = stored.expiresAt;
+      }
       await emitter.emit({
         type: "approval.requested",
         payload: {
-          approval_id: randomUUID(),
+          approval_id: approvalId,
           call_id: callId,
           payload_hash: payloadHash,
           tier,
-          expires_at: new Date(now() + approvalTtlMs).toISOString(),
+          expires_at: expiresAt.toISOString(),
         },
       });
       return { kind: "needs_approval", payloadHash };
@@ -694,6 +721,87 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
         return unrunResult(deps.tools.get(call.name)?.name, call, errorCode, text);
       };
 
+      /**
+       * What a resumed `awaiting_approval` call does (AGO-21): wait again, or close without running. The tool is
+       * never run from here, whatever the approval says: `approved` is not honoured until AGO-47 binds it to the
+       * payload hash and makes it single use, so it fails closed like every other status except a live `pending`.
+       */
+      const resolveApproval = async (
+        step: number,
+        call: CheckpointCall,
+      ): Promise<
+        | { readonly kind: "waiting" }
+        | {
+            readonly kind: "closed";
+            readonly errorCode: string;
+            readonly message: string;
+            readonly text: string;
+          }
+      > => {
+        const notGranted = {
+          kind: "closed",
+          errorCode: "approval_not_granted",
+          message: "no approval was recorded for this call",
+          text: "The tool call needed a human approval that was not given. It was not run.",
+        } as const;
+        const store = deps.approvals;
+        if (store === undefined) return notGranted;
+        const ref = {
+          workspaceId: ctx.workspaceId,
+          approvalId: approvalIdFor({ runId: ctx.runId, step, callId: call.call_id }),
+        };
+        let approval = await store.get(ref);
+        // No row, or a row for another payload than the one this call stored: nothing is bound to this call.
+        if (approval === null || approval.payloadHash !== call.payload_hash) return notGranted;
+
+        if (approval.status === APPROVAL_STATUS.pending) {
+          if (approval.expiresAt.getTime() > now()) return { kind: "waiting" };
+          // Past its time: timeout means deny, right here, even if the sweep is late or down. Only the caller
+          // that moves the row writes the event, so the sweep and this path never both record it.
+          const moved = await store.expire(ref, new Date(now()));
+          if (moved !== null) {
+            await emitter.emit({
+              type: "approval.decided",
+              payload: {
+                approval_id: ref.approvalId,
+                outcome: "expired",
+                decided_by: "timeout",
+                payload_hash: approval.payloadHash,
+              },
+            });
+          }
+          approval = await store.get(ref);
+          if (approval === null) return notGranted;
+          // Still pending after the attempt, though past its time: it is an expiry all the same.
+          if (approval.status === APPROVAL_STATUS.pending) {
+            return {
+              kind: "closed",
+              errorCode: "approval_expired",
+              message: "the approval request expired",
+              text: "The approval request for this tool call expired before a human answered. It was not run.",
+            };
+          }
+        }
+
+        if (approval.status === APPROVAL_STATUS.rejected) {
+          return {
+            kind: "closed",
+            errorCode: "approval_expired",
+            message: "the approval request expired",
+            text: "The approval request for this tool call expired before a human answered. It was not run.",
+          };
+        }
+        if (approval.status === APPROVAL_STATUS.denied) {
+          return {
+            kind: "closed",
+            errorCode: "approval_denied",
+            message: "a human denied the approval request",
+            text: "A human denied this tool call. It was not run.",
+          };
+        }
+        return notGranted;
+      };
+
       const runSteps = async (): Promise<RunOutcome> => {
         for (;;) {
           if (isShuttingDown()) throw interruption(ctx.signal);
@@ -839,13 +947,22 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
             if (call.status === "done") continue;
             let result: ToolCallResult;
             if (call.status === "awaiting_approval") {
-              // The run was resumed, but nothing here records an approval for this call: it is a deny (AGO-21 adds
-              // the decision source). Timeout and silence mean deny.
+              // The run was resumed: read the approval (AGO-21). Live and pending, wait again (no new request, no
+              // new step.completed: the first pause already wrote it). Anything else closes the call unrun.
+              const resolution = await resolveApproval(current.step, call);
+              if (resolution.kind === "waiting") {
+                return {
+                  steps,
+                  end: "paused",
+                  pauseReason: "approval_required",
+                  summary: "waiting for a human to approve a tool call",
+                };
+              }
               result = await closeWithoutRunning(
                 call,
-                "approval_not_granted",
-                "no approval was recorded for this call",
-                "The tool call needed a human approval that was not given. It was not run.",
+                resolution.errorCode,
+                resolution.message,
+                resolution.text,
               );
             } else if (call.status === "started") {
               // The worker stopped after this call began and before its result was saved. It may have run, so it

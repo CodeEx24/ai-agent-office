@@ -134,9 +134,15 @@ describe("run event schemas", () => {
     ).toBe(false);
   });
 
-  it("only a human can resume a run", () => {
+  it("only a human, or an approval timeout, can resume a run; an agent never can", () => {
     expect(runEventSchema.safeParse(wrap("run.resumed", { resumed_by: "agent" })).success).toBe(
       false,
+    );
+    expect(runEventSchema.safeParse(wrap("run.resumed", { resumed_by: "human" })).success).toBe(
+      true,
+    );
+    expect(runEventSchema.safeParse(wrap("run.resumed", { resumed_by: "timeout" })).success).toBe(
+      true,
     );
   });
 });

@@ -1,3 +1,4 @@
+import { createPgApprovalStore } from "../approvals/index.js";
 import { createContextBuilder, createPgRunContextSource } from "../context/index.js";
 import { createAgentLoop } from "./agent-loop.js";
 import { createPgCheckpointStore } from "./checkpoint-store.js";
@@ -71,5 +72,7 @@ export function createProductionAgentExecutor(options: {
     contextMaxChars: config.contextMaxChars,
     // AGO-30: the run's state is saved between tool calls, so a retry or a resume does not repeat a call.
     checkpoints: createPgCheckpointStore(pool),
+    // AGO-21: a call that needs approval gets a pending approval row before the run pauses.
+    approvals: createPgApprovalStore(pool),
   });
 }
