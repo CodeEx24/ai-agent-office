@@ -91,7 +91,7 @@
           },
           "autonomyMode": {
             "type": "string",
-            "enum": ["strict", "standard"]
+            "enum": ["strict", "standard", "relaxed"]
           },
           "department": {
             "type": "string",
