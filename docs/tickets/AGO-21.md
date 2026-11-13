@@ -2,19 +2,19 @@
 
 ## Links
 - Ticket: https://stratyge.atlassian.net/browse/AGO-21
-- PRs: https://github.com/CodeEx24/ai-agent-office/pull/62 (draft)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/62
 - Related: AGO-34 (policy engine, done), AGO-30 (checkpoint, pause, resume, done); unblocks AGO-37 (inbox UI), AGO-47 (payload-hash binding, single use), AGO-51 (timeout means deny), AGO-58 (human-only routes)
 
-Status: In progress · Type: Feature · Risk: high (human-in-the-loop invariant, `approvals` table) · Wave 2
+Status: Merged · Type: Feature · Risk: high (human-in-the-loop invariant, `approvals` table) · Wave 2
 
 ## Overview
 Today the loop only emits an `approval.requested` event when a call escalates, then pauses the run. No `approvals` row exists, nothing expires, and a resumed run treats the call as denied. This ticket makes the request real: a pending row, a run that waits, and a sweep that expires old requests into a rejected state and tells the agent.
 
 ## Acceptance criteria (verbatim)
-- [ ] Given an escalated call, when raised, then a pending approval exists and the run waits
-- [ ] An expired approval becomes rejected and the agent is told
-- [ ] No approval exists for a Tier 0 or 1 call
-- [ ] Tests pass, no regressions, PR reviewed and merged, docs updated (see Definition of Done)
+- [x] Given an escalated call, when raised, then a pending approval exists and the run waits
+- [x] An expired approval becomes rejected and the agent is told
+- [x] No approval exists for a Tier 0 or 1 call
+- [x] Tests pass, no regressions, PR reviewed and merged, docs updated (see Definition of Done)
 
 ## Implementation details (proposed)
 1. **Approval store port** (`apps/worker/src/approvals/`): `ApprovalStore` with a pg implementation. All statements scoped by `workspace_id`.
@@ -74,4 +74,10 @@ Known accepted gaps: the `approval.decided` event can be missing if the sweep's 
 - AGO-47: two calls with the same call id in one step share one approval row (the id is derived from run, step and call id); bind approvals to the payload hash and single use so that cannot let one grant cover two calls.
 
 ## Outcome
-Feature guide: [docs/features/approvals.md](../features/approvals.md). (Rest filled at merge.)
+Feature guide: [docs/features/approvals.md](../features/approvals.md).
+
+- All four acceptance criteria met (approver APPROVE, round 2).
+- Rounds: r1 gate, tester-functional and code/security/invariants reviews PASS; r2 hardened the timeout wake so it wakes only the exact waiting run and never overrides a human pause (gate, security and invariants PASS on 0cb2e73).
+- Deviations: approval id derived from run, step and call id instead of stored; expiry sweep runs on an interval timer instead of a pg-boss job.
+- Accepted gaps (Decision 4): the expiry-wake check-then-act window must be fixed in or before AGO-58 (noted on AGO-58); the approval.decided write on expiry is not retried.
+- Follow-ups: AGO-47 handles duplicate call ids per step and real grants (approved rows stay deny-by-default until then); resumeRun with an undefined actor should raise HumanActorRequiredError.
