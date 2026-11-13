@@ -247,7 +247,10 @@ describe("agent tool loop: result path (AC1)", () => {
 });
 
 describe("agent tool loop: limits (AC1)", () => {
-  const forever = () => fakeProvider(() => callTool("get_current_time"));
+  // A distinct input each step: get_current_time returns the same output when two calls land in
+  // the same clock tick, so identical calls would trip loop detection before the limit (AGO-206).
+  const forever = () =>
+    fakeProvider((n) => callTool("get_current_time", { n }, `toolu_${String(n)}`));
 
   it("stops at the step limit with run.limit_reached", async () => {
     const { provider, requests } = forever();
