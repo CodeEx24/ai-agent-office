@@ -14,20 +14,20 @@ select plan(49);
 -- ---------------------------------------------------------------------------------------------
 select is(
   (select count(*)::int from pg_class where relnamespace = 'public'::regnamespace and relkind in ('r', 'p')),
-  18, 'AC1: public holds exactly 18 tables (13 core + policies + capabilities + skill_versions + agent_identities + agent_credentials)');
+  19, 'AC1: public holds exactly 19 tables (13 core + policies + capabilities + skill_versions + agent_identities + agent_credentials + agent_versions)');
 
 select is(
   (select array_agg(relname::text order by relname) from pg_class
     where relnamespace = 'public'::regnamespace and relkind in ('r', 'p')),
-  array['agent_capabilities','agent_credentials','agent_identities','agent_skills','agents','approvals','budgets_usage','capabilities','claims','members',
+  array['agent_capabilities','agent_credentials','agent_identities','agent_skills','agent_versions','agents','approvals','budgets_usage','capabilities','claims','members',
         'notes_index','policies','run_events','runs','skill_versions','skills','tasks','workspaces'],
-  'AC1: the 18 tables are the specified ones');
+  'AC1: the 19 tables are the specified ones');
 
 select is(
   (select count(*)::int from pg_constraint k
     where k.contype = 'f' and k.connamespace = 'public'::regnamespace and k.confrelid <> 'public.workspaces'::regclass
       and k.confrelid <> 'auth.users'::regclass),
-  23, 'AC1: 23 parent foreign keys between core tables (16 core + 2 on policies + 2 on skill_versions + 3 on agent_identities and agent_credentials)');
+  25, 'AC1: 25 parent foreign keys between core tables (16 core + 2 on policies + 2 on skill_versions + 3 on agent_identities and agent_credentials + 2 on agent_versions)');
 
 select is(
   (select count(*)::int from pg_constraint
@@ -260,14 +260,14 @@ begin
   end loop;
 end $$;
 
-select is((select count(*)::int from qa_results), 72, 'SEC: 2 roles x 18 tables x (select, insert) were attempted');
+select is((select count(*)::int from qa_results), 76, 'SEC: 2 roles x 19 tables x (select, insert) were attempted');
 -- AGO-107: anon is denied everything (42501). authenticated may SELECT every table (membership RLS
 -- filters the rows; see rls_every_table.test.sql) but a bare `insert ... default values` can never
 -- succeed: it has no workspace_id, so no policy can pass it.
-select is((select count(*)::int from qa_results where role_name = 'anon' and outcome = 'denied'), 36,
-  'SEC: anon is denied select and insert on all 18 tables (42501)');
-select is((select count(*)::int from qa_results where role_name = 'authenticated' and op = 'select' and outcome = 'allowed'), 18,
-  'SEC: authenticated may select all 18 tables (rows are filtered by RLS)');
+select is((select count(*)::int from qa_results where role_name = 'anon' and outcome = 'denied'), 38,
+  'SEC: anon is denied select and insert on all 19 tables (42501)');
+select is((select count(*)::int from qa_results where role_name = 'authenticated' and op = 'select' and outcome = 'allowed'), 19,
+  'SEC: authenticated may select all 19 tables (rows are filtered by RLS)');
 select is((select count(*)::int from qa_results where role_name = 'authenticated' and op = 'insert' and outcome = 'allowed'), 0,
   'SEC: authenticated can never insert a row without a workspace_id');
 

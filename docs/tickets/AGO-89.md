@@ -25,7 +25,7 @@ Out (follow-ups below): editing an agent's skills or capability grants after cre
 
 **Web** (`apps/web/src/features/agents/`): `edit-agent.ts` (logic and error mapping behind an `AgentEditor` interface so it is testable without a database), `agent-editor.ts` (server-only; the RPC calls), actions `updateAgentAction`, `duplicateAgentAction`, `archiveAgentAction`, `unarchiveAgentAction` in `actions.ts` (human-only check, `parseInput`, owner check, revalidate), `AgentEditForm.tsx`, `AgentRowActions.tsx`, `AgentVersionList.tsx`, route `/app/agents/[agentId]`.
 
-**Database**: not yet created; waits for the schema slot. See below.
+**Database**: migration `20261113050001_ago_89_edit_duplicate_archive_agents.sql` (built; rollback and pgTAP `supabase/tests/agent_versions.test.sql`, 60 assertions). See below. **Routes**: `/app/agents/[agentId]` (edit form for owners, read-only for others, version history) and the agent list gains row actions (owners) and an Archived section.
 
 ## Boundaries
 - **Always:** scope by `workspace_id`; owner role checked in the action, the library and the RPC; validate with Zod at the action; write every change through an RPC and let a trigger write the version row; keep the version table append-only.
@@ -35,7 +35,9 @@ Out (follow-ups below): editing an agent's skills or capability grants after cre
 ## API changes
 No HTTP routes. Four server actions (owner only, human only): update, duplicate, archive, unarchive. RPCs: `update_agent`, `duplicate_agent`, `archive_agent`, `unarchive_agent` (authenticated, SECURITY INVOKER).
 
-## Database changes (planned; migration `<timestamp>_ago_89_edit_duplicate_archive_agents.sql` + rollback)
+## Database changes (as built; migration `20261113050001_ago_89_edit_duplicate_archive_agents.sql` + rollback)
+Built as planned below, with these additions found while building: (1) AGO-107 let **members** update agents (name, description, archived_at), which would have let a member rewrite a prompt or archive an agent, so `agents_update_member` is replaced by `agents_update_owner` and the update grant is now exactly name, role, model, thinking_effort, prompt, daily_budget_cents, archived_at (`description` is no longer directly editable: it was unaudited and has no UI); (2) the version trigger compares only the tracked columns and `archived_at`, so worker writes to `status` or `run_limits` create no version; (3) a direct edit of an archived agent is refused by the trigger as well as by the RPC; (4) the tasks guard fires on insert and when `agent_id` changes, so an existing assignment survives the archive; (5) `run_limits` has no grant (AGO-166) so a copy starts with worker defaults; (6) the catalog tests (`core_schema`, `core_schema_qa`, `rls_catalog`, `rls_every_table`, `rls_every_table_qa`) and `docs/database.md` were updated for the new table, policy and functions.
+
 - `agents.thinking_effort text not null default 'medium' check in ('low','medium','high')`, `agents.version integer not null default 1`.
 - `agent_versions` (append-only, like `skill_versions`): `workspace_id, agent_id, version, change_kind (create|edit|archive|unarchive), changed_fields text[], name, role, model, thinking_effort, prompt, daily_budget_cents, changed_by (member id), created_at`. A trigger on `agents` writes a row on insert and on every change to a tracked column or `archived_at`, so no code path edits an agent without leaving a version. UPDATE/TRUNCATE raise; DELETE only through the parent cascade. `prompt` is stored in full (untrusted text, never executed).
 - `update_agent(...)`: owner check, optimistic lock (`p_expected_version`; stale = error), updates only the six editable columns, returns the new version. Column-level update grants on `agents` cover only those columns and `archived_at`; `mode`, `status`, `department_id` and identity columns stay ungranted.
@@ -54,6 +56,8 @@ No HTTP routes. Four server actions (owner only, human only): update, duplicate,
 | Archived agents and tasks | DB trigger on `tasks` now; worker claim-path check is a follow-up | Owner via coordinator, 2026-11-10 |
 | Edit scope | Skills and capability grants are not editable here | Worker, keeps permission changes out of this ticket; owner can overrule |
 | Concurrent edits | Optimistic lock on `version` | Worker |
+| Who may update `agents` | Owners only (replaces the AGO-107 member policy) | Worker, closes a member write path; owner can overrule |
+| Version author label | "You" or "A workspace <role>" (members have no display name yet) | Worker |
 
 ## Dependencies on other tickets
 AGO-141 (agents columns, wizard, `agentCreator`), AGO-128 (version table pattern), AGO-148 (human-only guard), AGO-94 (model allowlist), AGO-82 and AGO-107 (roles, RLS). The migration needs the schema slot (held by AGO-30 until granted).
