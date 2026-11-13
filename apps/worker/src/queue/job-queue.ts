@@ -14,6 +14,7 @@ import {
 } from "./run-job.js";
 import { createRunProcessor, type RunExecutor } from "./run-processor.js";
 import { createPgRunStore } from "./run-store.js";
+import { createPgCheckpointStore } from "../agent/checkpoint-store.js";
 
 import type { QueueDepth, QueueReport } from "../health.js";
 import type { ErrorTracker } from "../sentry.js";
@@ -23,6 +24,8 @@ export interface EnqueueRunInput {
   readonly runId: string;
   /** Optional caller key; the same key never executes twice. Defaults to the run id. */
   readonly idempotencyKey?: string;
+  /** A resumed run (AGO-30) was created before: no second `run.created` event. */
+  readonly isResume?: boolean;
 }
 
 export interface EnqueueRunResult {
@@ -124,6 +127,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
   pool.on("error", () => undefined);
   const runs = createPgRunStore(pool);
   const events = createPgRunEventStore(pool);
+  const checkpoints = createPgCheckpointStore(pool);
 
   let state: QueueState = "starting";
   const isStopped = (): boolean => state === "stopped";
@@ -176,6 +180,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
           executor: options.executor,
           logger,
           errorTracker,
+          checkpoints,
           retryLimit: policy.retryLimit,
           staleAfterSeconds: policy.expireInSeconds,
         });
@@ -274,6 +279,10 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
       if (jobId === null) {
         jobLogger.info("duplicate enqueue ignored");
         return { enqueued: false, jobId: null };
+      }
+      if (input.isResume === true) {
+        jobLogger.info({ job_id: jobId }, "resumed run enqueued");
+        return { enqueued: true, jobId };
       }
       try {
         await createRunEventEmitter({

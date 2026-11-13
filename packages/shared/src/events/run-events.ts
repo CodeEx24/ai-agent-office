@@ -51,6 +51,8 @@ export const RUN_EVENT_SCHEMAS = [
   event("run.paused", { requested_by: actor, reason: code }),
   // Humans resume; an agent can never resume itself (human in the loop).
   event("run.resumed", { resumed_by: z.literal("human") }),
+  // A retry picked the run up from its checkpoint (AGO-30): counts only, never the stored content.
+  event("run.recovered", { step: count, completed_calls: count }),
   event("run.stopped", { stopped_by: actor, reason: code }),
   event("run.limit_reached", {
     limit: z.enum(["steps", "tokens", "time"]),
