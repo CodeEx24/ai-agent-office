@@ -109,10 +109,13 @@ export const packMetadataSchema = z.strictObject({
 });
 export type PackMetadata = z.infer<typeof packMetadataSchema>;
 
-/** A JWT or `scheme://user:password@host`: value shapes `SECRET_VALUE_PATTERNS` does not cover. */
+/**
+ * A JWT or `scheme://user:password@host`: value shapes `SECRET_VALUE_PATTERNS` does not cover.
+ * The URL scheme is bounded ({0,30}): an unbounded run made the scan quadratic on text like "a.a.a.".
+ */
 const EXTRA_SECRET_SHAPES: readonly (readonly [RegExp, string])[] = [
   [/\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{10,}/, "token"],
-  [/\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i, "password in a URL"],
+  [/\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s/@:]+:[^\s/@]+@/i, "password in a URL"],
 ];
 
 /** The label of the first secret-shaped value in a string, or null. Shapes only, so prose about tokens is fine. */
@@ -138,6 +141,11 @@ function* walkStrings(
   }
 }
 
+/** A name for an issue message. A secret-shaped name is never echoed: pack text is untrusted and issues get logged. */
+function quoteName(name: string): string {
+  return findSecretShape(name) ? "(a value that looks like a secret)" : `"${name}"`;
+}
+
 function addIssue(ctx: z.RefinementCtx, path: PathSegment[], message: string): void {
   ctx.addIssue({ code: "custom", path, message });
 }
@@ -152,7 +160,11 @@ function refinePack(pack: PackBody, ctx: z.RefinementCtx): void {
   const skillNames = new Set<string>();
   for (const [index, skill] of pack.skills.entries()) {
     if (skillNames.has(skill.name)) {
-      addIssue(ctx, ["skills", index, "name"], `Skill name "${skill.name}" is used twice.`);
+      addIssue(
+        ctx,
+        ["skills", index, "name"],
+        `Skill name ${quoteName(skill.name)} is used twice.`,
+      );
     }
     skillNames.add(skill.name);
   }
@@ -160,7 +172,11 @@ function refinePack(pack: PackBody, ctx: z.RefinementCtx): void {
   const agentNames = new Set<string>();
   for (const [index, agent] of pack.agents.entries()) {
     if (agentNames.has(agent.name)) {
-      addIssue(ctx, ["agents", index, "name"], `Agent name "${agent.name}" is used twice.`);
+      addIssue(
+        ctx,
+        ["agents", index, "name"],
+        `Agent name ${quoteName(agent.name)} is used twice.`,
+      );
     }
     agentNames.add(agent.name);
 
@@ -169,13 +185,13 @@ function refinePack(pack: PackBody, ctx: z.RefinementCtx): void {
         addIssue(
           ctx,
           ["agents", index, "skills", skillIndex],
-          `Skill "${skillName}" is not in this pack's skills.`,
+          `Skill ${quoteName(skillName)} is not in this pack's skills.`,
         );
       } else if (agent.skills.indexOf(skillName) !== skillIndex) {
         addIssue(
           ctx,
           ["agents", index, "skills", skillIndex],
-          `Skill "${skillName}" is listed twice.`,
+          `Skill ${quoteName(skillName)} is listed twice.`,
         );
       }
     }
@@ -186,7 +202,7 @@ function refinePack(pack: PackBody, ctx: z.RefinementCtx): void {
         addIssue(
           ctx,
           ["agents", index, "capabilities", capIndex, "name"],
-          `Capability "${capability.name}" is listed twice.`,
+          `Capability ${quoteName(capability.name)} is listed twice.`,
         );
       }
       seenCapabilities.add(capability.name);

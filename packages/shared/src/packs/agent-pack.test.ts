@@ -140,6 +140,47 @@ describe("agent pack schema", () => {
     expect(findSecretShape("Use secret:crm_api_key through the broker.")).toBeNull();
   });
 
+  it("still finds a password in a URL after the scheme was bounded", () => {
+    expect(findSecretShape("postgres://" + "u:p" + "@h")).toBe("password in a URL");
+    expect(findSecretShape("see https://example.com/docs")).toBeNull();
+  });
+
+  it("scans hostile text in linear time (no regex backtracking)", () => {
+    const hostile = "a.".repeat(10_000);
+    const started = performance.now();
+    expect(findSecretShape(hostile)).toBeNull();
+
+    const pack = validPack();
+    pack.notes = Array.from({ length: 100 }, () => ({ title: "n", body: hostile }));
+    expect(parseAgentPack(pack).ok).toBe(true);
+    // The unbounded scheme took minutes here (174 s for 500 notes). The linear scan takes
+    // about 0.2 s; 1 s leaves room for a loaded CI machine.
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
+  it("never echoes a secret-shaped name in an issue message", () => {
+    const fakeKey = ["sk", "ant", "x".repeat(30)].join("-");
+
+    const missing = validPack();
+    agentOf(missing).skills = [fakeKey];
+    const missingResult = parseAgentPack(missing);
+    expect(missingResult.ok).toBe(false);
+    expect(JSON.stringify(missingResult)).not.toContain(fakeKey);
+    expect(issuePaths(missing)).toContain("agents.0.skills.0");
+
+    const duplicate = validPack();
+    (duplicate.agents as unknown[]).push({ ...agentOf(duplicate), name: fakeKey });
+    (duplicate.agents as unknown[]).push({ ...agentOf(duplicate), name: fakeKey });
+    const duplicateResult = parseAgentPack(duplicate);
+    expect(duplicateResult.ok).toBe(false);
+    expect(JSON.stringify(duplicateResult)).not.toContain(fakeKey);
+
+    // An ordinary name is still quoted so the message stays useful.
+    const ordinary = validPack();
+    agentOf(ordinary).skills = ["Nope"];
+    expect(JSON.stringify(parseAgentPack(ordinary))).toContain("Nope");
+  });
+
   it("checks that skills exist and names are unique", () => {
     const missing = validPack();
     agentOf(missing).skills = ["Nope"];
