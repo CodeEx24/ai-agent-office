@@ -1,5 +1,6 @@
 import { createContextBuilder, createPgRunContextSource } from "../context/index.js";
 import { createAgentLoop } from "./agent-loop.js";
+import { createPgCheckpointStore } from "./checkpoint-store.js";
 import { createClaudeProvider } from "./claude-provider.js";
 import { createModelRouter, createPgAgentModelSource } from "./model-routing.js";
 import { createPgPolicySource, createPolicyEngineHook } from "../policy/index.js";
@@ -68,5 +69,7 @@ export function createProductionAgentExecutor(options: {
       },
     }),
     contextMaxChars: config.contextMaxChars,
+    // AGO-30: the run's state is saved between tool calls, so a retry or a resume does not repeat a call.
+    checkpoints: createPgCheckpointStore(pool),
   });
 }

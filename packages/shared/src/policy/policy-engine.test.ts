@@ -64,6 +64,11 @@ describe("tier defaults x agent mode (no policies, automatic grant)", () => {
     [3, "standard", "escalate", "tier_requires_approval"],
     [4, "strict", "escalate", "tier_requires_approval"],
     [4, "standard", "escalate", "tier_requires_approval"],
+    [0, "relaxed", "allow", "allowed_tier0"],
+    [1, "relaxed", "allow", "allowed_tier1"],
+    [2, "relaxed", "allow", "allowed_tier2"],
+    [3, "relaxed", "escalate", "tier_requires_approval"],
+    [4, "relaxed", "escalate", "tier_requires_approval"],
   ];
   it.each(table)("tier %i, %s mode -> %s (%s)", (tier, mode, decision, reasonCode) => {
     expect(evaluatePolicy(input(tier, { mode }))).toEqual({ decision, reasonCode });
