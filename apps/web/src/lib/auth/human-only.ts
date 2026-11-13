@@ -38,6 +38,14 @@ export async function requireHumanRequest(): Promise<void> {
 }
 
 /**
+ * For server actions that return an error state instead of throwing (AGO-154): true when the current request
+ * carries an agent credential. Call it first, before any role check or write.
+ */
+export async function isAgentCredentialRequest(): Promise<boolean> {
+  return hasAgentCredential(await headers());
+}
+
+/**
  * For route handlers and the proxy: a 403 response when the request carries an agent credential on a path that
  * is not on the agent allow-list; undefined when the request may proceed. Never echoes the credential.
  */
