@@ -108,21 +108,10 @@ export function AgentEditForm({
   const isLocked = agent.isArchived;
   const currentVersion = state.version ?? agent.version;
 
+  // The archived banner and its Unarchive form sit outside the edit form: a form inside a form is invalid
+  // HTML, the browser drops the inner tag, and Unarchive then submitted the edit form (AGO-89 N1).
   return (
-    <form
-      action={action}
-      onSubmit={onSubmit}
-      className="grid gap-3"
-      aria-label={`Edit ${agent.name}`}
-      noValidate
-    >
-      <input type="hidden" name="workspaceId" value={workspaceId} />
-      <input type="hidden" name="agentId" value={agent.id} />
-      <input type="hidden" name="expectedVersion" value={String(currentVersion)} />
-      {/* Model and thinking effort are sent from state, not read from the selects (see formEpoch). */}
-      <input type="hidden" name="model" value={draft.model} />
-      <input type="hidden" name="thinkingEffort" value={draft.thinkingEffort} />
-
+    <>
       {isLocked ? (
         <div
           role="status"
@@ -143,130 +132,145 @@ export function AgentEditForm({
           </form>
         </div>
       ) : null}
-      {state.error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {state.error}
-        </p>
-      ) : null}
-      {state.done ? (
-        <p role="status" className="text-sm text-muted-foreground">
-          Saved. This agent is now at version {String(currentVersion)}.
-        </p>
-      ) : null}
+      <form
+        action={action}
+        onSubmit={onSubmit}
+        className="grid gap-3"
+        aria-label={`Edit ${agent.name}`}
+        noValidate
+      >
+        <input type="hidden" name="workspaceId" value={workspaceId} />
+        <input type="hidden" name="agentId" value={agent.id} />
+        <input type="hidden" name="expectedVersion" value={String(currentVersion)} />
+        {/* Model and thinking effort are sent from state, not read from the selects (see formEpoch). */}
+        <input type="hidden" name="model" value={draft.model} />
+        <input type="hidden" name="thinkingEffort" value={draft.thinkingEffort} />
 
-      <fieldset disabled={isLocked || isPending} className="grid gap-3">
-        <Label htmlFor={fieldId("name")}>{AGENT_FIELD_LABELS.name}</Label>
-        <Input
-          id={fieldId("name")}
-          name="name"
-          value={draft.name}
-          maxLength={AGENT_NAME_MAX_LENGTH}
-          onChange={(event) => {
-            update({ name: event.target.value });
-          }}
-          aria-invalid={Boolean(errors.name)}
-          aria-describedby={describedBy("name")}
-          autoComplete="off"
-        />
-        <FieldError field="name" message={errors.name} />
+        {state.error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {state.error}
+          </p>
+        ) : null}
+        {state.done ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            Saved. This agent is now at version {String(currentVersion)}.
+          </p>
+        ) : null}
 
-        <Label htmlFor={fieldId("role")}>{AGENT_FIELD_LABELS.role}</Label>
-        <Input
-          id={fieldId("role")}
-          name="role"
-          value={draft.role}
-          maxLength={AGENT_ROLE_MAX_LENGTH}
-          onChange={(event) => {
-            update({ role: event.target.value });
-          }}
-          aria-invalid={Boolean(errors.role)}
-          aria-describedby={describedBy("role")}
-          autoComplete="off"
-        />
-        <FieldError field="role" message={errors.role} />
+        <fieldset disabled={isLocked || isPending} className="grid gap-3">
+          <Label htmlFor={fieldId("name")}>{AGENT_FIELD_LABELS.name}</Label>
+          <Input
+            id={fieldId("name")}
+            name="name"
+            value={draft.name}
+            maxLength={AGENT_NAME_MAX_LENGTH}
+            onChange={(event) => {
+              update({ name: event.target.value });
+            }}
+            aria-invalid={Boolean(errors.name)}
+            aria-describedby={describedBy("name")}
+            autoComplete="off"
+          />
+          <FieldError field="name" message={errors.name} />
 
-        <Label htmlFor={fieldId("model")}>{AGENT_FIELD_LABELS.model}</Label>
-        <select
-          key={`${fieldId("model")}-${String(formEpoch)}`}
-          id={fieldId("model")}
-          defaultValue={draft.model}
-          onChange={(event) => {
-            update({ model: event.target.value });
-          }}
-          aria-invalid={Boolean(errors.model)}
-          aria-describedby={describedBy("model")}
-          className={FIELD_CLASS}
-        >
-          <option value="">Choose a model</option>
-          {AGENT_MODELS.map((model) => (
-            <option key={model.id} value={model.id}>
-              {model.label}
-            </option>
-          ))}
-        </select>
-        <FieldError field="model" message={errors.model} />
+          <Label htmlFor={fieldId("role")}>{AGENT_FIELD_LABELS.role}</Label>
+          <Input
+            id={fieldId("role")}
+            name="role"
+            value={draft.role}
+            maxLength={AGENT_ROLE_MAX_LENGTH}
+            onChange={(event) => {
+              update({ role: event.target.value });
+            }}
+            aria-invalid={Boolean(errors.role)}
+            aria-describedby={describedBy("role")}
+            autoComplete="off"
+          />
+          <FieldError field="role" message={errors.role} />
 
-        <Label htmlFor={fieldId("thinkingEffort")}>{AGENT_FIELD_LABELS.thinkingEffort}</Label>
-        <select
-          key={`${fieldId("thinkingEffort")}-${String(formEpoch)}`}
-          id={fieldId("thinkingEffort")}
-          defaultValue={draft.thinkingEffort}
-          onChange={(event) => {
-            update({ thinkingEffort: event.target.value });
-          }}
-          aria-invalid={Boolean(errors.thinkingEffort)}
-          aria-describedby={describedBy("thinkingEffort")}
-          className={FIELD_CLASS}
-        >
-          <option value="">Choose a level</option>
-          {AGENT_THINKING_EFFORTS.map((effort) => (
-            <option key={effort.id} value={effort.id}>
-              {effort.label}
-            </option>
-          ))}
-        </select>
-        <FieldError field="thinkingEffort" message={errors.thinkingEffort} />
+          <Label htmlFor={fieldId("model")}>{AGENT_FIELD_LABELS.model}</Label>
+          <select
+            key={`${fieldId("model")}-${String(formEpoch)}`}
+            id={fieldId("model")}
+            defaultValue={draft.model}
+            onChange={(event) => {
+              update({ model: event.target.value });
+            }}
+            aria-invalid={Boolean(errors.model)}
+            aria-describedby={describedBy("model")}
+            className={FIELD_CLASS}
+          >
+            <option value="">Choose a model</option>
+            {AGENT_MODELS.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.label}
+              </option>
+            ))}
+          </select>
+          <FieldError field="model" message={errors.model} />
 
-        <Label htmlFor={fieldId("prompt")}>{AGENT_FIELD_LABELS.prompt}</Label>
-        <textarea
-          id={fieldId("prompt")}
-          name="prompt"
-          value={draft.prompt}
-          maxLength={AGENT_PROMPT_MAX_LENGTH}
-          onChange={(event) => {
-            update({ prompt: event.target.value });
-          }}
-          aria-invalid={Boolean(errors.prompt)}
-          aria-describedby={describedBy("prompt")}
-          className={`${FIELD_CLASS} min-h-32`}
-        />
-        <FieldError field="prompt" message={errors.prompt} />
+          <Label htmlFor={fieldId("thinkingEffort")}>{AGENT_FIELD_LABELS.thinkingEffort}</Label>
+          <select
+            key={`${fieldId("thinkingEffort")}-${String(formEpoch)}`}
+            id={fieldId("thinkingEffort")}
+            defaultValue={draft.thinkingEffort}
+            onChange={(event) => {
+              update({ thinkingEffort: event.target.value });
+            }}
+            aria-invalid={Boolean(errors.thinkingEffort)}
+            aria-describedby={describedBy("thinkingEffort")}
+            className={FIELD_CLASS}
+          >
+            <option value="">Choose a level</option>
+            {AGENT_THINKING_EFFORTS.map((effort) => (
+              <option key={effort.id} value={effort.id}>
+                {effort.label}
+              </option>
+            ))}
+          </select>
+          <FieldError field="thinkingEffort" message={errors.thinkingEffort} />
 
-        <Label htmlFor={fieldId("dailyBudget")}>
-          {AGENT_FIELD_LABELS.dailyBudget} (US dollars)
-        </Label>
-        <Input
-          id={fieldId("dailyBudget")}
-          name="dailyBudget"
-          value={draft.dailyBudget}
-          inputMode="decimal"
-          onChange={(event) => {
-            update({ dailyBudget: event.target.value });
-          }}
-          aria-invalid={Boolean(errors.dailyBudget)}
-          aria-describedby={describedBy("dailyBudget")}
-          autoComplete="off"
-        />
-        <FieldError field="dailyBudget" message={errors.dailyBudget} />
-      </fieldset>
+          <Label htmlFor={fieldId("prompt")}>{AGENT_FIELD_LABELS.prompt}</Label>
+          <textarea
+            id={fieldId("prompt")}
+            name="prompt"
+            value={draft.prompt}
+            maxLength={AGENT_PROMPT_MAX_LENGTH}
+            onChange={(event) => {
+              update({ prompt: event.target.value });
+            }}
+            aria-invalid={Boolean(errors.prompt)}
+            aria-describedby={describedBy("prompt")}
+            className={`${FIELD_CLASS} min-h-32`}
+          />
+          <FieldError field="prompt" message={errors.prompt} />
 
-      {isLocked ? null : (
-        <div>
-          <Button type="submit" disabled={isPending}>
-            {isPending ? "Saving…" : "Save changes"}
-          </Button>
-        </div>
-      )}
-    </form>
+          <Label htmlFor={fieldId("dailyBudget")}>
+            {AGENT_FIELD_LABELS.dailyBudget} (US dollars)
+          </Label>
+          <Input
+            id={fieldId("dailyBudget")}
+            name="dailyBudget"
+            value={draft.dailyBudget}
+            inputMode="decimal"
+            onChange={(event) => {
+              update({ dailyBudget: event.target.value });
+            }}
+            aria-invalid={Boolean(errors.dailyBudget)}
+            aria-describedby={describedBy("dailyBudget")}
+            autoComplete="off"
+          />
+          <FieldError field="dailyBudget" message={errors.dailyBudget} />
+        </fieldset>
+
+        {isLocked ? null : (
+          <div>
+            <Button type="submit" disabled={isPending}>
+              {isPending ? "Saving…" : "Save changes"}
+            </Button>
+          </div>
+        )}
+      </form>
+    </>
   );
 }

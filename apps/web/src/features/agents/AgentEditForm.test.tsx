@@ -81,6 +81,8 @@ describe("AgentEditForm", () => {
     setup({ ...AGENT, isArchived: true });
     expect(screen.getByRole("status")).toHaveTextContent(/archived.*unarchive/i);
     expect(screen.getByRole("button", { name: "Unarchive" })).toBeEnabled();
+    const unarchiveForm = screen.getByRole("form", { name: "Unarchive Scout" });
+    expect(unarchiveForm.parentElement?.closest("form")).toBeNull();
     expect(screen.getByLabelText("Name")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
   });

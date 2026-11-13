@@ -136,4 +136,42 @@ test.describe("AGO-89: edit, duplicate and archive agents (local stack)", () => 
     const row = await svcRows("agents", `workspace_id=eq.${w.workspaceId}&select=model`);
     expect(row[0]?.model).toBe("claude-haiku-5-5");
   });
+
+  // AGO-89 N1: the Unarchive form was nested in the edit form, so the button submitted the edit form and did nothing.
+  test("unarchive from the detail page reactivates the agent and logs no console errors", async ({
+    page,
+    baseURL,
+  }) => {
+    const w = await world();
+    await signIn(page, baseURL, w.owner);
+    await createResearcher(page);
+    const rows = await svcRows("agents", `workspace_id=eq.${w.workspaceId}&select=id`);
+    const agentId = rows[0]?.id as string;
+    await page.getByRole("form", { name: "Archive Researcher" }).getByRole("button").click();
+    await expect(
+      page.getByText("Archived agents keep their history but cannot receive tasks."),
+    ).toBeVisible();
+
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await page.goto(`/app/agents/${agentId}`);
+    await expect(
+      page.getByText("This agent is archived. Unarchive it to change its settings."),
+    ).toBeVisible();
+    await page
+      .getByRole("form", { name: "Unarchive Researcher" })
+      .getByRole("button", { name: "Unarchive" })
+      .click();
+    await expect(
+      page.getByText("This agent is archived. Unarchive it to change its settings."),
+    ).toHaveCount(0);
+    await expect(page.getByRole("list", { name: "Version history" })).toContainText("Unarchived");
+    await expect(page.getByLabel("Name", { exact: true })).toBeEnabled();
+
+    await page.goto("/app/agents");
+    await expect(page.getByRole("link", { name: "Edit Researcher" })).toBeVisible();
+    expect(consoleErrors).toEqual([]);
+  });
 });
