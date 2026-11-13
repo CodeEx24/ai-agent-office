@@ -65,3 +65,7 @@ Vitest only: engine mode matrix, Tier 3/4 never allow, own-notes allowed only in
 
 - Mode setter (human-only) and check constraint on `agents.mode` (schema slot).
 - Persistent revert table and vault write tool integration (AGO-121).
+
+## Outcome
+
+- Feature guide: [docs/features/autonomy.md](../features/autonomy.md)
