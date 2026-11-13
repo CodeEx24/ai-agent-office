@@ -74,4 +74,4 @@ Known accepted gaps: the `approval.decided` event can be missing if the sweep's 
 - AGO-47: two calls with the same call id in one step share one approval row (the id is derived from run, step and call id); bind approvals to the payload hash and single use so that cannot let one grant cover two calls.
 
 ## Outcome
-(filled at merge)
+Feature guide: [docs/features/approvals.md](../features/approvals.md). (Rest filled at merge.)
