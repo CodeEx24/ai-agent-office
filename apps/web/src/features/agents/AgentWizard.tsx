@@ -142,6 +142,14 @@ export function AgentWizard({
 
   const update = (patch: Partial<Draft>) => {
     setDraft((current) => ({ ...current, ...patch }));
+    // AGO-138: a message left by an earlier Next (or a server refusal) is about the old selection. Drop it
+    // when the selection changes; the live trifecta message below is derived from the current selection.
+    if (patch.capabilities) {
+      setErrors((current) => {
+        const { capabilities: _stale, ...rest } = current;
+        return rest;
+      });
+    }
   };
 
   // A template only pre-fills the draft (AGO-136): everything stays editable and is reviewed before creating.

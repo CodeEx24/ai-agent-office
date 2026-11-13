@@ -264,6 +264,33 @@ describe("AgentWizard", () => {
       );
     });
 
+    it("clears the explanation at once when a leg is removed after Next was blocked", async () => {
+      const { user } = setup(TRIFECTA_CAPABILITIES);
+      await toCapabilities(user);
+      for (const name of [/Search the web/, /Read own private notes/, /Send outbound messages/]) {
+        await user.click(screen.getByLabelText(name));
+      }
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      expect(screen.getByRole("alert")).toHaveTextContent(/this combination is blocked/);
+
+      await user.click(screen.getByLabelText(/Send outbound messages/)); // no Next in between
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByRole("group")).not.toHaveAttribute("aria-describedby");
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      expect(screen.getByRole("heading", { name: "Budget" })).toBeInTheDocument();
+    });
+
+    it("shows the explanation again when the leg is ticked again", async () => {
+      const { user } = setup(TRIFECTA_CAPABILITIES);
+      await toCapabilities(user);
+      for (const name of [/Search the web/, /Read own private notes/, /Send outbound messages/]) {
+        await user.click(screen.getByLabelText(name));
+      }
+      await user.click(screen.getByLabelText(/Send outbound messages/));
+      await user.click(screen.getByLabelText(/Send outbound messages/));
+      expect(screen.getByRole("alert")).toHaveTextContent(/this combination is blocked/);
+    });
+
     it("lets the owner continue after one of the three is removed", async () => {
       const { user } = setup(TRIFECTA_CAPABILITIES);
       await toCapabilities(user);
