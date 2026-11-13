@@ -65,6 +65,7 @@ Known accepted gaps: the `approval.decided` event can be missing if the sweep's 
 | 1 | Expiry status value is `rejected` (from the AC); the event outcome stays `expired`; no migration | owner (via coordinator) | 2026-11-13 |
 | 2 | Approved rows stay deny-by-default (fail closed) until AGO-47; no decide routes here | owner (via coordinator) | 2026-11-13 |
 | 3 | A still-pending, unexpired approval re-pauses on resume; pending but past `expires_at` is denied `approval_expired` on resume, even if the sweep is late or down, with a test | owner (via coordinator) | 2026-11-13 |
+| 4 | Accept both gaps as recorded under Known limitations: (1) the expiry-wake check-then-act window (pause flag checked, then run moved to `queued`) MUST be fixed in or before AGO-58, filed on AGO-58 in Jira; (2) the unretried `approval.decided` audit event is accepted as a known limitation. Merge AGO-21. | owner's standing instruction "If there are options choose the recommended one", applied by the orchestrator | 2026-11-13 |
 
 ## Follow-up tasks
 - `resumeRun(ref, undefined)` (and any non-object actor) throws a `TypeError` instead of `HumanActorRequiredError` because `assertHuman` reads `actor.kind` without a guard (`run-control.ts`, from AGO-30). The call is still refused with no state change. Fix with an optional chain in `assertHuman`; not part of this ticket.
