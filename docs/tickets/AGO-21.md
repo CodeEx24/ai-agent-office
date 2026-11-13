@@ -2,7 +2,7 @@
 
 ## Links
 - Ticket: https://stratyge.atlassian.net/browse/AGO-21
-- PRs: (pending)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/62 (draft)
 - Related: AGO-34 (policy engine, done), AGO-30 (checkpoint, pause, resume, done); unblocks AGO-37 (inbox UI), AGO-47 (payload-hash binding, single use), AGO-51 (timeout means deny), AGO-58 (human-only routes)
 
 Status: In progress · Type: Feature · Risk: high (human-in-the-loop invariant, `approvals` table) · Wave 2
