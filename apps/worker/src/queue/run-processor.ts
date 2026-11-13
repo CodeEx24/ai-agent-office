@@ -7,6 +7,7 @@ import { scrubString, withContext, type Logger } from "../logger.js";
 import { runJobSchema, type RunJobPayload } from "./run-job.js";
 import { RUN_STATUS, type RunStore } from "./run-store.js";
 
+import type { CheckpointStore } from "../agent/checkpoint-store.js";
 import type { ErrorTracker } from "../sentry.js";
 
 /** What the agent runtime (AGO-167) is given for one run. */
@@ -26,14 +27,20 @@ export interface RunExecutionContext {
 /**
  * How the loop ended. `completed` (the default) is a result. `limit_reached`: the loop already emitted
  * `run.limit_reached`, so the run is marked failed and no `run.completed` is written. `paused`: a tool
- * call needs a human; the loop already emitted `approval.requested` and the run waits (resume is AGO-30).
+ * call needs a human (the loop already emitted `approval.requested`) or a human asked for a pause; the run waits
+ * for a resume (AGO-30, `resumeRun`).
  * `loop_detected` (AGO-166): the loop already emitted `run.loop_detected` after the same tool call repeated with
  * the same result, so the run is marked failed with no `run.completed`, like a limit.
  */
 export type RunEnd = "completed" | "limit_reached" | "paused" | "loop_detected";
 
+/** Why a run paused: a policy needs an approval, or a human asked for the pause (AGO-30). */
+export type PauseReason = "approval_required" | "user_pause";
+
 export interface RunOutcome {
   readonly steps: number;
+  /** Only read when `end` is `paused`; missing means `approval_required` (the AGO-167 behaviour). */
+  readonly pauseReason?: PauseReason;
   readonly summary?: string;
   readonly end?: RunEnd;
 }
@@ -69,6 +76,8 @@ export interface RunProcessorDeps {
   readonly executor: RunExecutor;
   readonly logger: Logger;
   readonly errorTracker: ErrorTracker;
+  /** Where the loop saved the run's state (AGO-30). Dropped when the run ends for good; omitted: nothing to drop. */
+  readonly checkpoints?: Pick<CheckpointStore, "clear">;
   /** Retries allowed after the first attempt: the attempt with `retryCount` of this is the last. */
   readonly retryLimit: number;
   /** Matches the job's expiry; a `running` run older than this has lost its worker. */
@@ -120,6 +129,13 @@ export function createRunProcessor(deps: RunProcessorDeps) {
       logger: jobLogger,
     });
 
+    // The run is over: its saved state is not needed any more (the event log keeps the history).
+    const dropCheckpoint = async (): Promise<void> => {
+      await deps.checkpoints?.clear(ref).catch((clearError: unknown) => {
+        jobLogger.error({ err: clearError }, "could not drop the run checkpoint");
+      });
+    };
+
     const handleFailure = async (error: unknown): Promise<void> => {
       const isFinalAttempt = error instanceof NonRetryableRunError || attempt >= deps.retryLimit;
       if (!isFinalAttempt) {
@@ -139,6 +155,7 @@ export function createRunProcessor(deps: RunProcessorDeps) {
       await runs.markFinished(ref, RUN_STATUS.failed).catch((markError: unknown) => {
         jobLogger.error({ err: markError }, "could not mark run failed");
       });
+      await dropCheckpoint();
       await emitter
         .emit({
           type: "run.failed",
@@ -166,12 +183,14 @@ export function createRunProcessor(deps: RunProcessorDeps) {
       if (end === "limit_reached") {
         // The loop wrote run.limit_reached, the terminal event. A run that hit a limit has no result.
         await runs.markFinished(ref, RUN_STATUS.failed);
+        await dropCheckpoint();
         jobLogger.warn({ job_id: job.id, attempt, steps: outcome.steps }, "run stopped at a limit");
         return "executed";
       }
       if (end === "loop_detected") {
         // The loop wrote run.loop_detected, the terminal event. A run stuck in a loop has no result.
         await runs.markFinished(ref, RUN_STATUS.failed);
+        await dropCheckpoint();
         jobLogger.warn(
           { job_id: job.id, attempt, steps: outcome.steps },
           "run stopped: loop detected",
@@ -179,12 +198,13 @@ export function createRunProcessor(deps: RunProcessorDeps) {
         return "executed";
       }
       if (end === "paused") {
+        const reason = outcome.pauseReason ?? "approval_required";
         await emitter.emit({
           type: "run.paused",
-          payload: { requested_by: "policy", reason: "approval_required" },
+          payload: { requested_by: reason === "user_pause" ? "human" : "policy", reason },
         });
         await runs.markPaused(ref);
-        jobLogger.info({ job_id: job.id, attempt }, "run paused for a human approval");
+        jobLogger.info({ job_id: job.id, attempt, reason }, "run paused");
         return "executed";
       }
       await emitter.emit({
@@ -195,6 +215,7 @@ export function createRunProcessor(deps: RunProcessorDeps) {
         },
       });
       await runs.markFinished(ref, RUN_STATUS.succeeded);
+      await dropCheckpoint();
       jobLogger.info({ job_id: job.id, attempt }, "run completed");
       return "executed";
     } catch (error) {
