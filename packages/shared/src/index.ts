@@ -26,3 +26,4 @@ export * from "./runs/index.js";
 export * from "./agents/trifecta-lint.js";
 export * from "./credentials/broker-schemas.js";
 export * from "./self-modification/self-modification-schemas.js";
+export * from "./packs/index.js";

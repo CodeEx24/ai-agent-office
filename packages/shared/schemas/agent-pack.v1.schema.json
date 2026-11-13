@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "maxLength": 300
+    },
+    "packVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "exportedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+        },
+        "appVersion": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": ["name", "exportedAt", "appVersion"],
+      "additionalProperties": false
+    },
+    "agents": {
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "role": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "thinkingEffort": {
+            "type": "string",
+            "enum": ["low", "medium", "high"]
+          },
+          "prompt": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "skills": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 120
+            }
+          },
+          "capabilities": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "maxLength": 100,
+                  "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": ["workspace", "agent", "external", "sandbox"]
+                }
+              },
+              "required": ["name", "scope"],
+              "additionalProperties": false
+            }
+          },
+          "dailyBudgetCents": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000000
+          },
+          "autonomyMode": {
+            "type": "string",
+            "enum": ["strict", "standard", "relaxed"]
+          },
+          "department": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "secretRefs": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^secret:[a-z][a-z0-9_.-]{0,63}$"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "role",
+          "model",
+          "thinkingEffort",
+          "prompt",
+          "skills",
+          "capabilities",
+          "dailyBudgetCents",
+          "autonomyMode"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "skills": {
+      "maxItems": 500,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 20000
+          }
+        },
+        "required": ["name", "version", "body"],
+        "additionalProperties": false
+      }
+    },
+    "notes": {
+      "maxItems": 500,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 20000
+          }
+        },
+        "required": ["title", "body"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["packVersion", "metadata", "agents", "skills"],
+  "additionalProperties": false,
+  "$id": "https://agent-office.dev/schemas/agent-pack.v1.schema.json",
+  "title": "Agent Office agent pack",
+  "description": "A portable team of agents and skills. Never contains secrets, ids or run history; credentials appear only as secret:<name> references."
+}

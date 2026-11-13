@@ -37,13 +37,16 @@
     "./redaction": {
       "types": "./dist/redaction/index.d.ts",
       "default": "./dist/redaction/index.js"
-    }
+    },
+    "./agent-pack.schema.json": "./schemas/agent-pack.v1.schema.json"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
+    "pack:schema": "tsc -p tsconfig.build.json && node tools/generate-agent-pack-schema.mjs",
+    "pack:schema:check": "tsc -p tsconfig.build.json && node tools/generate-agent-pack-schema.mjs --check",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
   },
   "dependencies": {
