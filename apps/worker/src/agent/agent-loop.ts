@@ -3,8 +3,12 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   CONTEXT_TEXT_MAX_LENGTH,
   DEFAULT_CONTEXT_MAX_CHARS,
+  emptyRunCheckpointState,
   LOOP_REPEAT_THRESHOLD,
   MIN_NEVER_AUTOMATIC_TIER,
+  type CheckpointCall,
+  type CheckpointStep,
+  type RunCheckpointState,
 } from "@ago/shared";
 import { z } from "zod";
 
@@ -17,6 +21,11 @@ import {
   type RunOutcome,
 } from "../queue/run-processor.js";
 
+import {
+  CheckpointUnreadableError,
+  noopCheckpointStore,
+  type CheckpointStore,
+} from "./checkpoint-store.js";
 import { ModelProviderError, type ModelProvider, type ModelToolCall } from "./model-provider.js";
 import type { ModelRouter } from "./model-routing.js";
 import type { PolicyDecision, PolicyHook } from "./policy-hook.js";
@@ -39,7 +48,11 @@ import type { CapabilityTier, RetrievedItem } from "@ago/shared";
  * - A hook that throws, or answers with anything but allow, deny or needs_approval, is a deny.
  * - Tier 3 and 4 tools never run on `allow`: they stop for a human (AGO-125, human in the loop).
  * - `needs_approval` emits `approval.requested` (bound to a payload hash) and ends the run as paused.
- *   The tool is never executed here. Resuming is AGO-30; an approval nobody decides expires = deny.
+ *   The tool is never executed here. A resumed run treats the stored call as denied (AGO-30); AGO-21 adds the
+ *   decision. An approval nobody decides expires = deny.
+ * - Checkpoints (AGO-30): the loop saves its state after the model answers, before each tool runs and after each
+ *   one finishes. A retry or a resume restores it: finished calls are not run again, and a call that started
+ *   but has no saved result is never re-run (its outcome is recorded as unknown).
  * - Events carry hashes and counts, never raw tool input or output. The model credential is not in
  *   this module at all: only the provider holds it.
  */
@@ -88,6 +101,11 @@ export interface AgentLoopDeps {
    */
   readonly toolOffer: ToolOffer;
   readonly policy: PolicyHook;
+  /**
+   * Where the run's state is saved between tool calls (AGO-30), so a retry or a resume continues instead of
+   * starting over. Omitted: nothing is saved and a retried run starts from step 1, as before.
+   */
+  readonly checkpoints?: CheckpointStore;
   readonly limits?: Partial<AgentLoopLimits>;
   /**
    * Per-agent step, token and wall-time limits (AGO-166), looked up at the start of each run. They replace the
@@ -217,7 +235,47 @@ type ToolCallResult =
       readonly fingerprint: string;
       readonly toolName: string;
     }
-  | { readonly kind: "needs_approval" };
+  | { readonly kind: "needs_approval"; readonly payloadHash: string };
+
+/** The result for a call that was closed without running (AGO-30): same shape as any other failed call. */
+function unrunResult(
+  offeredName: string | undefined,
+  call: CheckpointCall,
+  errorCode: string,
+  text: string,
+): ToolCallResult {
+  const toolName = offeredName ?? NOT_OFFERED_TOOL_NAME;
+  return {
+    kind: "result",
+    isError: true,
+    toolName,
+    fingerprint: sha256(`${call.name}
+${sha256(canonicalJson(call.input))}
+error:${errorCode}`),
+    record: {
+      source: `tool:${toolName}#${call.call_id}`.slice(0, 200),
+      content: `status: error
+${text}`,
+    },
+  };
+}
+
+/** A tool input as stored in a checkpoint: scrubbed like every other text the loop keeps. */
+function scrubInput(input: unknown): unknown {
+  let json: unknown; // undefined at runtime for undefined and functions
+  try {
+    json = JSON.stringify(input);
+  } catch {
+    return null;
+  }
+  if (typeof json !== "string") return null;
+  const clean = scrubString(json);
+  try {
+    return JSON.parse(clean) as unknown;
+  } catch {
+    return clean;
+  }
+}
 
 export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
   const limits: AgentLoopLimits = { ...DEFAULT_AGENT_LIMITS, ...deps.limits };
@@ -269,6 +327,7 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
     signal: AbortSignal,
     policyTimeoutMs: number,
     offered: ReadonlySet<string>,
+    beforeRun: () => Promise<void> = () => Promise.resolve(),
   ): Promise<ToolCallResult> {
     const { emitter } = ctx;
     const callId = VALID_CALL_ID.test(call.id) ? call.id : `call_${String(step)}_${String(index)}`;
@@ -381,17 +440,18 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
     }
 
     if (decision.decision === "needs_approval" || tool === undefined) {
+      const payloadHash = sha256(canonicalJson({ tool_name: call.name, input: call.input }));
       await emitter.emit({
         type: "approval.requested",
         payload: {
           approval_id: randomUUID(),
           call_id: callId,
-          payload_hash: sha256(canonicalJson({ tool_name: call.name, input: call.input })),
+          payload_hash: payloadHash,
           tier,
           expires_at: new Date(now() + approvalTtlMs).toISOString(),
         },
       });
-      return { kind: "needs_approval" };
+      return { kind: "needs_approval", payloadHash };
     }
 
     // From here on the call is allowed.
@@ -408,6 +468,8 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
       return fail("The tool input was invalid. It was not run.");
     }
 
+    // Saved before the tool is touched: a crash after this point never runs the call a second time (AGO-30).
+    await beforeRun();
     await emitter.emit({ type: "tool_call.started", payload: { call_id: callId } });
     const startedAt = now();
     let output: string;
@@ -458,7 +520,8 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
         },
       });
     }
-    const inputPreview = canonicalJson(call.input).slice(0, INPUT_PREVIEW_MAX);
+    // Scrubbed: this text is saved in the run checkpoint (AGO-30), so a secret in a tool input must not be in it.
+    const inputPreview = scrubString(canonicalJson(call.input).slice(0, INPUT_PREVIEW_MAX));
     return {
       kind: "result",
       isError: false,
@@ -489,6 +552,8 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
   return {
     async execute(ctx: RunExecutionContext): Promise<RunOutcome> {
       const { emitter } = ctx;
+      const checkpoints = deps.checkpoints ?? noopCheckpointStore;
+      const ref = { workspaceId: ctx.workspaceId, runId: ctx.runId };
       const runLimits = await resolveRunLimits(ctx);
       const policyTimeoutMs = policyTimeoutFor(runLimits.maxWallMs);
       const startedAt = now();
@@ -502,6 +567,62 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
       let reportedDropped = 0;
       let steps = 0;
       let tokens = 0;
+      let completedCalls = 0;
+      // The step whose tool calls are not all done yet (AGO-30). Null: the next thing to do is a model call.
+      let openStep: CheckpointStep | null = null;
+      // A step that paused for an approval already emitted its `step.completed`; its resume must not repeat it.
+      let skipStepCompleted = false;
+
+      // AGO-30: pick the run up from its checkpoint. A stored state that cannot be read fails the run for good:
+      // starting over would repeat tool calls, and guessing would be worse.
+      let loaded;
+      try {
+        loaded = await checkpoints.load(ref);
+      } catch (error) {
+        if (error instanceof CheckpointUnreadableError) {
+          throw new NonRetryableRunError("checkpoint_unreadable", error.message);
+        }
+        throw error;
+      }
+      if (loaded.state !== null) {
+        const saved = loaded.state;
+        steps = saved.steps;
+        tokens = saved.tokens;
+        completedCalls = saved.completedCalls;
+        lastFingerprint = saved.lastFingerprint;
+        repeatCount = saved.repeatCount;
+        reportedDropped = saved.reportedDropped;
+        history.push(...saved.history.map(({ source, content }) => ({ source, content })));
+        openStep = structuredClone(saved.step);
+        skipStepCompleted =
+          openStep?.calls.some((call) => call.status === "awaiting_approval") ?? false;
+        await emitter.emit({
+          type: "run.recovered",
+          payload: { step: steps, completed_calls: completedCalls },
+        });
+      }
+
+      /** What a crash right now would have to resume from. Only what the model would still be shown is kept. */
+      const snapshot = (): RunCheckpointState => ({
+        ...emptyRunCheckpointState(),
+        steps,
+        tokens,
+        completedCalls,
+        lastFingerprint,
+        repeatCount,
+        // Older records are left out, so none of what is stored counts as "already reported" on restore.
+        reportedDropped: 0,
+        history: windowHistory(history).kept.map(({ source, content }) => ({ source, content })),
+        step:
+          openStep === null
+            ? null
+            : {
+                step: openStep.step,
+                hadError: openStep.hadError,
+                calls: openStep.calls.map((call) => ({ ...call, input: scrubInput(call.input) })),
+              },
+      });
+      const persist = (): Promise<void> => checkpoints.save(ref, snapshot());
 
       const stopForLimit = async (
         limit: "steps" | "tokens" | "time",
@@ -513,6 +634,18 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
           payload: { limit, max, observed: Math.max(0, Math.round(observed)) },
         });
         return { steps, end: "limit_reached" };
+      };
+
+      // A human asked for a pause. Reached only between awaits, never in the middle of one: the model call that
+      // was in flight has already returned, so a paused run holds no open model call (AGO-30 AC2).
+      const stopForPause = async (): Promise<RunOutcome> => {
+        await persist();
+        return {
+          steps,
+          end: "paused",
+          pauseReason: "user_pause",
+          summary: "paused at a human's request",
+        };
       };
 
       // One signal for the whole run: shutdown, or the wall-time limit. Every pending await (model call,
@@ -533,159 +666,246 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
           () => interruption(ctx.signal),
         ));
 
+      /** Re-evaluated whenever it is needed, so a grant revoked mid-run drops the tool from the next call. */
+      const offerNow = (): Promise<ReadonlySet<string>> =>
+        abortable(
+          callSafely(() =>
+            deps.toolOffer.offeredToolNames(deps.tools.all(), {
+              workspaceId: ctx.workspaceId,
+              runId: ctx.runId,
+              agentId: ctx.agentId,
+            }),
+          ),
+          signal,
+          () => interruption(ctx.signal),
+        );
+
+      /** A call whose result cannot be learned any more: it is recorded as failed and is never run (AGO-30). */
+      const closeWithoutRunning = async (
+        call: CheckpointCall,
+        errorCode: string,
+        message: string,
+        text: string,
+      ): Promise<ToolCallResult> => {
+        await emitter.emit({
+          type: "tool_call.failed",
+          payload: { call_id: call.call_id, error_code: errorCode, message },
+        });
+        return unrunResult(deps.tools.get(call.name)?.name, call, errorCode, text);
+      };
+
       const runSteps = async (): Promise<RunOutcome> => {
         for (;;) {
           if (isShuttingDown()) throw interruption(ctx.signal);
-          if (steps >= runLimits.maxSteps) return stopForLimit("steps", runLimits.maxSteps, steps);
-          if (now() >= deadline)
-            return stopForLimit("time", runLimits.maxWallMs, now() - startedAt);
-          if (tokens >= runLimits.maxTokens)
-            return stopForLimit("tokens", runLimits.maxTokens, tokens);
 
-          steps += 1;
-          const step = steps;
-          await emitter.emit({ type: "step.started", payload: { step } });
+          let offeredNames: ReadonlySet<string>;
+          if (openStep === null) {
+            if (steps >= runLimits.maxSteps)
+              return stopForLimit("steps", runLimits.maxSteps, steps);
+            if (now() >= deadline)
+              return stopForLimit("time", runLimits.maxWallMs, now() - startedAt);
+            if (tokens >= runLimits.maxTokens)
+              return stopForLimit("tokens", runLimits.maxTokens, tokens);
+            if (await checkpoints.isPauseRequested(ref)) return stopForPause();
 
-          const { kept, dropped } = windowHistory(history);
-          for (const record of dropped.slice(reportedDropped)) {
-            await emitter.emit({
-              type: "context.cut",
-              payload: {
-                section: "retrieved",
-                source: record.source,
-                action: "dropped",
-                original_chars: record.content.length,
-                kept_chars: 0,
-              },
-            });
-          }
-          reportedDropped = dropped.length;
+            steps += 1;
+            const step = steps;
+            await emitter.emit({ type: "step.started", payload: { step } });
 
-          let built;
-          try {
-            built = await deps.contextBuilder.build(ctx.runId, { retrieved: kept });
-          } catch (error) {
-            if (error instanceof ContextBuildError) {
-              throw new NonRetryableRunError(error.code, error.message);
-            }
-            throw error;
-          }
-          for (const cut of built.metadata.cuts) {
-            await emitter.emit({
-              type: "context.cut",
-              payload: {
-                section: cut.section,
-                source: cut.source,
-                action: cut.action,
-                original_chars: cut.original_chars,
-                kept_chars: cut.kept_chars,
-              },
-            });
-          }
-
-          // Re-evaluated at every step, so a grant revoked mid-run drops the tool from the next model call.
-          const offeredNames = await abortable(
-            callSafely(() =>
-              deps.toolOffer.offeredToolNames(deps.tools.all(), {
-                workspaceId: ctx.workspaceId,
-                runId: ctx.runId,
-                agentId: ctx.agentId,
-              }),
-            ),
-            signal,
-            () => interruption(ctx.signal),
-          );
-          const offeredTools = deps.tools.list().filter((tool) => offeredNames.has(tool.name));
-
-          let response;
-          try {
-            response = await abortable(
-              callSafely(() =>
-                provider.complete({
-                  system: built.system,
-                  messages: built.messages,
-                  tools: offeredTools,
-                  maxOutputTokens: runLimits.maxOutputTokens,
-                  signal,
-                }),
-              ),
-              signal,
-              () => interruption(ctx.signal),
-            );
-          } catch (error) {
-            if (signal.aborted) throw interruption(ctx.signal);
-            if (error instanceof ModelProviderError && !error.isRetryable) {
-              // A rejected request or a bad credential fails the same way on every retry; do not replay the run.
-              throw new NonRetryableRunError("model_request_rejected", error.message);
-            }
-            throw error;
-          }
-
-          tokens += response.usage.inputTokens + response.usage.outputTokens;
-          await emitter.emit({
-            type: "budget.usage",
-            payload: {
-              input_tokens: response.usage.inputTokens,
-              output_tokens: response.usage.outputTokens,
-            },
-          });
-
-          if (response.toolCalls.length === 0) {
-            const text = scrubString(response.text).trim();
-            await emitter.emit({ type: "step.completed", payload: { step, outcome: "ok" } });
-            if (text !== "") {
+            const { kept, dropped } = windowHistory(history);
+            for (const record of dropped.slice(reportedDropped)) {
               await emitter.emit({
-                type: "message.emitted",
-                payload: { role: "agent", summary: text.slice(0, MESSAGE_MAX) },
+                type: "context.cut",
+                payload: {
+                  section: "retrieved",
+                  source: record.source,
+                  action: "dropped",
+                  original_chars: record.content.length,
+                  kept_chars: 0,
+                },
               });
             }
-            return {
-              steps,
-              end: "completed",
-              ...(text === "" ? {} : { summary: text.slice(0, SUMMARY_MAX) }),
-            };
-          }
+            reportedDropped = dropped.length;
 
-          // Over budget with more tool work requested: stop before running anything else.
-          if (tokens >= runLimits.maxTokens)
-            return stopForLimit("tokens", runLimits.maxTokens, tokens);
+            let built;
+            try {
+              built = await deps.contextBuilder.build(ctx.runId, { retrieved: kept });
+            } catch (error) {
+              if (error instanceof ContextBuildError) {
+                throw new NonRetryableRunError(error.code, error.message);
+              }
+              throw error;
+            }
+            for (const cut of built.metadata.cuts) {
+              await emitter.emit({
+                type: "context.cut",
+                payload: {
+                  section: cut.section,
+                  source: cut.source,
+                  action: cut.action,
+                  original_chars: cut.original_chars,
+                  kept_chars: cut.kept_chars,
+                },
+              });
+            }
 
-          const calls = response.toolCalls.slice(0, MAX_TOOL_CALLS_PER_STEP);
-          if (calls.length < response.toolCalls.length) {
-            ctx.logger.warn(
-              { requested: response.toolCalls.length, handled: calls.length },
-              "model asked for more tool calls than one step handles; the rest were ignored",
-            );
-          }
-          let hadError = false;
-          for (const [index, call] of calls.entries()) {
-            const result = await executeToolCall(
-              ctx,
-              call,
-              step,
-              index,
-              signal,
-              policyTimeoutMs,
-              offeredNames,
-            );
-            if (result.kind === "needs_approval") {
+            // Re-evaluated at every step, so a grant revoked mid-run drops the tool from the next model call.
+            offeredNames = await offerNow();
+            const offeredTools = deps.tools.list().filter((tool) => offeredNames.has(tool.name));
+
+            let response;
+            try {
+              response = await abortable(
+                callSafely(() =>
+                  provider.complete({
+                    system: built.system,
+                    messages: built.messages,
+                    tools: offeredTools,
+                    maxOutputTokens: runLimits.maxOutputTokens,
+                    signal,
+                  }),
+                ),
+                signal,
+                () => interruption(ctx.signal),
+              );
+            } catch (error) {
+              if (signal.aborted) throw interruption(ctx.signal);
+              if (error instanceof ModelProviderError && !error.isRetryable) {
+                // A rejected request or a bad credential fails the same way on every retry; do not replay the run.
+                throw new NonRetryableRunError("model_request_rejected", error.message);
+              }
+              throw error;
+            }
+
+            tokens += response.usage.inputTokens + response.usage.outputTokens;
+            await emitter.emit({
+              type: "budget.usage",
+              payload: {
+                input_tokens: response.usage.inputTokens,
+                output_tokens: response.usage.outputTokens,
+              },
+            });
+
+            if (response.toolCalls.length === 0) {
+              const text = scrubString(response.text).trim();
               await emitter.emit({ type: "step.completed", payload: { step, outcome: "ok" } });
+              if (text !== "") {
+                await emitter.emit({
+                  type: "message.emitted",
+                  payload: { role: "agent", summary: text.slice(0, MESSAGE_MAX) },
+                });
+              }
+              return {
+                steps,
+                end: "completed",
+                ...(text === "" ? {} : { summary: text.slice(0, SUMMARY_MAX) }),
+              };
+            }
+
+            // Over budget with more tool work requested: stop before running anything else.
+            if (tokens >= runLimits.maxTokens)
+              return stopForLimit("tokens", runLimits.maxTokens, tokens);
+
+            const calls = response.toolCalls.slice(0, MAX_TOOL_CALLS_PER_STEP);
+            if (calls.length < response.toolCalls.length) {
+              ctx.logger.warn(
+                { requested: response.toolCalls.length, handled: calls.length },
+                "model asked for more tool calls than one step handles; the rest were ignored",
+              );
+            }
+            // The model's answer is saved before any tool runs: a crash from here on resumes these exact calls
+            // instead of asking the model again (and maybe getting different ones).
+            openStep = {
+              step,
+              hadError: false,
+              calls: calls.map((call, index) => ({
+                call_id: VALID_CALL_ID.test(call.id)
+                  ? call.id
+                  : `call_${String(step)}_${String(index)}`,
+                name: call.name.slice(0, 128),
+                input: call.input,
+                status: "pending" as const,
+              })),
+            };
+            await persist();
+            // The model call has returned, so pausing here leaves no call open (AGO-30 AC2); nothing has run yet.
+            if (await checkpoints.isPauseRequested(ref)) return stopForPause();
+          } else {
+            offeredNames = await offerNow();
+          }
+
+          const current: CheckpointStep = openStep;
+          for (const [index, call] of current.calls.entries()) {
+            if (call.status === "done") continue;
+            let result: ToolCallResult;
+            if (call.status === "awaiting_approval") {
+              // The run was resumed, but nothing here records an approval for this call: it is a deny (AGO-21 adds
+              // the decision source). Timeout and silence mean deny.
+              result = await closeWithoutRunning(
+                call,
+                "approval_not_granted",
+                "no approval was recorded for this call",
+                "The tool call needed a human approval that was not given. It was not run.",
+              );
+            } else if (call.status === "started") {
+              // The worker stopped after this call began and before its result was saved. It may have run, so it
+              // is not run again (AGO-30 AC1); the model learns the outcome is unknown and decides what to do.
+              result = await closeWithoutRunning(
+                call,
+                "outcome_unknown",
+                "the worker stopped while this call was running",
+                "The worker stopped while this tool call was running, so its outcome is unknown. It was not run again.",
+              );
+            } else {
+              result = await executeToolCall(
+                ctx,
+                { id: call.call_id, name: call.name, input: call.input },
+                current.step,
+                index,
+                signal,
+                policyTimeoutMs,
+                offeredNames,
+                async () => {
+                  call.status = "started";
+                  await persist();
+                },
+              );
+            }
+            if (result.kind === "needs_approval") {
+              call.status = "awaiting_approval";
+              call.payload_hash = result.payloadHash;
+              await persist();
+              await emitter.emit({
+                type: "step.completed",
+                payload: { step: current.step, outcome: "ok" },
+              });
               return {
                 steps,
                 end: "paused",
+                pauseReason: "approval_required",
                 summary: "waiting for a human to approve a tool call",
               };
             }
+            call.status = "done";
+            delete call.payload_hash;
+            call.result = {
+              record: result.record,
+              isError: result.isError,
+              fingerprint: result.fingerprint,
+              toolName: result.toolName,
+            };
             history.push(result.record);
-            hadError ||= result.isError;
+            completedCalls += 1;
+            current.hadError ||= result.isError;
 
             // Loop detection (AGO-166): the same call with the same result, in a row, is not progress.
             repeatCount = result.fingerprint === lastFingerprint ? repeatCount + 1 : 1;
             lastFingerprint = result.fingerprint;
+            await persist();
             if (repeatCount >= LOOP_REPEAT_THRESHOLD) {
               await emitter.emit({
                 type: "step.completed",
-                payload: { step, outcome: hadError ? "error" : "ok" },
+                payload: { step: current.step, outcome: current.hadError ? "error" : "ok" },
               });
               // The event carries the tool name, the fingerprint hash and the count: never the arguments.
               await emitter.emit({
@@ -699,10 +919,15 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
               return { steps, end: "loop_detected" };
             }
           }
-          await emitter.emit({
-            type: "step.completed",
-            payload: { step, outcome: hadError ? "error" : "ok" },
-          });
+          if (!skipStepCompleted) {
+            await emitter.emit({
+              type: "step.completed",
+              payload: { step: current.step, outcome: current.hadError ? "error" : "ok" },
+            });
+          }
+          skipStepCompleted = false;
+          openStep = null;
+          await persist();
         }
       };
 

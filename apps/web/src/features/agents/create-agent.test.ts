@@ -13,7 +13,7 @@ vi.mock("../workspaces/workspace-access", () => {
 
 import { WorkspaceAccessError } from "../workspaces/workspace-access";
 import { AgentLibraryError, type AgentCreator } from "./agent-library";
-import { createAgentSchema } from "@ago/shared";
+import { createAgentSchema, lintTrifecta } from "@ago/shared";
 
 import { parseInput } from "../../lib/validation/parse-input";
 import {
@@ -119,6 +119,17 @@ describe("createAgentWith", () => {
     expect(result.createdId).toBeUndefined();
     expect(result.fieldErrors?.model).toContain("Model");
     expect(result.fieldErrors?.capabilities).toBeUndefined();
+  });
+
+  it("AGO-138: shows the trifecta explanation on the Capabilities field", async () => {
+    const message = lintTrifecta(["web.search", "vault.read_private", "message.send_outbound"]);
+    if (message.ok) throw new Error("expected the lint to block");
+    const result = await createAgentWith(
+      creatorThatThrows(new AgentLibraryError("invalid", "capabilities", message.message)),
+      form(),
+    );
+    expect(result.createdId).toBeUndefined();
+    expect(result.fieldErrors?.capabilities).toBe(message.message);
   });
 
   it("accepts each routed model: Sonnet, Opus and Fable (AGO-94)", async () => {

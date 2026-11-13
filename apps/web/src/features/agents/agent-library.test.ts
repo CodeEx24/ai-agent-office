@@ -30,6 +30,9 @@ const SKILL = "14100000-0000-4000-8000-0000000000b1";
 
 const CATALOG = [
   { key: "vault.read", tier: 0, enabled: true },
+  { key: "vault.read_private", tier: 0, enabled: true },
+  { key: "web.search", tier: 1, enabled: true },
+  { key: "message.send_outbound", tier: 3, enabled: true },
   { key: "email.send", tier: 3, enabled: true },
   { key: "old.thing", tier: 1, enabled: false },
 ];
@@ -101,6 +104,34 @@ describe("agentCreator.createAgent", () => {
     expect(rpc.mock.calls[0]?.[1]).toMatchObject({
       p_capabilities: [{ key: "email.send", mode: "approval" }],
     });
+  });
+
+  it("AGO-138: refuses untrusted content + private data + outbound with an explanation, before the database", async () => {
+    const error = await agentCreator
+      .createAgent({
+        ...input,
+        capabilities: [
+          { key: "web.search", mode: "automatic" },
+          { key: "vault.read_private", mode: "automatic" },
+          { key: "message.send_outbound", mode: "approval" },
+        ],
+      })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AgentLibraryError);
+    expect(error).toMatchObject({ code: "invalid", field: "capabilities" });
+    expect((error as Error).message).toMatch(/^Capabilities: this combination is blocked/);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("AGO-138: accepts any two of the three", async () => {
+    await agentCreator.createAgent({
+      ...input,
+      capabilities: [
+        { key: "web.search", mode: "automatic" },
+        { key: "vault.read_private", mode: "automatic" },
+      ],
+    });
+    expect(rpc).toHaveBeenCalledTimes(1);
   });
 
   it("refuses unknown and disabled capabilities", async () => {

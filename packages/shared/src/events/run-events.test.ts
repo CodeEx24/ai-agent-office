@@ -21,6 +21,7 @@ const VALID: Record<string, Record<string, unknown>> = {
   "run.failed": { reason: "tool_error", message: "boom" },
   "run.paused": { requested_by: "human", reason: "user_pause" },
   "run.resumed": { resumed_by: "human" },
+  "run.recovered": { step: 2, completed_calls: 3 },
   "run.stopped": { stopped_by: "budget", reason: "budget_exceeded" },
   "run.limit_reached": { limit: "steps", max: 20, observed: 20 },
   "run.loop_detected": { tool_name: "search", call_hash: HASH, repeat_count: 3 },

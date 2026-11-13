@@ -44,6 +44,10 @@ export interface RunStore {
   markFinished(ref: RunRef, status: "succeeded" | "failed"): Promise<void>;
   /** `running` -> `paused`: the run waits for a human decision (AGO-167). Not finished, no `finished_at`. */
   markPaused(ref: RunRef): Promise<void>;
+  /** `paused` -> `queued` (AGO-30). True only for the one caller that moved it; a second resume gets false. */
+  resumeRun(ref: RunRef): Promise<boolean>;
+  /** `queued` -> `paused`: undo `resumeRun` when the job could not be enqueued. */
+  revertResume(ref: RunRef): Promise<void>;
 }
 
 interface RunRow {
@@ -100,6 +104,23 @@ export function createPgRunStore(pool: pg.Pool): RunStore {
         `update public.runs set status = $3
           where workspace_id = $1 and id = $2 and status = $4`,
         [workspaceId, runId, RUN_STATUS.paused, RUN_STATUS.running],
+      );
+    },
+
+    async resumeRun({ workspaceId, runId }) {
+      const result = await pool.query(
+        `update public.runs set status = $3
+          where workspace_id = $1 and id = $2 and status = $4`,
+        [workspaceId, runId, RUN_STATUS.queued, RUN_STATUS.paused],
+      );
+      return result.rowCount === 1;
+    },
+
+    async revertResume({ workspaceId, runId }) {
+      await pool.query(
+        `update public.runs set status = $3
+          where workspace_id = $1 and id = $2 and status = $4`,
+        [workspaceId, runId, RUN_STATUS.paused, RUN_STATUS.queued],
       );
     },
 

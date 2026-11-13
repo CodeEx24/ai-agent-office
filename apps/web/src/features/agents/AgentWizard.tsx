@@ -16,6 +16,7 @@ import {
   type AgentFieldErrors,
 } from "@ago/shared/agent-limits";
 import { AGENT_TEMPLATES, findAgentTemplate } from "@ago/shared/agent-templates";
+import { lintTrifecta } from "@ago/shared/trifecta-lint";
 import { Button, Input, Label } from "@ago/ui";
 
 import { createAgentAction } from "./actions";
@@ -141,6 +142,14 @@ export function AgentWizard({
 
   const update = (patch: Partial<Draft>) => {
     setDraft((current) => ({ ...current, ...patch }));
+    // AGO-138: a message left by an earlier Next (or a server refusal) is about the old selection. Drop it
+    // when the selection changes; the live trifecta message below is derived from the current selection.
+    if (patch.capabilities) {
+      setErrors((current) => {
+        const { capabilities: _stale, ...rest } = current;
+        return rest;
+      });
+    }
   };
 
   // A template only pre-fills the draft (AGO-136): everything stays editable and is reviewed before creating.
@@ -173,6 +182,8 @@ export function AgentWizard({
       const message = all[field];
       if (message) relevant[field] = message;
     }
+    // AGO-138: the trifecta block holds the owner on the Capabilities step, whatever else is valid.
+    if (fields.includes("capabilities") && !trifecta.ok) relevant.capabilities = trifecta.message;
     setErrors(relevant);
     const first = fields.find((field) => relevant[field]);
     if (first) requestFocus(first);
@@ -192,6 +203,7 @@ export function AgentWizard({
       return;
     }
     const all = checkAgentDraft(draft);
+    if (!trifecta.ok) all.capabilities = trifecta.message;
     const first = (Object.keys(all) as AgentField[])[0];
     if (first) {
       event.preventDefault();
@@ -201,8 +213,12 @@ export function AgentWizard({
     }
   }
 
+  // AGO-138: shown as soon as the ticked set holds untrusted content, private data and outbound together.
+  const trifecta = lintTrifecta(Object.keys(draft.capabilities));
   const describedBy = (field: AgentField) =>
-    errors[field] ? `${fieldId(field)}-error` : undefined;
+    errors[field] || (field === "capabilities" && !trifecta.ok)
+      ? `${fieldId(field)}-error`
+      : undefined;
   const budget = parseDailyBudget(draft.dailyBudget);
   const grants = Object.entries(draft.capabilities);
 
@@ -454,7 +470,10 @@ export function AgentWizard({
               </div>
             );
           })}
-          <FieldError field="capabilities" message={errors.capabilities} />
+          <FieldError
+            field="capabilities"
+            message={errors.capabilities ?? (trifecta.ok ? undefined : trifecta.message)}
+          />
         </fieldset>
       ) : null}
 

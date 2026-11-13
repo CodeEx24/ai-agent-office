@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { assignSkillSchema, createSkillSchema, saveSkillSchema } from "@ago/shared";
 
+import { isAgentCredentialRequest } from "../../lib/auth/human-only";
 import { formDataToRecord, parseInput } from "../../lib/validation/parse-input";
 import { WorkspaceAccessError } from "../workspaces/workspace-access";
 import {
@@ -22,6 +23,15 @@ export interface SkillActionState {
 
 const GENERIC_ERROR = "Something went wrong. Please try again.";
 const OWNER_ONLY_ERROR = "Only workspace owners can change skills.";
+const AGENT_CREDENTIAL_ERROR = "Agents cannot change skills. This action is for people only.";
+
+/**
+ * AGO-154: a skill is trusted instruction text, so only a person may change one. A request carrying an agent
+ * credential is refused before anything is parsed, checked or written (an agent can only make a proposal).
+ */
+async function rejectAgentCredential(): Promise<SkillActionState | null> {
+  return (await isAgentCredentialRequest()) ? { error: AGENT_CREDENTIAL_ERROR } : null;
+}
 
 /** One place that turns a thrown error into a message that is safe to show. */
 function messageFor(error: unknown): string {
@@ -50,6 +60,9 @@ export async function createSkillAction(
   _prev: SkillActionState,
   formData: FormData,
 ): Promise<SkillActionState> {
+  const rejected = await rejectAgentCredential();
+  if (rejected) return rejected;
+
   const parsed = parseInput(createSkillSchema, formDataToRecord(formData), GENERIC_ERROR);
   if (!parsed.success) return { error: parsed.message };
 
@@ -68,6 +81,9 @@ export async function saveSkillAction(
   _prev: SkillActionState,
   formData: FormData,
 ): Promise<SkillActionState> {
+  const rejected = await rejectAgentCredential();
+  if (rejected) return rejected;
+
   const parsed = parseInput(saveSkillSchema, formDataToRecord(formData), GENERIC_ERROR);
   if (!parsed.success) return { error: parsed.message };
 
@@ -86,6 +102,9 @@ export async function assignSkillAction(
   _prev: SkillActionState,
   formData: FormData,
 ): Promise<SkillActionState> {
+  const rejected = await rejectAgentCredential();
+  if (rejected) return rejected;
+
   const parsed = parseInput(assignSkillSchema, formDataToRecord(formData), GENERIC_ERROR);
   if (!parsed.success) return { error: parsed.message };
 
@@ -103,6 +122,9 @@ export async function unassignSkillAction(
   _prev: SkillActionState,
   formData: FormData,
 ): Promise<SkillActionState> {
+  const rejected = await rejectAgentCredential();
+  if (rejected) return rejected;
+
   const parsed = parseInput(assignSkillSchema, formDataToRecord(formData), GENERIC_ERROR);
   if (!parsed.success) return { error: parsed.message };
 
