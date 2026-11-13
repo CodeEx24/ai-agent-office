@@ -22,6 +22,10 @@
       "types": "./dist/agents/agent-templates.d.ts",
       "default": "./dist/agents/agent-templates.js"
     },
+    "./trifecta-lint": {
+      "types": "./dist/agents/trifecta-lint.d.ts",
+      "default": "./dist/agents/trifecta-lint.js"
+    },
     "./skill-limits": {
       "types": "./dist/skills/skill-limits.d.ts",
       "default": "./dist/skills/skill-limits.js"

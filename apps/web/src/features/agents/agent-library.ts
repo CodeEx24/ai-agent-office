@@ -3,6 +3,7 @@ import "server-only";
 import {
   AGENT_MESSAGES,
   isAgentModelId,
+  lintTrifecta,
   resolveCapabilityGrants,
   type AgentField,
   type Capability,
@@ -119,6 +120,7 @@ function toLibraryError(error: RpcError): AgentLibraryError {
  * Owners only. The agent always starts in Strict mode: the function has no way to pick another. The tier of
  * every capability is read from the catalog here and again inside the function; the request's `mode` for a
  * Tier 3 or 4 capability is refused, never lowered, so a tampered request fails instead of being accepted.
+ * A capability set that holds all three legs of the trifecta (AGO-138) is refused too.
  * The function runs with the caller's rights, so row-level security and the owner policy still apply.
  */
 export const agentCreator: AgentCreator = {
@@ -134,6 +136,11 @@ export const agentCreator: AgentCreator = {
     const catalog = await listCapabilities(access.workspaceId);
     const resolved = resolveCapabilityGrants(input.capabilities, catalog);
     if (!resolved.ok) throw new AgentLibraryError("invalid", resolved.field, resolved.message);
+
+    // AGO-138: untrusted content + private data + outbound communication is blocked (no override yet). This is
+    // the one place every create path (wizard, template) goes through, so the check cannot be skipped from the UI.
+    const trifecta = lintTrifecta(resolved.grants.map((grant) => grant.key));
+    if (!trifecta.ok) throw new AgentLibraryError("invalid", "capabilities", trifecta.message);
 
     const supabase = await createSupabaseServerClient();
     const { data, error } = await supabase.rpc("create_agent", {

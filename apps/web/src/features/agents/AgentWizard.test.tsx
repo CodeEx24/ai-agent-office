@@ -14,6 +14,23 @@ const CAPABILITIES: WizardCapability[] = [
   { key: "vault.read", name: "Read notes", description: "", tier: 0, defaultMode: "automatic" },
   { key: "email.send", name: "Send email", description: "", tier: 3, defaultMode: "approval" },
 ];
+const TRIFECTA_CAPABILITIES: WizardCapability[] = [
+  { key: "web.search", name: "Search the web", description: "", tier: 1, defaultMode: "automatic" },
+  {
+    key: "vault.read_private",
+    name: "Read own private notes",
+    description: "",
+    tier: 0,
+    defaultMode: "automatic",
+  },
+  {
+    key: "message.send_outbound",
+    name: "Send outbound messages",
+    description: "",
+    tier: 3,
+    defaultMode: "approval",
+  },
+];
 
 function setup(capabilities: WizardCapability[] = CAPABILITIES) {
   const user = userEvent.setup();
@@ -219,6 +236,44 @@ describe("AgentWizard", () => {
       expect(screen.getByTestId("review")).toHaveTextContent("Strict");
       expect(document.querySelector('[name="mode"]')).toBeNull();
       expect(document.querySelector('[name="templateId"]')).toBeNull();
+    });
+  });
+
+  describe("trifecta lint (AGO-138)", () => {
+    async function toCapabilities(user: ReturnType<typeof userEvent.setup>) {
+      await fillBasics(user);
+      await user.click(screen.getByRole("button", { name: "Next" })); // skills
+      await user.click(screen.getByRole("button", { name: "Next" })); // capabilities
+    }
+
+    it("explains the block as soon as all three are ticked and keeps Next from moving on", async () => {
+      const { user } = setup(TRIFECTA_CAPABILITIES);
+      await toCapabilities(user);
+      await user.click(screen.getByLabelText(/Search the web/));
+      await user.click(screen.getByLabelText(/Read own private notes/));
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      await user.click(screen.getByLabelText(/Send outbound messages/));
+
+      expect(screen.getByRole("alert")).toHaveTextContent(/this combination is blocked/);
+      expect(screen.getByRole("alert")).toHaveTextContent("Search the web");
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      expect(screen.getByRole("heading", { name: "Capabilities" })).toBeInTheDocument();
+      expect(screen.getByRole("group")).toHaveAttribute(
+        "aria-describedby",
+        "agent-capabilities-error",
+      );
+    });
+
+    it("lets the owner continue after one of the three is removed", async () => {
+      const { user } = setup(TRIFECTA_CAPABILITIES);
+      await toCapabilities(user);
+      for (const name of [/Search the web/, /Read own private notes/, /Send outbound messages/]) {
+        await user.click(screen.getByLabelText(name));
+      }
+      await user.click(screen.getByLabelText(/Send outbound messages/));
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      expect(screen.getByRole("heading", { name: "Budget" })).toBeInTheDocument();
     });
   });
 });
