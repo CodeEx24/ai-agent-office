@@ -1,7 +1,7 @@
 # AGO-30 - Add checkpoint, pause and resume
 
 Ticket: https://stratyge.atlassian.net/browse/AGO-30
-PRs: (pending)
+PRs: https://github.com/CodeEx24/ai-agent-office/pull/54
 Related: blocked by AGO-167 (Done) - unblocks AGO-21 (approval request flow) and AGO-131 (durable approvals)
 Type: Feature (US-037) - Risk: High (runtime, migration, stored run data) - Status: In review
 
