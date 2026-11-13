@@ -112,11 +112,21 @@ export type PackMetadata = z.infer<typeof packMetadataSchema>;
 /**
  * A JWT or `scheme://user:password@host`: value shapes `SECRET_VALUE_PATTERNS` does not cover.
  * The URL scheme is bounded ({0,30}): an unbounded run made the scan quadratic on text like "a.a.a.".
+ * The JWT starts after a lookbehind, not a word boundary: `` matched after every `-` or `_`, so
+ * text like "eyJ-eyJ-" restarted the match at every position and was quadratic. The URL user part
+ * may be empty (`redis://:password@host`).
  */
 const EXTRA_SECRET_SHAPES: readonly (readonly [RegExp, string])[] = [
-  [/\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{10,}/, "token"],
-  [/\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s/@:]+:[^\s/@]+@/i, "password in a URL"],
+  [/(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{10,}/, "token"],
+  [/\b[a-z][a-z0-9+.-]{0,30}:\/\/[^\s/@:]*:[^\s/@]+@/i, "password in a URL"],
 ];
+
+/** The longest string any pack field accepts. Longer strings fail their own length check. */
+const MAX_SCANNED_TEXT_LENGTH = Math.max(
+  AGENT_PROMPT_MAX_LENGTH,
+  SKILL_BODY_MAX_LENGTH,
+  PACK_NOTE_BODY_MAX_LENGTH,
+);
 
 /** The label of the first secret-shaped value in a string, or null. Shapes only, so prose about tokens is fine. */
 export function findSecretShape(text: string): string | null {
@@ -214,7 +224,7 @@ function refinePack(pack: PackBody, ctx: z.RefinementCtx): void {
         addIssue(
           ctx,
           ["agents", index, "secretRefs", refIndex],
-          `Reference "${ref}" is listed twice.`,
+          `Reference ${quoteName(ref)} is listed twice.`,
         );
       }
       seenRefs.add(ref);
@@ -222,6 +232,9 @@ function refinePack(pack: PackBody, ctx: z.RefinementCtx): void {
   }
 
   for (const { path, text } of walkStrings(pack)) {
+    // A string past the largest field limit already has a length issue, so the pack is rejected
+    // anyway: do not spend scan time on it.
+    if (text.length > MAX_SCANNED_TEXT_LENGTH) continue;
     const label = findSecretShape(text);
     if (label) {
       addIssue(

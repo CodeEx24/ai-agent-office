@@ -145,6 +145,20 @@ describe("agent pack schema", () => {
     expect(findSecretShape("see https://example.com/docs")).toBeNull();
   });
 
+  it("finds a password in a URL that has an empty user name", () => {
+    expect(findSecretShape("redis://" + ":pw" + "@host:6379")).toBe("password in a URL");
+  });
+
+  it("parses one oversized note of JWT-like text fast, with a length issue", () => {
+    const pack = validPack();
+    pack.notes = [{ title: "n", body: "eyJ-".repeat(50_000) }];
+    const started = performance.now();
+    const result = parseAgentPack(pack);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(result.ok).toBe(false);
+    expect(issuePaths(pack)).toEqual(["notes.0.body"]);
+  });
+
   it("scans hostile text in linear time (no regex backtracking)", () => {
     const hostile = "a.".repeat(10_000);
     const started = performance.now();
