@@ -69,3 +69,6 @@ Vitest only: engine mode matrix, Tier 3/4 never allow, own-notes allowed only in
 ## Outcome
 
 - Feature guide: [docs/features/autonomy.md](../features/autonomy.md)
+- Merged via PR #57 after an APPROVE; pre-merge gate PASS on 5dc545e (main 15bcb6a). Earlier pre-merge runs failed only on flakes later fixed or being fixed (AGO-206 merged, AGO-212).
+- Known limitations: own-note revert records are in memory only; there is no mode setter UI/API yet; revert is get-then-mark (not atomic). Follow-up: AGO-210.
+- Tier 3/4 always escalate in every mode (table test).
