@@ -47,9 +47,11 @@ const MAX_GROWTH_FOR_4X_INPUT = 11;
 /** Below this the timer is noise, so a growth ratio is measured against it, not against ~0 ms. */
 const TIMER_FLOOR_MS = 2;
 
+/** Best of seven runs after one warm-up run. */
 function timeIt(run: () => unknown): number {
+  run();
   let best = Number.POSITIVE_INFINITY;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  for (let attempt = 0; attempt < 7; attempt += 1) {
     const started = performance.now();
     run();
     best = Math.min(best, performance.now() - started);

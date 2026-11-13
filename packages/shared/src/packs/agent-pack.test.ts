@@ -49,10 +49,11 @@ function agentOf(pack: Loose): Loose {
   return (pack.agents as Loose[])[0]!;
 }
 
-/** Best of five runs in ms. Timing tests compare two input sizes, never an absolute time. */
-function bestOfFiveMs(run: () => unknown): number {
+/** Best of seven runs in ms, after one warm-up run. Timing tests compare two input sizes, never an absolute time. */
+function bestOfSevenMs(run: () => unknown): number {
+  run();
   let best = Number.POSITIVE_INFINITY;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  for (let attempt = 0; attempt < 7; attempt += 1) {
     const started = performance.now();
     run();
     best = Math.min(best, performance.now() - started);
@@ -175,8 +176,8 @@ describe("agent pack schema", () => {
     };
     const small = packOf(12_500);
     const large = packOf(50_000);
-    const smallMs = bestOfFiveMs(() => parseAgentPack(small));
-    const largeMs = bestOfFiveMs(() => parseAgentPack(large));
+    const smallMs = bestOfSevenMs(() => parseAgentPack(small));
+    const largeMs = bestOfSevenMs(() => parseAgentPack(large));
     expect(largeMs / Math.max(smallMs, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_4X_INPUT);
     expect(parseAgentPack(large).ok).toBe(false);
     expect(issuePaths(large)).toEqual(["notes.0.body"]);
@@ -197,8 +198,8 @@ describe("agent pack schema", () => {
     const large = packOf(20_000);
     expect(parseAgentPack(small).ok).toBe(true);
     expect(parseAgentPack(large).ok).toBe(true);
-    const smallMs = bestOfFiveMs(() => parseAgentPack(small));
-    const largeMs = bestOfFiveMs(() => parseAgentPack(large));
+    const smallMs = bestOfSevenMs(() => parseAgentPack(small));
+    const largeMs = bestOfSevenMs(() => parseAgentPack(large));
     expect(largeMs / Math.max(smallMs, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_4X_INPUT);
   });
 

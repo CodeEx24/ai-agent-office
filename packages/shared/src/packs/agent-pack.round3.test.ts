@@ -38,18 +38,38 @@ function validPack(): Loose {
   };
 }
 
-const MAX_GROWTH_FOR_2X_INPUT = 3.3; // linear ~2x, quadratic ~4x, plus timer noise
+/** Linear is ~2x per doubling and quadratic ~4x; the median over several doublings ignores one noisy step. */
+const MAX_MEDIAN_GROWTH_FOR_2X_INPUT = 3.0;
 const MAX_GROWTH_FOR_4X_INPUT = 11; // linear ~4x, quadratic ~16x
 const TIMER_FLOOR_MS = 2;
 
+/** Best of seven runs after one warm-up run, so JIT and cache start-up do not count. */
 function timeIt(run: () => unknown): number {
+  run();
   let best = Number.POSITIVE_INFINITY;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  for (let attempt = 0; attempt < 7; attempt += 1) {
     const started = performance.now();
     run();
     best = Math.min(best, performance.now() - started);
   }
   return best;
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)]!;
+}
+
+/**
+ * Time `findSecretShape` on inputs that grow by 2x per step and return the cost ratio of each step.
+ * The inputs are large enough to keep timings well above timer noise, so no ms floor is needed.
+ */
+function doublingRatios(build: (size: number) => string, sizes: number[]): number[] {
+  const timings = sizes.map((size) => {
+    const text = build(size);
+    return timeIt(() => findSecretShape(text));
+  });
+  return timings.slice(1).map((ms, index) => ms / timings[index]!);
 }
 
 /** Time `parseAgentPack` on a valid pack whose notes are replaced by `notes`. */
@@ -67,33 +87,27 @@ const jwt = () => ["eyJ" + "h".repeat(12), "eyJ" + "p".repeat(10), "s".repeat(14
 
 describe("AC (security round 2): the JWT shape is linear on eyJ- text", () => {
   for (const repeats of [5000, 10_000, 20_000, 80_000]) {
-    it(`findSecretShape returns null on "eyJ-" repeated ${String(repeats)} times, and cost grows about 2x when the text doubles`, () => {
-      const half = "eyJ-".repeat(repeats / 2);
-      const text = "eyJ-".repeat(repeats);
-      let label: string | null = "unset";
-      const halfMs = timeIt(() => findSecretShape(half));
-      const ms = timeIt(() => {
-        label = findSecretShape(text);
-      });
-      expect(label).toBeNull();
-      expect(ms / Math.max(halfMs, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_2X_INPUT);
+    it(`findSecretShape returns null on "eyJ-" repeated ${String(repeats)} times`, () => {
+      expect(findSecretShape("eyJ-".repeat(repeats))).toBeNull();
     });
   }
 
   it("findSecretShape cost grows about 4x, not 16x, when the eyJ- input is 4x longer", () => {
-    const small = "eyJ-".repeat(5000);
-    const large = "eyJ-".repeat(20_000);
+    const small = "eyJ-".repeat(80_000);
+    const large = "eyJ-".repeat(320_000);
     const smallMs = timeIt(() => findSecretShape(small));
     const largeMs = timeIt(() => findSecretShape(large));
     expect(largeMs / Math.max(smallMs, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_4X_INPUT);
   });
 
-  it("findSecretShape cost grows about 2x, not 4x, when the eyJ- input doubles", () => {
-    const small = "eyJ-".repeat(10_000);
-    const large = "eyJ-".repeat(20_000);
-    const smallMs = timeIt(() => findSecretShape(small));
-    const largeMs = timeIt(() => findSecretShape(large));
-    expect(largeMs / Math.max(smallMs, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_2X_INPUT);
+  it("findSecretShape cost grows about 2x, not 4x, per doubling of the eyJ- input (median of three steps)", () => {
+    const ratios = doublingRatios(
+      (repeats) => "eyJ-".repeat(repeats),
+      [80_000, 160_000, 320_000, 640_000],
+    );
+    expect(median(ratios), ratios.map((ratio) => ratio.toFixed(2)).join(", ")).toBeLessThan(
+      MAX_MEDIAN_GROWTH_FOR_2X_INPUT,
+    );
   });
 
   it("parseAgentPack returns only a length issue on a 200k-character note of eyJ- text, and cost grows linearly", () => {
