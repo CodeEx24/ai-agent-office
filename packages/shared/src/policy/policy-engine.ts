@@ -19,6 +19,8 @@ import { POLICY_LEVELS, type PolicyLevel, type PolicyRule } from "./policy-schem
  *  5. effective tier is 3 or 4                                      -> escalate `tier_requires_approval`
  *  6. a require_approval rule matches                               -> escalate `rule_requires_approval`
  *  7. the grant runs in `approval` mode                             -> escalate `grant_requires_approval`
+ *  7b. tier 2, relaxed mode, `vault.write_own` (own notes) in approval mode -> allow `allowed_tier2_own_notes`
+ *     (the caller must record a revert snapshot first, see worker own-notes; AGO-43)
  *  8. tier 2 and the agent is in strict mode (or an unknown mode)   -> escalate `strict_mode_tier2`
  *  9. otherwise (tier 0 and 1, or tier 2 in a looser mode)          -> allow
  *
@@ -48,15 +50,22 @@ export const POLICY_REASON_CODES = [
   "allowed_tier0",
   "allowed_tier1",
   "allowed_tier2",
+  "allowed_tier2_own_notes",
 ] as const;
 export type PolicyReasonCode = (typeof POLICY_REASON_CODES)[number];
 
-/** Agent modes. `strict` is the default for every agent; an unknown stored value is treated as strict. */
-export const POLICY_AGENT_MODES = ["strict", "standard"] as const;
+/**
+ * Agent modes (the autonomy dial, AGO-43). `strict` is the default for every agent; an unknown stored value is
+ * treated as strict. Tier 3 and 4 escalate in every mode; no mode loosens deny rules or approval rules.
+ */
+export const POLICY_AGENT_MODES = ["strict", "standard", "relaxed"] as const;
+
+/** The only capability Relaxed mode may auto-run past an approval-mode grant: edits to the agent's own notes. */
+export const OWN_NOTES_CAPABILITY = "vault.write_own";
 export type PolicyAgentMode = (typeof POLICY_AGENT_MODES)[number];
 
 export function parsePolicyAgentMode(value: string): PolicyAgentMode {
-  return value === "standard" ? "standard" : "strict";
+  return value === "standard" || value === "relaxed" ? value : "strict";
 }
 
 export interface PolicyEngineCall {
@@ -184,11 +193,19 @@ export function evaluatePolicy(input: PolicyEngineInput): PolicyEngineResult {
   if (approval !== undefined) {
     return { decision: "escalate", reasonCode: "rule_requires_approval", ruleId: approval.ruleId };
   }
+  if (
+    grant?.mode === "approval" &&
+    tier === 2 &&
+    agent.mode === "relaxed" &&
+    call.capabilityKey === OWN_NOTES_CAPABILITY
+  ) {
+    return { decision: "allow", reasonCode: "allowed_tier2_own_notes" };
+  }
   if (grant?.mode === "approval") {
     return { decision: "escalate", reasonCode: "grant_requires_approval" };
   }
   if (tier === 2) {
-    return agent.mode === "standard"
+    return agent.mode === "standard" || agent.mode === "relaxed"
       ? { decision: "allow", reasonCode: "allowed_tier2" }
       : { decision: "escalate", reasonCode: "strict_mode_tier2" };
   }
