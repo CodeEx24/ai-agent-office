@@ -118,6 +118,18 @@ test.describe("AGO-138: trifecta lint in the wizard (local stack)", () => {
     const isStale = (await alert.count()) > 0;
     await shot(page, `AC1-stale-step-02-one-removed${isStale ? "-FAIL" : ""}`);
     await expect(alert).toHaveCount(0);
+
+    // Round 2: re-ticking brings the explanation back at once, removing a different leg clears it,
+    // and Next then moves on without a second click on a blocked step.
+    await wizard.capability(TRIPLE[2]).check();
+    await expect(alert).toBeVisible();
+    await shot(page, "AC1-stale-step-03-reticked-message-back");
+    await wizard.capability(TRIPLE[0]).uncheck();
+    await expect(alert).toHaveCount(0);
+    await shot(page, "AC1-stale-step-04-other-leg-removed-message-gone");
+    await wizard.next();
+    await expect(wizard.dailyBudget).toBeVisible();
+    await shot(page, "AC1-stale-step-05-next-moved-on");
   });
 
   test("AC1: the broad mapping counts (shared notes, browse, integration write) and every two-leg set is allowed", async ({
