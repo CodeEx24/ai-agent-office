@@ -3,7 +3,7 @@
 Ticket: https://stratyge.atlassian.net/browse/AGO-30
 PRs: https://github.com/CodeEx24/ai-agent-office/pull/54
 Related: blocked by AGO-167 (Done) - unblocks AGO-21 (approval request flow) and AGO-131 (durable approvals)
-Type: Feature (US-037) - Risk: High (runtime, migration, stored run data) - Status: In review
+Type: Feature (US-037) - Risk: High (runtime, migration, stored run data) - Status: Merged
 
 ## Overview
 Epic EP-02 (Agent runtime), wave 2. Today the agent loop (AGO-167) keeps its whole state in memory: tool results, the
@@ -124,4 +124,7 @@ guess); limits carried over; the paused run has zero open model calls; workspace
   rather than retried.
 
 ## Outcome
-Filled at merge.
+- Merged via PR #54, round 1. Gate, tester-functional, reviewer-code and reviewer-security all PASS; the approver escalated only because the PR touches `scripts/` (human-merge path). The owner allowed the orchestrator to merge on a clean pre-merge gate (2026-11-13).
+- Pre-merge gate PASS on 889f7b6 (synced with main a90ef7f), after a database reset to the branch schema. An earlier pre-merge run failed because the gate ran tests against main's schema (the Test step runs before the pgTAP reset); a checks-script follow-up is to be filed.
+- No deviation from the design. The migration only adds `private.run_checkpoints`; no live data touched.
+- Feature guide: [docs/features/runs.md](../features/runs.md).
