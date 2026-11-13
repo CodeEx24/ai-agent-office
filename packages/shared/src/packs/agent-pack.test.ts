@@ -269,13 +269,16 @@ describe("packVersion and migration", () => {
 });
 
 describe("generated JSON Schema", () => {
-  const committed = readFileSync(
-    resolve(fileURLToPath(new URL("../..", import.meta.url)), AGENT_PACK_JSON_SCHEMA_PATH),
-    "utf8",
-  ).replace(/\r\n/g, "\n");
+  const committed: unknown = JSON.parse(
+    readFileSync(
+      resolve(fileURLToPath(new URL("../..", import.meta.url)), AGENT_PACK_JSON_SCHEMA_PATH),
+      "utf8",
+    ),
+  );
 
+  // Compared as data, not text: the commit hook runs prettier over the file.
   it("is committed and up to date (run `pnpm --filter @ago/shared pack:schema` when this fails)", () => {
-    expect(committed).toBe(renderAgentPackJsonSchema());
+    expect(committed).toEqual(JSON.parse(renderAgentPackJsonSchema()));
   });
 
   it("closes every object so editors flag unknown fields", () => {
