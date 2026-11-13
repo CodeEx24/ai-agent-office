@@ -2,7 +2,7 @@ import { createRunEventEmitter, type RunEventStore } from "../events/index.js";
 import { withContext, type Logger } from "../logger.js";
 
 import type { ApprovalStore } from "./approval-store.js";
-import type { ResumeResult } from "../queue/run-control.js";
+import type { ExpiredApprovalRef, ExpiryWakeResult } from "../queue/run-control.js";
 import type { RunRef } from "../queue/run-store.js";
 
 /**
@@ -21,7 +21,9 @@ export const DEFAULT_APPROVAL_SWEEP_BATCH = 100;
 export interface ApprovalExpiryDeps {
   readonly approvals: Pick<ApprovalStore, "expireDue">;
   readonly events: RunEventStore;
-  readonly control: { resumeAfterApprovalExpiry(ref: RunRef): Promise<ResumeResult> };
+  readonly control: {
+    resumeAfterApprovalExpiry(ref: ExpiredApprovalRef): Promise<ExpiryWakeResult>;
+  };
   readonly logger: Logger;
   readonly now?: () => number;
   readonly batchSize?: number;
@@ -61,7 +63,7 @@ export async function expireDueApprovals(deps: ApprovalExpiryDeps): Promise<numb
       deps.onError?.(error, { run_id: ref.runId, workspace_id: ref.workspaceId });
     }
     try {
-      await deps.control.resumeAfterApprovalExpiry(ref);
+      await deps.control.resumeAfterApprovalExpiry({ ...ref, approvalId: approval.approvalId });
     } catch (error) {
       logger.error({ err: error }, "could not wake the run after its approval expired");
       deps.onError?.(error, { run_id: ref.runId, workspace_id: ref.workspaceId });

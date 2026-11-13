@@ -31,6 +31,11 @@ The wake-up uses `RunControl.resumeAfterApprovalExpiry`: no actor, no route, it 
 `resumed_by: timeout`, and the only thing the resumed run can do is deny. `resumeRun` is unchanged and still
 requires a human.
 
+The wake-up is narrow on purpose. It wakes a run only when the run's checkpoint has a call awaiting **exactly**
+the expired approval (the id is recomputed from run, step and call id), so a run waiting on a different approval
+is left alone. It never overrides a human: a run with a pending human pause request stays paused, the request is
+kept, and the expired call is closed `approval_expired` when the human resumes.
+
 ## What does not run
 The tool runs in no path that is not an honoured approval. Today none is honoured: an `approved` row is closed
 `approval_not_granted` (fail closed) until AGO-47 adds payload-hash binding and single use. Missing row, wrong hash,
@@ -44,5 +49,10 @@ another workspace, or no store are all denials.
 ## Operating notes
 - No migration: this uses `public.approvals` from AGO-74 (RLS from AGO-107). `rejected` is a worker-written status.
 - `APPROVAL_STATUS` lives in `packages/shared`. Rollback is a plain revert; rows left behind are harmless.
-- Known gaps: the `approval.decided` event can be missing if the update succeeds and the event write fails (logged,
-  sent to the error tracker); a run still `running` when its approval expires is denied on its next resume instead.
+- Known gaps: the `approval.decided` event is not retried. It can be missing if the sweep's update succeeds and the
+  event write fails (logged, sent to the error tracker), and likewise if the write fails in the resume-time check
+  (the row is already `rejected`, so the retry denies the call and writes no second event). The call is denied
+  either way; only the audit event is lost. A run still `running` when its approval expires is denied on its next
+  resume instead of being woken.
+- Follow-up: `resumeRun` with an undefined actor throws a `TypeError` instead of `HumanActorRequiredError`
+  (pre-existing `assertHuman`); the call is still refused.

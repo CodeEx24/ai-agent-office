@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createMemoryCheckpointStore } from "../agent/checkpoint-store.test-helpers.js";
+import {
+  approvalIdOf,
+  awaitingApprovalState,
+} from "../approvals/awaiting-checkpoint.test-helpers.js";
 import { createLogger } from "../logger.js";
 import { createRunControl, HumanActorRequiredError, type HumanActor } from "./run-control.js";
 import { createRunProcessor, type RunExecutor } from "./run-processor.js";
@@ -76,10 +80,13 @@ function setup(
 }
 
 describe("run control: wake after an approval expired (AGO-21)", () => {
-  it("moves a paused run to queued, records resumed_by timeout and enqueues it as a resume", async () => {
-    const { runs, events, control, enqueue } = setup(RUN_STATUS.paused);
+  const EXPIRED = { ...REF, approvalId: approvalIdOf({ runId: RUN }) };
 
-    await expect(control.resumeAfterApprovalExpiry(REF)).resolves.toBe("resumed");
+  it("moves a paused run waiting on that approval to queued, records resumed_by timeout and enqueues it", async () => {
+    const { runs, events, checkpoints, control, enqueue } = setup(RUN_STATUS.paused);
+    await checkpoints.save(REF, awaitingApprovalState({}));
+
+    await expect(control.resumeAfterApprovalExpiry(EXPIRED)).resolves.toBe("resumed");
 
     expect(runs.state.status).toBe(RUN_STATUS.queued);
     expect(events.rows[0]?.payload).toMatchObject({ resumed_by: "timeout" });
@@ -87,12 +94,54 @@ describe("run control: wake after an approval expired (AGO-21)", () => {
   });
 
   it("does nothing for a run that is not paused", async () => {
-    const { events, control, enqueue } = setup(RUN_STATUS.running);
+    const { events, checkpoints, control, enqueue } = setup(RUN_STATUS.running);
+    await checkpoints.save(REF, awaitingApprovalState({}));
 
-    await expect(control.resumeAfterApprovalExpiry(REF)).resolves.toBe("not_paused");
+    await expect(control.resumeAfterApprovalExpiry(EXPIRED)).resolves.toBe("not_paused");
 
     expect(enqueue).not.toHaveBeenCalled();
     expect(events.rows).toHaveLength(0);
+  });
+
+  it("does not wake a human-paused run, keeps their pause request, and their resume closes the call", async () => {
+    const { runs, events, checkpoints, control, enqueue } = setup(RUN_STATUS.paused);
+    await checkpoints.save(REF, awaitingApprovalState({}));
+    await checkpoints.requestPause(REF);
+
+    await expect(control.resumeAfterApprovalExpiry(EXPIRED)).resolves.toBe("human_paused");
+
+    expect(runs.state.status).toBe(RUN_STATUS.paused);
+    expect(events.rows).toHaveLength(0);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(await checkpoints.isPauseRequested(REF)).toBe(true);
+
+    // The human resumes: that is the only thing that clears their request and wakes the run.
+    await expect(control.resumeRun(REF, HUMAN)).resolves.toBe("resumed");
+    expect(await checkpoints.isPauseRequested(REF)).toBe(false);
+    expect(events.rows[0]?.payload).toMatchObject({ resumed_by: "human" });
+  });
+
+  it("does not wake a run that is waiting on a different approval", async () => {
+    const { runs, events, checkpoints, control, enqueue } = setup(RUN_STATUS.paused);
+    await checkpoints.save(REF, awaitingApprovalState({ callId: "toolu_other" }));
+
+    await expect(control.resumeAfterApprovalExpiry(EXPIRED)).resolves.toBe("not_waiting");
+
+    expect(runs.state.status).toBe(RUN_STATUS.paused);
+    expect(events.rows).toHaveLength(0);
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("does not wake a run whose approval is for another step, or that has no checkpoint", async () => {
+    const { runs, events, checkpoints, control, enqueue } = setup(RUN_STATUS.paused);
+
+    await expect(control.resumeAfterApprovalExpiry(EXPIRED)).resolves.toBe("not_waiting");
+    await checkpoints.save(REF, awaitingApprovalState({ step: 2 }));
+    await expect(control.resumeAfterApprovalExpiry(EXPIRED)).resolves.toBe("not_waiting");
+
+    expect(runs.state.status).toBe(RUN_STATUS.paused);
+    expect(events.rows).toHaveLength(0);
+    expect(enqueue).not.toHaveBeenCalled();
   });
 
   it("still refuses a non-human actor for the ordinary resume", async () => {

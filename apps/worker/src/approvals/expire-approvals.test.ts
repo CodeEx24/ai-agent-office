@@ -68,7 +68,7 @@ describe("approval expiry sweep (AGO-21)", () => {
         payload_hash: HASH,
       },
     });
-    expect(resume).toHaveBeenCalledWith({ workspaceId: WS, runId: RUN });
+    expect(resume).toHaveBeenCalledWith({ workspaceId: WS, runId: RUN, approvalId: "ap-1" });
   });
 
   it("leaves an approval that is not due yet, and one a human already decided", async () => {

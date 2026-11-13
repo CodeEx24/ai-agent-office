@@ -43,6 +43,8 @@ AGO-34 (escalate decision), AGO-30 (checkpoint, pause, resume). Consumers: AGO-3
 ## Known limitations
 - No decide path (approve or deny) here: the human-only decision routes are AGO-58 and the inbox UI is AGO-37. An approved row is **not** executed by this ticket; execution needs payload-hash binding and single use (AGO-47), so the safe default (deny, `approval_not_granted`) stays. **Dependency on AGO-47:** until it lands, an approved row never lets a call run (fail closed); the end-to-end "approve and run" path arrives with AGO-47 and the decide routes (AGO-58).
 - AGO-51 owns the full "timeout means deny" guarantee; this ticket only expires pending rows.
+- The `approval.decided` event is **not retried** in either expiry path. In the sweep it can be missing if the update succeeds and the event write fails. In the resume-time check (`resolveApproval`) it can be missing if that write fails: the row is already `rejected`, so the retry closes the call `approval_expired` and writes no second event. In both cases the call is still denied; only the audit event is lost (logged, and in the sweep sent to the error tracker).
+- The timeout wake-up (`resumeAfterApprovalExpiry`) wakes a run only if its checkpoint has a call awaiting exactly the expired approval, and never a run a human asked to pause (it does not clear their pause request; the human's resume closes the expired call `approval_expired`). The match recomputes the approval id from the checkpoint's call (run, step, call id), because the id is derived rather than stored.
 
 ## Testing notes
 Unit tests with fakes (no model calls). Integration tests against the local stack under the db lock (`node scripts/db-lock.mjs acquire AGO-21`, `supabase db reset` first). Cases: escalated call creates one pending row and the run is paused; a retry does not duplicate; Tier 0, 1 and denied calls create no row; expiry flips pending to rejected exactly once and emits `approval.decided`; resumed run is told and does not run the tool; workspace isolation.
@@ -51,7 +53,7 @@ Where the cases live:
 - `apps/worker/src/agent/agent-loop.approvals.test.ts`: AC1 (row on escalation, request event with the same id, run pauses, retry makes no second row), AC3 (no row for Tier 0, 1, denied or unknown-tool calls), AC2 (resume closes `approval_expired`, resume-time check denies a pending approval past `expires_at`, exactly one `approval.decided`), and the fail-closed paths (`approved` stays `approval_not_granted`, `denied`, missing row, wrong hash, other workspace, no store).
 - `apps/worker/src/approvals/expire-approvals.test.ts`: the sweep flips to `rejected`, writes `expired`/`timeout`, wakes the run, once only, and survives event or wake failures.
 - `apps/worker/src/approvals/approval-store.integration.test.ts`: the real `public.approvals` table (idempotent create, workspace isolation, conditional expire exactly once, `expireDue`).
-- `apps/worker/src/queue/run-control.test.ts` and `packages/shared/src/events/run-events.test.ts`: the system wake-up (`resumed_by: timeout`) and that an agent still cannot resume.
+- `apps/worker/src/queue/run-control.test.ts` and `packages/shared/src/events/run-events.test.ts`: the system wake-up (`resumed_by: timeout`) and that an agent still cannot resume. Round 2 added: a human-paused run is not woken (and keeps its pause request), a run waiting on a different approval, another step or no checkpoint is not woken (each fails without the fix).
 - A mutation check was run: making the resume-time check ignore `expires_at` fails the "past expires_at" test and nothing else.
 
 Known accepted gaps: the `approval.decided` event can be missing if the sweep's update succeeds and its event write fails (logged and sent to the error tracker); a run that is not yet `paused` when its approval expires is not woken by the sweep (it is denied on its next resume).
@@ -64,7 +66,8 @@ Known accepted gaps: the `approval.decided` event can be missing if the sweep's 
 | 3 | A still-pending, unexpired approval re-pauses on resume; pending but past `expires_at` is denied `approval_expired` on resume, even if the sweep is late or down, with a test | owner (via coordinator) | 2026-11-13 |
 
 ## Follow-up tasks
-None yet.
+- `resumeRun(ref, undefined)` (and any non-object actor) throws a `TypeError` instead of `HumanActorRequiredError` because `assertHuman` reads `actor.kind` without a guard (`run-control.ts`, from AGO-30). The call is still refused with no state change. Fix with an optional chain in `assertHuman`; not part of this ticket.
+- Consider retrying or reconciling a missing `approval.decided` event (both expiry paths); today it is logged only.
 
 ## Outcome
 (filled at merge)
