@@ -43,8 +43,10 @@ On the retry, `execute()` loads the state and continues the open step:
 - `pending` call: goes through the normal policy path and runs once.
 - `started` call (the worker died after it began and before its result was saved): **never run again**. It may
   have run, so the loop records it as failed with `outcome_unknown` and tells the model so; the model decides.
-- `awaiting_approval` call: recorded as denied (`approval_not_granted`). Nothing resumes into running an
-  unapproved call. AGO-21 adds the approval decision and the approved path.
+- `awaiting_approval` call: its approval row is read (see `docs/features/approvals.md`). Still pending and not due:
+  the run pauses again. Expired or rejected: closed `approval_expired`. Denied: `approval_denied`. Anything else,
+  including `approved`, is `approval_not_granted` until AGO-47 binds approvals to the payload hash. Nothing resumes
+  into running an unapproved call.
 
 Steps and tokens carry over, so a crash-and-resume loop cannot escape the step and token limits (AGO-166). Wall
 time restarts with each attempt. A `run.recovered` event (`step`, `completed_calls`, counts only) marks a run

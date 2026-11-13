@@ -75,6 +75,34 @@ function setup(
   return { runs, events, checkpoints, control, enqueue };
 }
 
+describe("run control: wake after an approval expired (AGO-21)", () => {
+  it("moves a paused run to queued, records resumed_by timeout and enqueues it as a resume", async () => {
+    const { runs, events, control, enqueue } = setup(RUN_STATUS.paused);
+
+    await expect(control.resumeAfterApprovalExpiry(REF)).resolves.toBe("resumed");
+
+    expect(runs.state.status).toBe(RUN_STATUS.queued);
+    expect(events.rows[0]?.payload).toMatchObject({ resumed_by: "timeout" });
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ runId: RUN, isResume: true }));
+  });
+
+  it("does nothing for a run that is not paused", async () => {
+    const { events, control, enqueue } = setup(RUN_STATUS.running);
+
+    await expect(control.resumeAfterApprovalExpiry(REF)).resolves.toBe("not_paused");
+
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(events.rows).toHaveLength(0);
+  });
+
+  it("still refuses a non-human actor for the ordinary resume", async () => {
+    const { control } = setup(RUN_STATUS.paused);
+    await expect(
+      control.resumeRun(REF, { kind: "agent", userId: "x" } as unknown as HumanActor),
+    ).rejects.toThrow();
+  });
+});
+
 describe("run control: resume", () => {
   it("moves a paused run to queued, records a human resume and enqueues it as a resume", async () => {
     const { runs, events, control, enqueue } = setup(RUN_STATUS.paused);

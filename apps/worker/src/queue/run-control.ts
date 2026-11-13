@@ -50,6 +50,13 @@ export interface RunControl {
    * does anything, the others get `not_paused`.
    */
   resumeRun(ref: RunRef, actor: HumanActor): Promise<ResumeResult>;
+  /**
+   * Wake a `paused` run whose approval request expired (AGO-21), so the agent is told the call was denied.
+   * Takes no actor and is not reachable from a route: only the expiry sweep calls it. It cannot approve
+   * anything: the woken loop reads the approval, finds it `rejected`, and closes the call without running it.
+   * Writes `run.resumed` with `resumed_by: "timeout"`.
+   */
+  resumeAfterApprovalExpiry(ref: RunRef): Promise<ResumeResult>;
 }
 
 function assertHuman(actor: HumanActor): void {
@@ -58,6 +65,38 @@ function assertHuman(actor: HumanActor): void {
 }
 
 export function createRunControl(deps: RunControlDeps): RunControl {
+  async function resume(ref: RunRef, resumedBy: "human" | "timeout"): Promise<ResumeResult> {
+    // The conditional update is the guard: of two resumes racing, only one sees `paused`.
+    const moved = await deps.runs.resumeRun(ref);
+    if (!moved) return "not_paused";
+
+    const logger = withContext(deps.logger, { run_id: ref.runId, workspace_id: ref.workspaceId });
+    try {
+      await deps.checkpoints.clearPause(ref);
+      await createRunEventEmitter({
+        workspaceId: ref.workspaceId,
+        runId: ref.runId,
+        store: deps.events,
+        logger,
+      }).emit({ type: "run.resumed", payload: { resumed_by: resumedBy } });
+      // A fresh key: the key of the first job must not make this one look like a duplicate.
+      await deps.queue.enqueueRun({
+        workspaceId: ref.workspaceId,
+        runId: ref.runId,
+        idempotencyKey: `resume:${randomUUID()}`,
+        isResume: true,
+      });
+    } catch (error) {
+      // The run must not be left `queued` with no job: put it back so a human can try again.
+      await deps.runs.revertResume(ref).catch((revertError: unknown) => {
+        logger.error({ err: revertError }, "could not put the run back to paused");
+      });
+      throw error;
+    }
+    logger.info({ resumed_by: resumedBy }, "run resumed");
+    return "resumed";
+  }
+
   return {
     async requestRunPause(ref, actor) {
       assertHuman(actor);
@@ -66,35 +105,11 @@ export function createRunControl(deps: RunControlDeps): RunControl {
 
     async resumeRun(ref, actor) {
       assertHuman(actor);
-      // The conditional update is the guard: of two resumes racing, only one sees `paused`.
-      const moved = await deps.runs.resumeRun(ref);
-      if (!moved) return "not_paused";
+      return resume(ref, "human");
+    },
 
-      const logger = withContext(deps.logger, { run_id: ref.runId, workspace_id: ref.workspaceId });
-      try {
-        await deps.checkpoints.clearPause(ref);
-        await createRunEventEmitter({
-          workspaceId: ref.workspaceId,
-          runId: ref.runId,
-          store: deps.events,
-          logger,
-        }).emit({ type: "run.resumed", payload: { resumed_by: "human" } });
-        // A fresh key: the key of the first job must not make this one look like a duplicate.
-        await deps.queue.enqueueRun({
-          workspaceId: ref.workspaceId,
-          runId: ref.runId,
-          idempotencyKey: `resume:${randomUUID()}`,
-          isResume: true,
-        });
-      } catch (error) {
-        // The run must not be left `queued` with no job: put it back so a human can try again.
-        await deps.runs.revertResume(ref).catch((revertError: unknown) => {
-          logger.error({ err: revertError }, "could not put the run back to paused");
-        });
-        throw error;
-      }
-      logger.info("run resumed by a human");
-      return "resumed";
+    resumeAfterApprovalExpiry(ref) {
+      return resume(ref, "timeout");
     },
   };
 }
