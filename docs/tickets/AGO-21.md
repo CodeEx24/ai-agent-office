@@ -45,6 +45,7 @@ AGO-34 (escalate decision), AGO-30 (checkpoint, pause, resume). Consumers: AGO-3
 - AGO-51 owns the full "timeout means deny" guarantee; this ticket only expires pending rows.
 - The `approval.decided` event is **not retried** in either expiry path. In the sweep it can be missing if the update succeeds and the event write fails. In the resume-time check (`resolveApproval`) it can be missing if that write fails: the row is already `rejected`, so the retry closes the call `approval_expired` and writes no second event. In both cases the call is still denied; only the audit event is lost (logged, and in the sweep sent to the error tracker).
 - The timeout wake-up (`resumeAfterApprovalExpiry`) wakes a run only if its checkpoint has a call awaiting exactly the expired approval, and never a run a human asked to pause (it does not clear their pause request; the human's resume closes the expired call `approval_expired`). The match recomputes the approval id from the checkpoint's call (run, step, call id), because the id is derived rather than stored.
+- Accepted, fail-safe gap: the timeout wake checks the pause flag first and moves the run to `queued` afterwards, with a few database calls in between. A stale wake in that window could override a human's re-pause for one step of calls the policy already allows (Tier 3 and 4 calls still need approval); a pause request cannot be made on a paused run, so nothing slips in during the gap. Fix in or before AGO-58 (make the status update require that no pause is pending, or check the pause flag at the top of the loop's open-step branch).
 
 ## Testing notes
 Unit tests with fakes (no model calls). Integration tests against the local stack under the db lock (`node scripts/db-lock.mjs acquire AGO-21`, `supabase db reset` first). Cases: escalated call creates one pending row and the run is paused; a retry does not duplicate; Tier 0, 1 and denied calls create no row; expiry flips pending to rejected exactly once and emits `approval.decided`; resumed run is told and does not run the tool; workspace isolation.
@@ -68,6 +69,8 @@ Known accepted gaps: the `approval.decided` event can be missing if the sweep's 
 ## Follow-up tasks
 - `resumeRun(ref, undefined)` (and any non-object actor) throws a `TypeError` instead of `HumanActorRequiredError` because `assertHuman` reads `actor.kind` without a guard (`run-control.ts`, from AGO-30). The call is still refused with no state change. Fix with an optional chain in `assertHuman`; not part of this ticket.
 - Consider retrying or reconciling a missing `approval.decided` event (both expiry paths); today it is logged only.
+- AGO-58: close the pause-check/status-update gap described under Known limitations.
+- AGO-47: two calls with the same call id in one step share one approval row (the id is derived from run, step and call id); bind approvals to the payload hash and single use so that cannot let one grant cover two calls.
 
 ## Outcome
 (filled at merge)
