@@ -50,14 +50,15 @@ function fileParallelismFor(runDbTests) {
   return out.trim();
 }
 
-describe('AC4: the DB suites no longer run in parallel files when RUN_DB_TESTS=1', () => {
+describe('AC4: the DB suites never run in parallel files', () => {
   it('AC4: with RUN_DB_TESTS=1 test files run one at a time', () => {
     expect(fileParallelismFor('1')).toBe('false');
   });
 
-  it('AC4 (negative): without RUN_DB_TESTS nothing changes: files still run in parallel', () => {
-    expect(fileParallelismFor(undefined)).toBe('true');
-    expect(fileParallelismFor('0')).toBe('true');
+  // AGO-212: parallel files exhausted the shared Postgres connection slots, so serial is now unconditional.
+  it('AC4 (AGO-212): without RUN_DB_TESTS files also run one at a time', () => {
+    expect(fileParallelismFor(undefined)).toBe('false');
+    expect(fileParallelismFor('0')).toBe('false');
   });
 });
 

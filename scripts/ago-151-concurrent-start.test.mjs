@@ -96,9 +96,13 @@ async function startTogether(count) {
 
 describe.skipIf(!dbUp)("AGO-151 pgboss hardening survives concurrent worker starts", () => {
   let pool;
+  // The grants check runs while 10 workers hold most connection slots, so it uses one connection opened
+  // up front and kept for the whole file instead of asking the pool for a new one (AGO-212: a new
+  // connection could be refused with "remaining connection slots are reserved").
+  let observer;
   const grants = async () =>
     (
-      await pool.query(`
+      await observer.query(`
         select p.proname, a.grantee = 0 as is_public, r.rolname
           from pg_proc p
           join pg_namespace n on n.oid = p.pronamespace
@@ -112,6 +116,9 @@ describe.skipIf(!dbUp)("AGO-151 pgboss hardening survives concurrent worker star
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: LOCAL_DB, max: 2 });
     pool.on("error", () => undefined);
+    observer = new pg.Client({ connectionString: LOCAL_DB });
+    observer.on("error", () => undefined);
+    await observer.connect();
     const first = startWorker({ WORKER_PORT: String(await freePort()) }); // makes sure pg-boss is installed
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline && !first.out.includes("QA_READY") && first.exit === null) await sleep(100);
@@ -124,6 +131,7 @@ describe.skipIf(!dbUp)("AGO-151 pgboss hardening survives concurrent worker star
     for (const name of [QUEUE_NAME, `${QUEUE_NAME}-dead`]) {
       await pool.query("select pgboss.delete_queue($1)", [name]).catch(() => undefined);
     }
+    await observer.end().catch(() => undefined);
     await pool.end();
   });
 
@@ -142,7 +150,7 @@ describe.skipIf(!dbUp)("AGO-151 pgboss hardening survives concurrent worker star
 
   test(`EXECUTE re-granted to PUBLIC, then ${WORKERS} workers start together, ${ROUNDS} times: the revoke runs concurrently and still wins`, async () => {
     for (let round = 1; round <= ROUNDS; round += 1) {
-      await pool.query("grant execute on all functions in schema pgboss to public");
+      await observer.query("grant execute on all functions in schema pgboss to public");
       expect((await grants()).length, "precondition: the grant is really back").toBeGreaterThan(0);
       const procs = await startTogether(WORKERS);
       for (const proc of procs) {
