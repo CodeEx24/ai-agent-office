@@ -1,7 +1,7 @@
 # AGO-89 - US-048 Edit, duplicate and archive agents
 
 - Ticket: https://stratyge.atlassian.net/browse/AGO-89 (Story, Epic EP-03, wave 2, WS-C, sprint 10)
-- PRs: (pending)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/61 (draft)
 - Blocked by: AGO-141 (agent wizard, done). Unblocks AGO-90 (export/import actions), AGO-99 (promotion), AGO-73 (squads), AGO-156 (agent versions with quality snapshots), AGO-194 (pack import).
 - Risk: **high** (migration, RLS, a database guard on who can receive tasks; accepted by the owner via the coordinator).
 
