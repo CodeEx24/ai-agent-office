@@ -2,8 +2,9 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("./actions", () => ({ updateAgentAction: vi.fn() }));
+vi.mock("./actions", () => ({ updateAgentAction: vi.fn(), unarchiveAgentAction: vi.fn() }));
 
+import { updateAgentAction } from "./actions";
 import { AgentEditForm, type EditableAgent } from "./AgentEditForm";
 
 const WORKSPACE = "89000000-0000-4000-8000-0000000000a1";
@@ -79,8 +80,29 @@ describe("AgentEditForm", () => {
   it("is read-only for an archived agent and says how to change it", () => {
     setup({ ...AGENT, isArchived: true });
     expect(screen.getByRole("status")).toHaveTextContent(/archived.*unarchive/i);
+    expect(screen.getByRole("button", { name: "Unarchive" })).toBeEnabled();
     expect(screen.getByLabelText("Name")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the saved model and thinking effort on screen, so the next save sends them again", async () => {
+    const { user } = setup();
+    vi.mocked(updateAgentAction).mockResolvedValue({ done: true, version: 5 });
+
+    await user.selectOptions(screen.getByLabelText("Model"), "claude-opus-5-5");
+    await user.selectOptions(screen.getByLabelText("Thinking effort"), "high");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText("Saved. This agent is now at version 5.");
+
+    expect(screen.getByLabelText("Model")).toHaveValue("claude-opus-5-5");
+    expect(screen.getByLabelText("Thinking effort")).toHaveValue("high");
+
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    const sent = vi.mocked(updateAgentAction).mock.calls[1]?.[1];
+    if (!(sent instanceof FormData)) throw new Error("the second save did not send a FormData");
+    expect(sent.get("model")).toBe("claude-opus-5-5");
+    expect(sent.get("thinkingEffort")).toBe("high");
+    expect(sent.get("expectedVersion")).toBe("5");
   });
 
   it("starts an agent created before budgets existed with an empty budget the owner must fill", () => {

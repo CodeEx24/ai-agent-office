@@ -1,4 +1,4 @@
-import type { AgentChangeKind, AgentEditableField, AgentVersion } from "@ago/shared";
+import type { AgentChangeKind, AgentVersion, AgentVersionChangedField } from "@ago/shared";
 
 const KIND_LABELS: Record<AgentChangeKind, string> = {
   create: "Created",
@@ -7,13 +7,14 @@ const KIND_LABELS: Record<AgentChangeKind, string> = {
   unarchive: "Unarchived",
 };
 
-const FIELD_LABELS: Record<AgentEditableField, string> = {
+const FIELD_LABELS: Record<AgentVersionChangedField, string> = {
   name: "name",
   role: "role",
   model: "model",
   thinking_effort: "thinking effort",
   prompt: "prompt",
   daily_budget_cents: "daily budget",
+  archived_at: "archive state",
 };
 
 /** A fixed UTC format, so the server and the browser render the same text. */
@@ -21,6 +22,19 @@ export function formatVersionTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "unknown time";
   return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+/**
+ * The "Changed …" sentence of a row. Archive and unarchive rows already say what happened in their heading,
+ * so they get no list; the database lists `archived_at` there, which has no plain name. Unknown fields are
+ * dropped rather than printed as blanks.
+ */
+export function changeSentence(version: AgentVersion): string {
+  if (version.changeKind === "archive" || version.changeKind === "unarchive") return "";
+  const labels = version.changedFields
+    .map((field) => FIELD_LABELS[field])
+    .filter((label): label is string => Boolean(label));
+  return labels.length > 0 ? `Changed ${labels.join(", ")}. ` : "";
 }
 
 /**
@@ -45,9 +59,7 @@ export function AgentVersionList({ versions }: { versions: readonly AgentVersion
             </time>
           </div>
           <p className="text-sm [overflow-wrap:anywhere] text-muted-foreground">
-            {version.changedFields.length > 0
-              ? `Changed ${version.changedFields.map((field) => FIELD_LABELS[field]).join(", ")}. `
-              : ""}
+            {changeSentence(version)}
             By {version.changedByName ?? "an unknown member"}.
           </p>
           <details className="mt-1">

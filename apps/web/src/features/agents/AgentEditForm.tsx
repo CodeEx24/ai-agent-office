@@ -14,7 +14,7 @@ import {
 } from "@ago/shared/agent-limits";
 import { Button, Input, Label } from "@ago/ui";
 
-import { updateAgentAction } from "./actions";
+import { unarchiveAgentAction, updateAgentAction } from "./actions";
 import type { AgentEditState } from "./edit-agent";
 
 const INITIAL_STATE: AgentEditState = {};
@@ -60,6 +60,10 @@ export function AgentEditForm({
   agent: EditableAgent;
 }) {
   const [state, action, isPending] = useActionState(updateAgentAction, INITIAL_STATE);
+  const [unarchiveState, unarchive, isUnarchiving] = useActionState(
+    unarchiveAgentAction,
+    INITIAL_STATE,
+  );
   const [draft, setDraft] = useState({
     name: agent.name,
     role: agent.role,
@@ -70,10 +74,14 @@ export function AgentEditForm({
   });
   const [errors, setErrors] = useState<AgentFieldErrors>({});
   const [seenServerState, setSeenServerState] = useState(state);
+  // Bumped after every action result. React resets the form's controls after an action, which puts a
+  // select back to its mount-time option; remounting the two selects with the current draft undoes that.
+  const [formEpoch, setFormEpoch] = useState(0);
 
   // A server-side refusal is shown next to its field (React's pattern for reacting to a changed value).
   if (state !== seenServerState) {
     setSeenServerState(state);
+    setFormEpoch((epoch) => epoch + 1);
     setErrors(state.fieldErrors ?? {});
     const first = state.fieldErrors
       ? (Object.keys(state.fieldErrors) as AgentField[])[0]
@@ -111,11 +119,29 @@ export function AgentEditForm({
       <input type="hidden" name="workspaceId" value={workspaceId} />
       <input type="hidden" name="agentId" value={agent.id} />
       <input type="hidden" name="expectedVersion" value={String(currentVersion)} />
+      {/* Model and thinking effort are sent from state, not read from the selects (see formEpoch). */}
+      <input type="hidden" name="model" value={draft.model} />
+      <input type="hidden" name="thinkingEffort" value={draft.thinkingEffort} />
 
       {isLocked ? (
-        <p role="status" className="rounded-md border px-3 py-2 text-sm text-muted-foreground">
-          This agent is archived. Unarchive it to change its settings.
-        </p>
+        <div
+          role="status"
+          className="grid gap-2 rounded-md border px-3 py-2 text-sm text-muted-foreground"
+        >
+          <p>This agent is archived. Unarchive it to change its settings.</p>
+          {unarchiveState.error ? (
+            <p role="alert" className="text-destructive">
+              {unarchiveState.error}
+            </p>
+          ) : null}
+          <form action={unarchive} aria-label={`Unarchive ${agent.name}`}>
+            <input type="hidden" name="workspaceId" value={workspaceId} />
+            <input type="hidden" name="agentId" value={agent.id} />
+            <Button type="submit" variant="outline" size="sm" disabled={isUnarchiving}>
+              {isUnarchiving ? "Unarchiving…" : "Unarchive"}
+            </Button>
+          </form>
+        </div>
       ) : null}
       {state.error ? (
         <p role="alert" className="text-sm text-destructive">
@@ -161,9 +187,9 @@ export function AgentEditForm({
 
         <Label htmlFor={fieldId("model")}>{AGENT_FIELD_LABELS.model}</Label>
         <select
+          key={`${fieldId("model")}-${String(formEpoch)}`}
           id={fieldId("model")}
-          name="model"
-          value={draft.model}
+          defaultValue={draft.model}
           onChange={(event) => {
             update({ model: event.target.value });
           }}
@@ -182,9 +208,9 @@ export function AgentEditForm({
 
         <Label htmlFor={fieldId("thinkingEffort")}>{AGENT_FIELD_LABELS.thinkingEffort}</Label>
         <select
+          key={`${fieldId("thinkingEffort")}-${String(formEpoch)}`}
           id={fieldId("thinkingEffort")}
-          name="thinkingEffort"
-          value={draft.thinkingEffort}
+          defaultValue={draft.thinkingEffort}
           onChange={(event) => {
             update({ thinkingEffort: event.target.value });
           }}

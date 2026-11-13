@@ -116,10 +116,9 @@ test.describe("AGO-89: edit, duplicate and archive agents (local stack)", () => 
     await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
   });
 
-  // Found by the device tester in round 1: after a save that changed Model or Thinking effort the selects
-  // flip back to the old value on screen, and the next save in the same page session sends that old value.
-  // Un-fixme once fixed.
-  test.fixme("a second save in the same session keeps the model and thinking effort", async ({
+  // Device tester, round 1 (F1): after a save that changed Model or Thinking effort the selects flipped back to
+  // the old value on screen, and the next save in the same page session sent that old value.
+  test("a second save in the same session keeps the model and thinking effort", async ({
     page,
     baseURL,
   }) => {

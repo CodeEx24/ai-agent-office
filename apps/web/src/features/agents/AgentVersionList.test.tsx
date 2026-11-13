@@ -42,6 +42,35 @@ describe("AgentVersionList", () => {
     expect(items[1]).toHaveTextContent("Version 1 · Created");
   });
 
+  it("gives archive and unarchive rows a plain summary, even though the database lists archived_at as changed", () => {
+    render(
+      <AgentVersionList
+        versions={[
+          version({
+            version: 5,
+            changeKind: "unarchive",
+            changedFields: ["archived_at"],
+            changedByName: null,
+          }),
+          version({
+            version: 4,
+            changeKind: "archive",
+            changedFields: ["archived_at"],
+            changedByName: "Ada",
+          }),
+        ]}
+      />,
+    );
+    const items = within(screen.getByRole("list", { name: "Version history" })).getAllByRole(
+      "listitem",
+    );
+    expect(items[0]).toHaveTextContent("Version 5 · Unarchived");
+    expect(items[0]).toHaveTextContent("By an unknown member.");
+    expect(items[1]).toHaveTextContent("Version 4 · Archived");
+    expect(items[1]).toHaveTextContent("By Ada.");
+    for (const item of items) expect(item).not.toHaveTextContent("Changed");
+  });
+
   it("labels archive and unarchive changes", () => {
     render(
       <AgentVersionList

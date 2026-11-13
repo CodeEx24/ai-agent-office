@@ -72,11 +72,17 @@ export const AGENT_EDITABLE_FIELDS = [
 ] as const;
 export type AgentEditableField = (typeof AGENT_EDITABLE_FIELDS)[number];
 
+/**
+ * What the version trigger may list in `changedFields`: the editable settings, plus `archived_at` on an
+ * archive or unarchive row (the trigger records it; it is not editable).
+ */
+export type AgentVersionChangedField = AgentEditableField | "archived_at";
+
 /** One immutable row of an agent's history. It doubles as the audit log: who changed what, and when. */
 export interface AgentVersion {
   version: number;
   changeKind: AgentChangeKind;
-  changedFields: AgentEditableField[];
+  changedFields: AgentVersionChangedField[];
   name: string;
   role: string;
   model: string;
