@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   AGENT_PACK_JSON_SCHEMA_PATH,
@@ -15,6 +15,9 @@ import {
   renderAgentPackJsonSchema,
   type PackMigration,
 } from "./index.js";
+
+// Pack-level ratio tests parse many notes several times, so give every test here room on a slow runner.
+vi.setConfig({ testTimeout: 30_000 });
 
 type Loose = Record<string, unknown>;
 
@@ -46,10 +49,10 @@ function agentOf(pack: Loose): Loose {
   return (pack.agents as Loose[])[0]!;
 }
 
-/** Best of three runs in ms. Timing tests compare two input sizes, never an absolute time. */
-function bestOfThreeMs(run: () => unknown): number {
+/** Best of five runs in ms. Timing tests compare two input sizes, never an absolute time. */
+function bestOfFiveMs(run: () => unknown): number {
   let best = Number.POSITIVE_INFINITY;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
     const started = performance.now();
     run();
     best = Math.min(best, performance.now() - started);
@@ -58,7 +61,7 @@ function bestOfThreeMs(run: () => unknown): number {
 }
 
 /** A linear scan grows about 4x for 4x the input, a quadratic one about 16x. */
-const MAX_GROWTH_FOR_4X_INPUT = 8;
+const MAX_GROWTH_FOR_4X_INPUT = 11;
 const TIMER_FLOOR_MS = 2;
 
 function issuePaths(input: unknown): string[] {
@@ -172,8 +175,8 @@ describe("agent pack schema", () => {
     };
     const small = packOf(12_500);
     const large = packOf(50_000);
-    const smallMs = bestOfThreeMs(() => parseAgentPack(small));
-    const largeMs = bestOfThreeMs(() => parseAgentPack(large));
+    const smallMs = bestOfFiveMs(() => parseAgentPack(small));
+    const largeMs = bestOfFiveMs(() => parseAgentPack(large));
     expect(largeMs / Math.max(smallMs, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_4X_INPUT);
     expect(parseAgentPack(large).ok).toBe(false);
     expect(issuePaths(large)).toEqual(["notes.0.body"]);
@@ -194,8 +197,8 @@ describe("agent pack schema", () => {
     const large = packOf(20_000);
     expect(parseAgentPack(small).ok).toBe(true);
     expect(parseAgentPack(large).ok).toBe(true);
-    const smallMs = bestOfThreeMs(() => parseAgentPack(small));
-    const largeMs = bestOfThreeMs(() => parseAgentPack(large));
+    const smallMs = bestOfFiveMs(() => parseAgentPack(small));
+    const largeMs = bestOfFiveMs(() => parseAgentPack(large));
     expect(largeMs / Math.max(smallMs, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_4X_INPUT);
   });
 

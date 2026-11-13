@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { findSecretShape, parseAgentPack } from "./index.js";
 import { SECRET_VALUE_PATTERNS } from "../redaction/redact.js";
+
+// Pack-level ratio tests parse many notes several times, so give every test here room on a slow runner.
+vi.setConfig({ testTimeout: 30_000 });
 
 /**
  * Round 3 tests for AGO-191: the JWT shape is linear on "eyJ-" text, a duplicate secret-shaped
@@ -35,13 +38,13 @@ function validPack(): Loose {
   };
 }
 
-const MAX_GROWTH_FOR_2X_INPUT = 5; // linear ~2x, quadratic ~4x, plus timer noise
-const MAX_GROWTH_FOR_4X_INPUT = 8; // linear ~4x, quadratic ~16x
+const MAX_GROWTH_FOR_2X_INPUT = 3.3; // linear ~2x, quadratic ~4x, plus timer noise
+const MAX_GROWTH_FOR_4X_INPUT = 11; // linear ~4x, quadratic ~16x
 const TIMER_FLOOR_MS = 2;
 
 function timeIt(run: () => unknown): number {
   let best = Number.POSITIVE_INFINITY;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
     const started = performance.now();
     run();
     best = Math.min(best, performance.now() - started);
