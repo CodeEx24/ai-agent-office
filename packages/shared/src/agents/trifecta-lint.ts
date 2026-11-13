@@ -2,6 +2,9 @@
  * The trifecta lint (AGO-138). An agent that can read untrusted content (a web page can carry hidden
  * instructions), see private data and send data out of the workspace can be tricked into leaking that data.
  * Any two of the three are manageable; all three together are blocked when an agent is created.
+ * Scope: the server enforces this only in `agentCreator.createAgent` (the wizard and create-from-template paths).
+ * It is not a database guarantee: the `create_agent` RPC and direct inserts into `agent_capabilities` are not
+ * checked here (follow-up: a DB backstop covering both).
  *
  * Free of runtime imports (no zod) so the client wizard can use it from `@ago/shared/trifecta-lint` without
  * pulling zod into the browser bundle (same reason as `agent-limits.ts`).
@@ -11,7 +14,7 @@
  * here nor deliberately listed as neutral, so a new capability forces a decision. A key that is not mapped has
  * no leg. The grant mode (automatic or approval) is ignored: a capability the agent holds counts, because an
  * approval can be clicked through. There is no override in this version: the security-admin approval path
- * from the ticket is a follow-up (docs/tickets/AGO-138.md, decision q2).
+ * from the ticket is a follow-up (owner-approved hard block, docs/tickets/AGO-138.md, decision q2).
  */
 
 export const TRIFECTA_LEGS = ["untrusted", "private", "outbound"] as const;
