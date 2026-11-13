@@ -35,7 +35,6 @@ function validPack(): Loose {
   };
 }
 
-const MAX_MS = 1000;
 const MAX_GROWTH_FOR_2X_INPUT = 5; // linear ~2x, quadratic ~4x, plus timer noise
 const MAX_GROWTH_FOR_4X_INPUT = 8; // linear ~4x, quadratic ~16x
 const TIMER_FLOOR_MS = 2;
@@ -50,18 +49,31 @@ function timeIt(run: () => unknown): number {
   return best;
 }
 
+/** Time `parseAgentPack` on a valid pack whose notes are replaced by `notes`. */
+function timeParse(notes: unknown[]): { ms: number; result: ReturnType<typeof parseAgentPack> } {
+  const pack = validPack();
+  pack.notes = notes;
+  let result = parseAgentPack(pack);
+  const ms = timeIt(() => {
+    result = parseAgentPack(pack);
+  });
+  return { ms, result };
+}
+
 const jwt = () => ["eyJ" + "h".repeat(12), "eyJ" + "p".repeat(10), "s".repeat(14)].join(".");
 
 describe("AC (security round 2): the JWT shape is linear on eyJ- text", () => {
   for (const repeats of [5000, 10_000, 20_000, 80_000]) {
-    it(`findSecretShape finishes fast and returns null on "eyJ-" repeated ${String(repeats)} times`, () => {
+    it(`findSecretShape returns null on "eyJ-" repeated ${String(repeats)} times, and cost grows about 2x when the text doubles`, () => {
+      const half = "eyJ-".repeat(repeats / 2);
       const text = "eyJ-".repeat(repeats);
       let label: string | null = "unset";
+      const halfMs = timeIt(() => findSecretShape(half));
       const ms = timeIt(() => {
         label = findSecretShape(text);
       });
       expect(label).toBeNull();
-      expect(ms).toBeLessThan(MAX_MS);
+      expect(ms / Math.max(halfMs, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_2X_INPUT);
     });
   }
 
@@ -81,13 +93,10 @@ describe("AC (security round 2): the JWT shape is linear on eyJ- text", () => {
     expect(largeMs / Math.max(smallMs, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_2X_INPUT);
   });
 
-  it("parseAgentPack returns only a length issue on a 200k-character note of eyJ- text, within budget", () => {
-    const pack = validPack();
-    pack.notes = [{ title: "n", body: "eyJ-".repeat(50_000) }];
-    const started = performance.now();
-    const result = parseAgentPack(pack);
-    const elapsed = performance.now() - started;
-    expect(elapsed).toBeLessThan(MAX_MS);
+  it("parseAgentPack returns only a length issue on a 200k-character note of eyJ- text, and cost grows linearly", () => {
+    const small = timeParse([{ title: "n", body: "eyJ-".repeat(12_500) }]);
+    const { ms, result } = timeParse([{ title: "n", body: "eyJ-".repeat(50_000) }]);
+    expect(ms / Math.max(small.ms, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_4X_INPUT);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.issues).toHaveLength(1);
@@ -96,27 +105,25 @@ describe("AC (security round 2): the JWT shape is linear on eyJ- text", () => {
     }
   });
 
-  it("parseAgentPack parses 100 notes of eyJ- text quickly with no issue", () => {
-    const body = "eyJ-".repeat(5000);
-    const pack = validPack();
-    pack.notes = Array.from({ length: 100 }, () => ({ title: "n", body }));
-    const started = performance.now();
-    const result = parseAgentPack(pack);
-    const elapsed = performance.now() - started;
-    expect(result.ok).toBe(true);
-    expect(elapsed).toBeLessThan(MAX_MS);
+  it("parseAgentPack parses 100 notes of eyJ- text with no issue, and cost grows linearly with note length", () => {
+    const notesOf = (repeats: number) =>
+      Array.from({ length: 100 }, () => ({ title: "n", body: "eyJ-".repeat(repeats) }));
+    const small = timeParse(notesOf(1250));
+    const large = timeParse(notesOf(5000));
+    expect(small.result.ok).toBe(true);
+    expect(large.result.ok).toBe(true);
+    expect(large.ms / Math.max(small.ms, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_4X_INPUT);
   });
 
-  it("parseAgentPack parses 100 notes of near-JWT text quickly", () => {
+  it("parseAgentPack parses 100 notes of near-JWT text, and cost grows linearly with note length", () => {
     const unit = "eyJ" + "a".repeat(10) + ".eyJ" + "a".repeat(8) + ".b ";
-    const body = unit.repeat(800).slice(0, 20_000);
-    const pack = validPack();
-    pack.notes = Array.from({ length: 100 }, () => ({ title: "n", body }));
-    const started = performance.now();
-    const result = parseAgentPack(pack);
-    const elapsed = performance.now() - started;
-    expect(result.ok).toBe(true);
-    expect(elapsed).toBeLessThan(MAX_MS);
+    const notesOf = (length: number) =>
+      Array.from({ length: 100 }, () => ({ title: "n", body: unit.repeat(800).slice(0, length) }));
+    const small = timeParse(notesOf(5000));
+    const large = timeParse(notesOf(20_000));
+    expect(small.result.ok).toBe(true);
+    expect(large.result.ok).toBe(true);
+    expect(large.ms / Math.max(small.ms, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_4X_INPUT);
   });
 });
 
@@ -288,13 +295,12 @@ describe("every secret pattern stays linear on extra adversarial text", () => {
   const SMALL = 20_000;
   const LARGE = 80_000;
 
-  it("findSecretShape finishes fast and grows linearly on every adversarial text", () => {
+  it("findSecretShape grows linearly on every adversarial text", () => {
     for (const [name, build] of Object.entries(adversarial)) {
       const small = build(SMALL);
       const large = build(LARGE);
       const smallMs = timeIt(() => findSecretShape(small));
       const largeMs = timeIt(() => findSecretShape(large));
-      expect(largeMs, name).toBeLessThan(MAX_MS);
       expect(largeMs / Math.max(smallMs, TIMER_FLOOR_MS), name).toBeLessThan(
         MAX_GROWTH_FOR_4X_INPUT,
       );
@@ -308,7 +314,6 @@ describe("every secret pattern stays linear on extra adversarial text", () => {
         const large = build(LARGE);
         const smallMs = timeIt(() => pattern.test(small));
         const largeMs = timeIt(() => pattern.test(large));
-        expect(largeMs, name).toBeLessThan(MAX_MS);
         expect(largeMs / Math.max(smallMs, TIMER_FLOOR_MS), name).toBeLessThan(
           MAX_GROWTH_FOR_4X_INPUT,
         );

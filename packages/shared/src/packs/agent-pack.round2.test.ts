@@ -39,7 +39,6 @@ function agent0(pack: Loose): Loose {
   return (pack.agents as Loose[])[0]!;
 }
 
-const MAX_MS = 1000;
 /** A 4x longer input should cost about 4x more in a linear scan and about 16x in a quadratic one. */
 const MAX_GROWTH_FOR_4X_INPUT = 8;
 /** Below this the timer is noise, so a growth ratio is measured against it, not against ~0 ms. */
@@ -53,6 +52,26 @@ function timeIt(run: () => unknown): number {
     best = Math.min(best, performance.now() - started);
   }
   return best;
+}
+
+/**
+ * Time `parseAgentPack` on `count` notes that each hold `length` characters of hostile text.
+ * Pack tests compare a short and a 4x longer note, not an absolute time: a loaded CI runner
+ * changes absolute times but not the growth.
+ */
+function timeParseOfNotes(
+  build: (n: number) => string,
+  length: number,
+  count: number,
+): { ms: number; ok: boolean } {
+  const body = build(length).slice(0, length);
+  const pack = validPack();
+  pack.notes = Array.from({ length: count }, () => ({ title: "n", body }));
+  let ok = false;
+  const ms = timeIt(() => {
+    ok = parseAgentPack(pack).ok;
+  });
+  return { ms, ok };
 }
 
 // Hostile text builders. Each takes a target length.
@@ -92,7 +111,6 @@ describe("AC (security round 1): the secret scan is linear on hostile text", () 
       const large = build(LARGE);
       const smallMs = timeIt(() => findSecretShape(small));
       const largeMs = timeIt(() => findSecretShape(large));
-      expect(largeMs).toBeLessThan(MAX_MS);
       expect(largeMs / Math.max(smallMs, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_4X_INPUT);
     });
   }
@@ -114,7 +132,6 @@ describe("AC (security round 1): the secret scan is linear on hostile text", () 
           const large = build(LARGE);
           const smallMs = timeIt(() => pattern.test(small));
           const largeMs = timeIt(() => pattern.test(large));
-          expect(largeMs, name).toBeLessThan(MAX_MS);
           expect(largeMs / Math.max(smallMs, TIMER_FLOOR_MS), name).toBeLessThan(
             MAX_GROWTH_FOR_4X_INPUT,
           );
@@ -123,7 +140,7 @@ describe("AC (security round 1): the secret scan is linear on hostile text", () 
     }
   });
 
-  it("parseAgentPack parses a pack of hostile notes quickly when every note is scheme-like text", () => {
+  it("parseAgentPack cost grows linearly with note length when every note is scheme-like text", () => {
     for (const label of [
       "a. repeated",
       "a+ repeated",
@@ -133,26 +150,23 @@ describe("AC (security round 1): the secret scan is linear on hostile text", () 
       "a:// repeated",
       "mixed unicode",
     ]) {
-      const body = hostile[label]!(20_000).slice(0, 20_000);
-      const pack = validPack();
-      pack.notes = Array.from({ length: 100 }, () => ({ title: "n", body }));
-      const started = performance.now();
-      const result = parseAgentPack(pack);
-      const elapsed = performance.now() - started;
-      expect(result.ok, label).toBe(true);
-      expect(elapsed, label).toBeLessThan(MAX_MS);
+      const small = timeParseOfNotes(hostile[label]!, 5_000, 100);
+      const large = timeParseOfNotes(hostile[label]!, 20_000, 100);
+      expect(small.ok, label).toBe(true);
+      expect(large.ok, label).toBe(true);
+      expect(large.ms / Math.max(small.ms, TIMER_FLOOR_MS), label).toBeLessThan(
+        MAX_GROWTH_FOR_4X_INPUT,
+      );
     }
   });
 
-  it("parseAgentPack parses a pack quickly when 20 notes look like the start of a JWT", () => {
-    const body = hostile["JWT-like head, no dot, dashes between"]!(20_000).slice(0, 20_000);
-    const pack = validPack();
-    pack.notes = Array.from({ length: 20 }, () => ({ title: "n", body }));
-    const started = performance.now();
-    const result = parseAgentPack(pack);
-    const elapsed = performance.now() - started;
-    expect(result.ok).toBe(true);
-    expect(elapsed).toBeLessThan(MAX_MS);
+  it("parseAgentPack cost grows linearly with note length when 20 notes look like the start of a JWT", () => {
+    const build = hostile["JWT-like head, no dot, dashes between"]!;
+    const small = timeParseOfNotes(build, 5_000, 20);
+    const large = timeParseOfNotes(build, 20_000, 20);
+    expect(small.ok).toBe(true);
+    expect(large.ok).toBe(true);
+    expect(large.ms / Math.max(small.ms, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_4X_INPUT);
   });
 });
 

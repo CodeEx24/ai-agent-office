@@ -46,6 +46,21 @@ function agentOf(pack: Loose): Loose {
   return (pack.agents as Loose[])[0]!;
 }
 
+/** Best of three runs in ms. Timing tests compare two input sizes, never an absolute time. */
+function bestOfThreeMs(run: () => unknown): number {
+  let best = Number.POSITIVE_INFINITY;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const started = performance.now();
+    run();
+    best = Math.min(best, performance.now() - started);
+  }
+  return best;
+}
+
+/** A linear scan grows about 4x for 4x the input, a quadratic one about 16x. */
+const MAX_GROWTH_FOR_4X_INPUT = 8;
+const TIMER_FLOOR_MS = 2;
+
 function issuePaths(input: unknown): string[] {
   const result = parseAgentPack(input);
   return result.ok ? [] : result.issues.map((issue) => issue.path);
@@ -149,27 +164,39 @@ describe("agent pack schema", () => {
     expect(findSecretShape("redis://" + ":pw" + "@host:6379")).toBe("password in a URL");
   });
 
-  it("parses one oversized note of JWT-like text fast, with a length issue", () => {
-    const pack = validPack();
-    pack.notes = [{ title: "n", body: "eyJ-".repeat(50_000) }];
-    const started = performance.now();
-    const result = parseAgentPack(pack);
-    expect(performance.now() - started).toBeLessThan(1000);
-    expect(result.ok).toBe(false);
-    expect(issuePaths(pack)).toEqual(["notes.0.body"]);
+  it("parses one oversized note of JWT-like text in linear time, with a length issue", () => {
+    const packOf = (repeats: number) => {
+      const pack = validPack();
+      pack.notes = [{ title: "n", body: "eyJ-".repeat(repeats) }];
+      return pack;
+    };
+    const small = packOf(12_500);
+    const large = packOf(50_000);
+    const smallMs = bestOfThreeMs(() => parseAgentPack(small));
+    const largeMs = bestOfThreeMs(() => parseAgentPack(large));
+    expect(largeMs / Math.max(smallMs, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_4X_INPUT);
+    expect(parseAgentPack(large).ok).toBe(false);
+    expect(issuePaths(large)).toEqual(["notes.0.body"]);
   });
 
   it("scans hostile text in linear time (no regex backtracking)", () => {
-    const hostile = "a.".repeat(10_000);
-    const started = performance.now();
-    expect(findSecretShape(hostile)).toBeNull();
+    const hostile = (length: number) => "a.".repeat(length / 2);
+    expect(findSecretShape(hostile(20_000))).toBeNull();
 
-    const pack = validPack();
-    pack.notes = Array.from({ length: 100 }, () => ({ title: "n", body: hostile }));
-    expect(parseAgentPack(pack).ok).toBe(true);
-    // The unbounded scheme took minutes here (174 s for 500 notes). The linear scan takes
-    // about 0.2 s; 1 s leaves room for a loaded CI machine.
-    expect(performance.now() - started).toBeLessThan(1000);
+    // The unbounded scheme took minutes here (174 s for 500 notes) and grew about 16x for a 4x
+    // longer note. A linear scan grows about 4x.
+    const packOf = (length: number) => {
+      const pack = validPack();
+      pack.notes = Array.from({ length: 100 }, () => ({ title: "n", body: hostile(length) }));
+      return pack;
+    };
+    const small = packOf(5000);
+    const large = packOf(20_000);
+    expect(parseAgentPack(small).ok).toBe(true);
+    expect(parseAgentPack(large).ok).toBe(true);
+    const smallMs = bestOfThreeMs(() => parseAgentPack(small));
+    const largeMs = bestOfThreeMs(() => parseAgentPack(large));
+    expect(largeMs / Math.max(smallMs, TIMER_FLOOR_MS)).toBeLessThan(MAX_GROWTH_FOR_4X_INPUT);
   });
 
   it("never echoes a secret-shaped name in an issue message", () => {
