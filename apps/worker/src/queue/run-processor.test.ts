@@ -42,6 +42,15 @@ function fakeRunStore(initial: string = RUN_STATUS.queued) {
       if (state.status === RUN_STATUS.running) state.status = RUN_STATUS.paused;
       return Promise.resolve();
     },
+    resumeRun: () => {
+      const isPaused = state.status === RUN_STATUS.paused;
+      if (isPaused) state.status = RUN_STATUS.queued;
+      return Promise.resolve(isPaused);
+    },
+    revertResume: () => {
+      if (state.status === RUN_STATUS.queued) state.status = RUN_STATUS.paused;
+      return Promise.resolve();
+    },
   };
   return { state, store };
 }
