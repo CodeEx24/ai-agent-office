@@ -60,6 +60,64 @@ async function hardenOnce(pool: HardeningPool): Promise<void> {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+// How long a start waits for pg-boss background (bam) migrations to settle before it gives up.
+export const DEFAULT_SETTLE_MAX_WAIT_MS = 60_000;
+export const DEFAULT_SETTLE_POLL_MS = 250;
+
+export interface SettleOptions {
+  /** True once pg-boss has no background migration pending or running (any worker's). */
+  readonly isSettled: () => Promise<boolean>;
+  readonly maxWaitMs?: number;
+  readonly pollMs?: number;
+}
+
+/** True when no pg-boss background migration is pending or in progress (rows of getBamStatus()). */
+export function isBamSettled(rows: readonly { status: string }[]): boolean {
+  return !rows.some((row) => row.status === "pending" || row.status === "in_progress");
+}
+
+async function verifyNoGrants(pool: HardeningPool): Promise<boolean> {
+  const client = await pool.connect();
+  try {
+    return !(await hasExecuteGrants(client));
+  } finally {
+    client.release();
+  }
+}
+
+// pg-boss keeps creating functions after start() returns (background migrations, other workers'
+// installs). A single revoke can therefore lose the race. This revokes, then confirms: it is done only
+// when pg-boss was already settled BEFORE the revoke and a check AFTER it finds no PUBLIC/API-role
+// EXECUTE. It waits at most maxWaitMs and then throws (fail closed): the caller must treat that as a
+// startup error and never run unhardened. Residual risk: a function created after this returns keeps
+// its default grant until the next start (the schema has no USAGE for the API roles meanwhile).
+export async function hardenPgbossFunctionsSettled(
+  pool: HardeningPool,
+  options: SettleOptions,
+): Promise<void> {
+  const maxWaitMs = options.maxWaitMs ?? DEFAULT_SETTLE_MAX_WAIT_MS;
+  const pollMs = options.pollMs ?? DEFAULT_SETTLE_POLL_MS;
+  const deadline = Date.now() + maxWaitMs;
+  let lastError: unknown;
+  for (;;) {
+    try {
+      const wasSettled = await options.isSettled();
+      await hardenPgbossFunctions(pool);
+      if (wasSettled && (await verifyNoGrants(pool))) return;
+      lastError = undefined;
+    } catch (error) {
+      lastError = error;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `pgboss function hardening did not settle within ${String(maxWaitMs)} ms; refusing to run unhardened`,
+        lastError === undefined ? undefined : { cause: lastError },
+      );
+    }
+    await sleep(pollMs);
+  }
+}
+
 // A failure is never swallowed: it is retried a few times with jitter and then thrown, so the queue
 // treats it as a startup error (and its own start retry runs) rather than running unhardened.
 export async function hardenPgbossFunctions(pool: HardeningPool): Promise<void> {

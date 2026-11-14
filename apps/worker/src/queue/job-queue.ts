@@ -4,7 +4,7 @@ import { PgBoss } from "pg-boss";
 import { createApprovalExpirySweeper, createPgApprovalStore } from "../approvals/index.js";
 import { createPgRunEventStore, createRunEventEmitter } from "../events/index.js";
 import { withContext, type Logger } from "../logger.js";
-import { hardenPgbossFunctions } from "./pgboss-hardening.js";
+import { hardenPgbossFunctionsSettled, isBamSettled } from "./pgboss-hardening.js";
 import {
   DEFAULT_RUN_RETRY_POLICY,
   idempotencyKeySchema,
@@ -179,8 +179,11 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
     const instance = newBoss();
     try {
       await instance.start();
-      // pg-boss may have (re)created functions during install or upgrade: close their default PUBLIC grant.
-      await hardenPgbossFunctions(pool);
+      // pg-boss creates functions during install, upgrade and its background (bam) migrations, which keep
+      // running after start() returns: close their default PUBLIC grant once those have settled (AGO-213).
+      await hardenPgbossFunctionsSettled(pool, {
+        isSettled: async () => isBamSettled(await instance.getBamStatus()),
+      });
       await instance.createQueue(deadLetterQueue, { policy: "standard" });
       const queueSettings = {
         deadLetter: deadLetterQueue,
