@@ -32,6 +32,26 @@ export const AGENT_MODEL_IDS = AGENT_MODELS.map((model) => model.id) as [
   ...AgentModelId[],
 ];
 
+/**
+ * How much reasoning an agent may spend per step (AGO-89). Stored on the agent; the worker does not use it
+ * yet. A new agent gets the default, so the wizard needs no extra field.
+ */
+export const AGENT_THINKING_EFFORTS = [
+  { id: "low", label: "Low (fastest, lowest cost)" },
+  { id: "medium", label: "Medium (balanced)" },
+  { id: "high", label: "High (most thorough, highest cost)" },
+] as const;
+export type AgentThinkingEffort = (typeof AGENT_THINKING_EFFORTS)[number]["id"];
+export const AGENT_THINKING_EFFORT_IDS = AGENT_THINKING_EFFORTS.map((effort) => effort.id) as [
+  AgentThinkingEffort,
+  ...AgentThinkingEffort[],
+];
+export const DEFAULT_AGENT_THINKING_EFFORT: AgentThinkingEffort = "medium";
+
+export function isAgentThinkingEffort(value: string): value is AgentThinkingEffort {
+  return AGENT_THINKING_EFFORTS.some((effort) => effort.id === value);
+}
+
 /** Where an agent starts. Always the lowest autonomy: the wizard has no way to pick another. */
 export const NEW_AGENT_MODE = "strict";
 
@@ -40,6 +60,7 @@ export const AGENT_FIELDS = [
   "name",
   "role",
   "model",
+  "thinkingEffort",
   "prompt",
   "skillIds",
   "capabilities",
@@ -51,6 +72,7 @@ export const AGENT_FIELD_LABELS: Record<AgentField, string> = {
   name: "Name",
   role: "Role",
   model: "Model",
+  thinkingEffort: "Thinking effort",
   prompt: "Prompt",
   skillIds: "Skills",
   capabilities: "Capabilities",
@@ -65,6 +87,8 @@ export const AGENT_MESSAGES = {
   roleTooLong: `Role can be at most ${String(AGENT_ROLE_MAX_LENGTH)} characters.`,
   modelRequired: "Model is required. Choose one from the list.",
   modelUnknown: "Model is not one of the available models. Choose one from the list.",
+  thinkingEffortRequired: "Thinking effort is required. Choose one from the list.",
+  thinkingEffortUnknown: "Thinking effort must be low, medium or high. Choose one from the list.",
   promptRequired: "Prompt is required. Tell the agent how to behave.",
   promptTooLong: `Prompt can be at most ${AGENT_PROMPT_MAX_LENGTH.toLocaleString("en-US")} characters.`,
   budgetRequired: "Daily budget is required. Enter an amount in dollars, for example 5.00.",
@@ -132,6 +156,21 @@ export function checkAgentDraft(draft: AgentDraftText): AgentFieldErrors {
 
   const budget = parseDailyBudget(draft.dailyBudget);
   if (!budget.ok) errors.dailyBudget = budget.message;
+  return errors;
+}
+
+/** The text fields of the edit form (AGO-89): the wizard's, plus thinking effort. */
+export interface AgentEditDraftText extends AgentDraftText {
+  thinkingEffort: string;
+}
+
+/** Zod-free field checks for the edit form. Same rules and messages as the wizard, plus thinking effort. */
+export function checkAgentEditDraft(draft: AgentEditDraftText): AgentFieldErrors {
+  const errors = checkAgentDraft(draft);
+  if (draft.thinkingEffort === "") errors.thinkingEffort = AGENT_MESSAGES.thinkingEffortRequired;
+  else if (!isAgentThinkingEffort(draft.thinkingEffort)) {
+    errors.thinkingEffort = AGENT_MESSAGES.thinkingEffortUnknown;
+  }
   return errors;
 }
 

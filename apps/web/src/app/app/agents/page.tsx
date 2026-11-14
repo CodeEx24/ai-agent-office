@@ -3,7 +3,12 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AGENT_MODELS, hasMinRole } from "@ago/shared";
 
-import { listAgents } from "../../../features/agents/agent-library";
+import {
+  listAgents,
+  listArchivedAgents,
+  type AgentSummary,
+} from "../../../features/agents/agent-library";
+import { AgentRowActions } from "../../../features/agents/AgentRowActions";
 import { TemplateGallery } from "../../../features/agents/TemplateGallery";
 import { getCurrentUser } from "../../../features/auth/current-user";
 import { getActiveWorkspace } from "../../../features/workspaces/workspace-access";
@@ -18,7 +23,10 @@ export default async function AgentsPage() {
   const workspace = user ? await getActiveWorkspace(user.id) : null;
   if (!workspace) redirect("/app");
 
-  const agents = await listAgents(workspace.id);
+  const [agents, archivedAgents] = await Promise.all([
+    listAgents(workspace.id),
+    listArchivedAgents(workspace.id),
+  ]);
   const canCreate = hasMinRole(workspace.role, "owner");
 
   return (
@@ -33,30 +41,31 @@ export default async function AgentsPage() {
       {agents.length === 0 ? (
         <p className="text-muted-foreground">No agents yet.</p>
       ) : (
-        <ul className="grid min-w-0 gap-2" data-testid="agent-list">
-          {agents.map((agent) => (
-            <li key={agent.id} className="min-w-0 rounded-md border px-3 py-2">
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="font-medium [overflow-wrap:anywhere]">{agent.name}</span>
-                <span className="text-xs text-muted-foreground" data-testid="agent-mode">
-                  {agent.mode === "strict" ? "Strict" : agent.mode}
-                </span>
-              </div>
-              <p className="text-sm [overflow-wrap:anywhere] text-muted-foreground">
-                {[
-                  agent.role,
-                  AGENT_MODELS.find((model) => model.id === agent.model)?.id ?? agent.model,
-                  agent.dailyBudgetCents === null
-                    ? null
-                    : `$${(agent.dailyBudgetCents / 100).toFixed(2)} a day`,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </p>
-            </li>
-          ))}
-        </ul>
+        <AgentRows
+          agents={agents}
+          workspaceId={workspace.id}
+          canManage={canCreate}
+          testId="agent-list"
+        />
       )}
+
+      {archivedAgents.length > 0 ? (
+        <section className="grid gap-2" aria-labelledby="archived-agents-heading">
+          <h2 id="archived-agents-heading" className="text-lg font-semibold">
+            Archived
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Archived agents keep their history but cannot receive tasks.
+          </p>
+          <AgentRows
+            agents={archivedAgents}
+            workspaceId={workspace.id}
+            canManage={canCreate}
+            isArchived
+            testId="archived-agent-list"
+          />
+        </section>
+      ) : null}
 
       {canCreate ? (
         <>
@@ -71,5 +80,58 @@ export default async function AgentsPage() {
         <p className="text-sm text-muted-foreground">Only workspace owners can create agents.</p>
       )}
     </main>
+  );
+}
+
+function agentDetails(agent: AgentSummary): string {
+  return [
+    agent.role,
+    AGENT_MODELS.find((model) => model.id === agent.model)?.id ?? agent.model,
+    agent.dailyBudgetCents === null ? null : `$${(agent.dailyBudgetCents / 100).toFixed(2)} a day`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function AgentRows({
+  agents,
+  workspaceId,
+  canManage,
+  isArchived = false,
+  testId,
+}: {
+  agents: AgentSummary[];
+  workspaceId: string;
+  canManage: boolean;
+  isArchived?: boolean;
+  testId: string;
+}) {
+  return (
+    <ul className="grid min-w-0 gap-2" data-testid={testId}>
+      {agents.map((agent) => (
+        <li key={agent.id} className="grid min-w-0 gap-2 rounded-md border px-3 py-2">
+          <div className="flex items-baseline justify-between gap-3">
+            <Link
+              href={`/app/agents/${agent.id}`}
+              className="font-medium [overflow-wrap:anywhere] underline-offset-4 hover:underline"
+            >
+              {agent.name}
+            </Link>
+            <span className="text-xs text-muted-foreground" data-testid="agent-mode">
+              {agent.mode === "strict" ? "Strict" : agent.mode}
+            </span>
+          </div>
+          <p className="text-sm [overflow-wrap:anywhere] text-muted-foreground">
+            {agentDetails(agent)}
+          </p>
+          {canManage ? (
+            <AgentRowActions
+              workspaceId={workspaceId}
+              agent={{ id: agent.id, name: agent.name, isArchived }}
+            />
+          ) : null}
+        </li>
+      ))}
+    </ul>
   );
 }
