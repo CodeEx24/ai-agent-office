@@ -1,5 +1,5 @@
 # Approval requests
-Tickets: AGO-21 (created) · AGO-47 (payload-hash binding, single use, expiry limit)
+Tickets: AGO-21 (created) · AGO-47 (payload-hash binding, single use, expiry limit) · AGO-51 (timeout means deny, guarded by a static check)
 
 ## What it does
 When the policy engine says a tool call `needs_approval` (tier 3 and 4, or any call a policy escalates), the worker
@@ -123,7 +123,54 @@ index 1.
 **Follow-ups.** `resumeRun` with an undefined actor throws a `TypeError` instead of
 `HumanActorRequiredError` (pre-existing `assertHuman`); the call is still refused.
 
+## Timeout means deny (AGO-51)
+A timeout can only deny. The system writes `rejected` (never `approved`; `denied` stays reserved for a human), the agent
+gets `approval_expired` with the text "expired before a human answered. It was not run.", an `approval.decided`
+(`expired`, `timeout`) event is appended, and the run finishes instead of waiting. This is covered end to end on the
+sweeper path and the resume-time path in `agent-loop.approvals.test.ts` (including exactly at, just after and long after
+the limit, and that a late human `approved` row is refused and left as the human wrote it).
+
+**The static check** (`apps/worker/src/approvals/no-auto-approve.test.ts`, part of `pnpm test`) fails the build when any
+source could approve without a human. It scans non-test `.ts`/`.tsx` under `apps/**` and `packages/**` and every
+`supabase/migrations/*.sql` for:
+
+| Rule | Catches |
+|---|---|
+| R1 status write | `status: approved`, `status` shorthand, `x.status = approved`, a setter call such as `setStatus(id, "approved")`; also through a constant, a pure alias (`const s = APPROVAL_STATUS`, an import alias), a concatenation or a ternary |
+| R2 timeout allows | an expiry/timeout/deadline/ttl/sweep handler, or an `if`/`?:` on an expiry condition, that resolves to allow, approved or proceed or runs the call; an `approval.decided` event that is `approved` and decided by the timeout |
+| R3 SQL approves | `UPDATE ... SET status = 'approved'`, `new.status := 'approved'`, `new.status = 'approved'` at the start of a statement (a plain `=` in plpgsql is an assignment), an `INSERT` whose values contain a literal `'approved'`, a `$n` bound to approved in an `UPDATE`, a SQL `||` join, or a plpgsql variable bound to approved (`v := 'approved'`, `declare v text := 'approved'`, `v text default 'approved'`, a `::text` cast, a chain `b := a`), in `.sql` files and in strings in TypeScript (also built with `+`) |
+
+Comparisons are not writes and stay clean: `where status = 'approved'`, `if new.status = 'approved'`, `case when status = 'approved'`, a trigger `when (new.status = 'approved')`, and `set status = case when status = 'approved' ...`.
+
+The test proves itself: planted violations in `__fixtures__/auto-approve/` (a direct update, a computed status, SQL strings,
+a ternary on expiry, a timeout-decided approved event, a DB trigger, a cron update, a CASE expression, a plain `=` assignment
+in plpgsql, a setter called with `approved`, aliases of approved, a `+` and a `||` concatenation) must each be reported,
+the comparison forms in `clean-comparisons.sql.fixture` and look-alikes that only read `approved` must not, a sanity check asserts the real scan saw the files, and two
+violations planted into the real `approval-store.ts` and `expire-approvals.ts` text must be caught. The fixtures folder
+and the Playwright `e2e/` folder (which plays the human decider against a local database) are excluded explicitly.
+
+**The one exception.** A human decide route (AGO-58) must write `approved`. It is listed in `HUMAN_DECISION_FILES` in the
+check, which keeps the exception visible in review; the list is empty until that route exists. The check is a tripwire
+(it follows constants, pure aliases, concatenations and ternaries within one file, not a status built across files); the
+runtime enforcement remains the conditional `expire` and `consume` SQL, the RLS policy and the loop's refusal codes.
+
+**Known limitations.**
+The static check is a tripwire, not a proof. It follows values inside one file: constants, pure aliases (`const s = APPROVAL_STATUS`, an import alias), `+` and template concatenation, ternaries, SQL `||` joins and plpgsql variables. It does not follow these shapes, so review is the backstop for them:
+- computed keys: `{ ["status"]: "approved" }`, `{ [k]: "approved" }`, `row["sta" + "tus"] = ...`
+- object and array indirection: `const S = { ok: "approved" }; S.ok`, `["approved"][0]`
+- cross-file indirection: a constant, helper or return value defined in another module
+- runtime-built values: `.join("")`, `.toLowerCase()`, row data, a function's return value, a parameter
+- plpgsql dynamic SQL (`execute format(...)`), and SQL assembled in another file
+- setter calls whose name is not a write verb (`set`, `update`, `mark`, `save`, `write`, `change`, `transition`, `record`) followed by `Status`, `Decision` or `Outcome`, or whose status argument is not a literal or a bound alias (`store.write(id, "approved")`)
+- name shadowing: variables and aliases are bound per file, not per function or block, and the last declaration wins, so a name reused in another function can bind to the wrong value (a false positive or a miss)
+- flow-insensitive reassignment: one value per name per file. A variable bound to approved and later reassigned to a safe value still counts (a false positive), and a variable reassigned to approved through an expression the scanner cannot evaluate (`v := f()`) is missed
+- INSERT with `$n` bound to approved: only a literal `'approved'` in an INSERT is caught
+- plpgsql declaration forms the variable binder does not read (a plain `v := 'approved'` assignment is still caught): `v constant text := 'approved'`, `v text not null := 'approved'`, `v t.col%type := 'approved'`, and a schema-qualified type `v public.status_t := 'approved'`. Only `name [type] := value` and `name [type] default value`, with a one-word type and optional `(n)`, bind
+- files outside the scanned roots. The scan covers `apps/`, `packages/` and `supabase/migrations/` only, and only `.ts`, `.tsx` and `.sql`. These are never read: `supabase/seed.sql`, `supabase/tests/*.sql`, `supabase/rollbacks/*.sql`, and `.js`, `.mjs` and `.cjs` files under `apps/` and `packages/`
+- folders and files skipped on purpose: any folder named `e2e` (Playwright code that plays the human decider against a local database, `apps/web/e2e`), `__fixtures__`, `node_modules`, `dist`, `.next`, `.turbo`, `coverage`, plus `*.test.ts(x)`, `*.spec.ts(x)` and `*.d.ts` files. Code placed in one of these is not checked
+
 ## How to extend it
+- **Possible false positives.** The check is name-based, so a UI helper can match it. Examples: a React state setter such as `setStatus("approved")` (a filter or a local view state, not an approval), or a count object such as `stats.status.approved` assigned to a `status` property. Fix them in this order: rename the identifier so it no longer matches (for example `setStatusFilter`, or `approvedCount` instead of `status.approved`); or move the code out of the scanned roots. Do not add a file to `HUMAN_DECISION_FILES` to silence a false positive; that list is only for the human decide route (AGO-58), and review must see it.
 - Add the human decision: write `approved` or `denied` from a human-only route (AGO-58). The grant path (hash binding,
   single use, expiry) already exists; the route only has to write the status.
 - A crash between `consume` and the `started` checkpoint leaves a spent approval; the call is then denied on resume

@@ -1,0 +1,5 @@
+// PLANTED VIOLATION (never compiled, never scanned by the real scan): a sweeper that approves what it expires.
+export async function expireDueApprovals(store: { update(input: unknown): Promise<void> }, row: { status: string }) {
+  await store.update({ status: "approved", reason: "timeout" });
+  row.status = "approved";
+}

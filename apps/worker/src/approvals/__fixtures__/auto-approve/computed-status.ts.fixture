@@ -1,0 +1,8 @@
+// PLANTED VIOLATION: the status is built in a variable (a constant, then a concatenation) before it is written.
+const GRANTED = "appro" + "ved";
+const next = GRANTED;
+
+export function settle(row: { id: string }, save: (input: unknown) => void) {
+  const status = next;
+  save({ id: row.id, status });
+}
