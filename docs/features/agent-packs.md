@@ -119,6 +119,21 @@ flowchart LR
   Gen --> File[(schemas/agent-pack.v1.schema.json)]
 ```
 
+Export flow (API and CLI share `exportAgentPack`):
+
+```mermaid
+flowchart LR
+  Api[POST route.ts] --> Guard[rejectAgentCredential, Zod, requireWorkspaceRole]
+  Cli[runPackExport] --> SignIn[sign in as the person]
+  Guard --> Load[exportAgentPack]
+  SignIn --> Load
+  Load --> Rls[(5 tables, RLS reads)]
+  Load --> Build[buildAgentPack]
+  Build --> Log[record_pack_export]
+  Log --> Events[(pack_events)]
+  Log --> Out[pack JSON download or file]
+```
+
 `parseAgentPack` migrates first (version check and upgrade steps), then validates the shape, then runs the cross-field rules and the secret scan. Nothing is read from or written to a database or the network.
 
 ## Main functions and files
@@ -142,6 +157,7 @@ flowchart LR
 | `runPackExport` | `apps/web/src/features/packs/cli/run-pack-export.ts` | The command: flags, environment, sign-in, loader, write file. Dependencies are injected for tests; `pack-export.ts` wires the real ones. |
 | `record_pack_export`, `pack_events` | `supabase/migrations/20261114020001_ago_192_pack_events.sql` | The append-only log and its only writer (member-checked, security definer). |
 | tests | `packages/shared/src/packs/agent-pack*.test.ts`, `apps/web/src/features/packs/**/*.test.ts`, `apps/web/src/app/api/agent-packs/export/route.test.ts`, `supabase/tests/pack_events.test.sql` | Schema, migration, secret scan, JSON Schema staleness, export, checksum, route, CLI, no-service-role scan, table rules. |
+| live test | `apps/web/src/app/api/agent-packs/export/route.integration.test.ts` | Runs the real route, role check, loader, `record_pack_export` and CLI against the local Supabase stack as real throw-away users (42 tests). Skipped unless `E2E_SUPABASE=1`, so plain `pnpm test` needs no database. |
 
 ## Rules and edge cases
 
@@ -154,6 +170,8 @@ flowchart LR
 - **Untrusted text.** All pack text (prompts, skills, notes) is data, never instructions to the platform.
 - **Not checked here.** Model allowlist, budget cap, capability tiers and Strict mode belong to the importer (AGO-193).
 - **Export edge cases.** A grant whose catalog row is gone is refused (`invalid_pack`) rather than exported with a guessed scope. A repeated agent id counts once. Archived agents are exported only when named. A failed event write fails the whole export.
+- **Running the live export test.** It needs the local stack and the database lock, and only runs with `E2E_SUPABASE=1`:
+  `node scripts/db-lock.mjs acquire <KEY>`, `pnpm exec supabase db reset`, then `E2E_SUPABASE=1 pnpm --filter @ago/web exec vitest run src/app/api/agent-packs/export/route.integration.test.ts`, then `node scripts/db-lock.mjs release <KEY>`. Without the flag the file is skipped.
 - **Known limits.** Import does not verify the checksum yet (AGO-193 should call `verifyPackChecksum` and report a mismatch). The checksum is not a signature (AGO-199). The CLI needs the repo (it builds `@ago/shared` first) and Node 24.
 
 ## How to extend it
