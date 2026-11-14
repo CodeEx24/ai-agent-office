@@ -5,7 +5,7 @@
 - PRs: https://github.com/CodeEx24/ai-agent-office/pull/71
 - Related: AGO-167 (agent tool loop, Done), AGO-82 (workspaces and roles, Done), AGO-30 (pause/resume seams, merged), AGO-58 (human-only guard, merged a761f9d), AGO-40 (budget hard stops, waiting for merge), AGO-84 (kill switch, blocked by this), AGO-178 (right-click controls UI, blocked by this)
 
-Status: In review (built, round 2 approved). Type: Feature. Risk: high (human control, agent loop, auth, migration). Epic EP-06, wave 2.
+Status: Merged (owner merge; scripts/ path). Round 2 approved on aceaada. Type: Feature. Risk: high (human control, agent loop, auth, migration). Epic EP-06, wave 2.
 
 ## Overview
 As an owner I want to pause, resume or stop any agent so that I can intervene instantly. Today `createRunControl` (AGO-30) has worker-side `requestRunPause` and `resumeRun` seams but no route a person can call, no way to stop a run for good, and the pause flag is checked at step and call boundaries inside the loop rather than at the single policy-check point. This ticket adds the human-only control routes, a final `stop`, and the control-flag check at the one place every tool call goes through.
