@@ -29,7 +29,7 @@ select is(
      where t.relnamespace = 'public'::regnamespace and t.relkind = 'r'
        and has_column_privilege('authenticated', t.oid, a.attnum, 'INSERT')) s),
   (select array_agg(e order by e collate "C") from unnest(array[
-     'agents.workspace_id', 'agents.name', 'agents.description',
+     'agents.workspace_id', 'agents.name', 'agents.description', 'agents.thinking_effort',
      'agents.role', 'agents.model', 'agents.prompt', 'agents.daily_budget_cents',
      'skills.workspace_id', 'skills.name', 'skills.description', 'skills.body',
      'agent_skills.workspace_id', 'agent_skills.agent_id', 'agent_skills.skill_id',
@@ -54,7 +54,7 @@ select is(
        and has_column_privilege('authenticated', t.oid, a.attnum, 'UPDATE')) s),
   (select array_agg(e order by e collate "C") from unnest(array[
      'workspaces.name',
-     'agents.name', 'agents.description', 'agents.archived_at',
+     'agents.name', 'agents.role', 'agents.model', 'agents.thinking_effort', 'agents.prompt', 'agents.daily_budget_cents', 'agents.archived_at',
      'skills.name', 'skills.description', 'skills.body',
      'tasks.title', 'tasks.description', 'tasks.status', 'tasks.agent_id',
      'approvals.status', 'approvals.decided_by', 'approvals.decided_at',
@@ -77,8 +77,8 @@ select is(
 select is(
   (select count(*)::int from pg_class t where t.relnamespace = 'public'::regnamespace and t.relkind = 'r'
      and has_table_privilege('authenticated', t.oid, 'SELECT')),
-  18,
-  'authenticated can SELECT all 18 tables (membership RLS filters the rows)'
+  19,
+  'authenticated can SELECT all 19 tables (membership RLS filters the rows)'
 );
 select is(
   (select count(*)::int from pg_class t where t.relnamespace = 'public'::regnamespace and t.relkind = 'r'
@@ -109,8 +109,8 @@ select is(
   (select coalesce(array_agg(p.proname::text order by p.proname::text), '{}'::text[]) from pg_proc p
    where p.pronamespace = 'public'::regnamespace and has_function_privilege('authenticated', p.oid, 'EXECUTE')
      and not exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')),
-  array['create_agent', 'onboard_current_user', 'set_agent_run_limits'],
-  'authenticated can execute exactly three functions in public: create_agent (AGO-141) and set_agent_run_limits (AGO-166), both owner-checked, and onboard_current_user'
+  array['archive_agent', 'create_agent', 'duplicate_agent', 'onboard_current_user', 'set_agent_run_limits', 'unarchive_agent', 'update_agent'],
+  'authenticated can execute exactly seven functions in public: create_agent (AGO-141), set_agent_run_limits (AGO-166) and update_agent, duplicate_agent, archive_agent, unarchive_agent (AGO-89), all owner-checked, and onboard_current_user'
 );
 select is(
   (select coalesce(array_agg(p.proname::text order by p.proname::text), '{}'::text[]) from pg_proc p

@@ -14,7 +14,15 @@ import {
 } from "@ago/shared";
 import { z } from "zod";
 
-import { approvalIdFor, type ApprovalStore } from "../approvals/index.js";
+import {
+  APPROVAL_REFUSAL,
+  approvalIdFor,
+  approvalPayloadHash,
+  canonicalJson,
+  describeApprovalRefusal,
+  type ApprovalRefusal,
+  type ApprovalStore,
+} from "../approvals/index.js";
 import { ContextBuildError, type ContextBuilder } from "../context/index.js";
 import { scrubString } from "../logger.js";
 import {
@@ -54,8 +62,15 @@ import type { BudgetScope, BudgetStopReason, CapabilityTier, RetrievedItem } fro
  * - `needs_approval` creates a pending `approvals` row (AGO-21), emits `approval.requested` (bound to a payload
  *   hash) and ends the run as paused. The tool is never executed here. On resume the call reads its approval:
  *   still pending and unexpired, the run pauses again; past `expires_at`, the loop expires it itself (timeout
- *   means deny, even if the sweep is late or down) and the model is told; anything else, including `approved`
- *   until AGO-47 binds approvals to the payload hash, is a deny. The tool runs in none of these paths.
+ *   means deny, even if the sweep is late or down) and the model is told; `denied` and every other state is a
+ *   deny. The tool runs in none of these paths.
+ * - An `approved` approval grants (AGO-47) only in one narrow case, in this order: the call is offered and the
+ *   policy is asked again (a policy deny, an invalid input or an unoffered tool stops the call and leaves the
+ *   approval untouched); then the worker computes the payload hash itself from the exact tool name and arguments
+ *   about to run (never a hash from the model, the checkpoint or the row) and consumes the approval in one
+ *   conditional update (approved, unused, unexpired, same hash, same run); only a returned row lets the tool run.
+ *   A consumed approval is spent even if the tool then fails. Any other outcome is a deny with its own code
+ *   (`approval_payload_mismatch`, `approval_already_used`, `approval_expired`, `approval_denied`).
  * - Checkpoints (AGO-30): the loop saves its state after the model answers, before each tool runs and after each
  *   one finishes. A retry or a resume restores it: finished calls are not run again, and a call that started
  *   but has no saved result is never re-run (its outcome is recorded as unknown).
@@ -147,19 +162,6 @@ export interface AgentLoopDeps {
   readonly now?: () => number;
 }
 
-function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    const isPlain = ["string", "number", "boolean"].includes(typeof value);
-    return isPlain ? JSON.stringify(value) : "null";
-  }
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, v]) => v !== undefined)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`);
-  return `{${entries.join(",")}}`;
-}
-
 const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
 
 function sliceSafe(text: string, length: number): string {
@@ -182,6 +184,25 @@ export const NOT_OFFERED_TOOL_NAME = "<not_offered>";
 
 const VALID_CALL_ID = /^[\w.:-]{1,128}$/;
 const REASON_CODE = /^[a-z0-9_.-]{1,100}$/;
+
+/**
+ * The call ids for one step's calls, each different from the others (AGO-47). An approval id is derived from the
+ * run, step and call id, so two calls sharing an id would share one approval row. The model's own id is kept when
+ * it is valid and not taken; otherwise the call gets its index-based id (`call_<step>_<index>`), made unique with a
+ * numeric suffix if a model-chosen id already took that name. The index is part of the binding: an approval for
+ * call index 0 can never grant call index 1.
+ */
+export function uniqueStepCallIds(step: number, modelIds: readonly string[]): string[] {
+  const used = new Set<string>();
+  return modelIds.map((modelId, index) => {
+    const indexId = `call_${String(step)}_${String(index)}`;
+    let callId = VALID_CALL_ID.test(modelId) ? modelId : indexId;
+    if (used.has(callId)) callId = indexId;
+    for (let n = 2; used.has(callId); n += 1) callId = `${indexId}_${String(n)}`;
+    used.add(callId);
+    return callId;
+  });
+}
 
 /** The hook's whole answer is untrusted until it parses. Anything else is a deny. */
 const policyDecisionSchema = z.strictObject({
@@ -354,6 +375,8 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
     policyTimeoutMs: number,
     offered: ReadonlySet<string>,
     beforeRun: () => Promise<void> = () => Promise.resolve(),
+    /** Set for a resumed call whose approval row passed the screen: it must still be consumed before the tool runs. */
+    grantedApprovalId?: string,
   ): Promise<ToolCallResult> {
     const { emitter } = ctx;
     const callId = VALID_CALL_ID.test(call.id) ? call.id : `call_${String(step)}_${String(index)}`;
@@ -465,8 +488,12 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
       return fail("The policy denied this tool call. It was not run.");
     }
 
-    if (decision.decision === "needs_approval" || tool === undefined) {
-      const payloadHash = sha256(canonicalJson({ tool_name: call.name, input: call.input }));
+    // A call that carries a screened approval is not asked for again: the grant is checked and consumed below.
+    if (
+      (decision.decision === "needs_approval" && grantedApprovalId === undefined) ||
+      tool === undefined
+    ) {
+      const payloadHash = approvalPayloadHash(call.name, call.input);
       // The id comes from the run, step and call, so a retry finds the row it already made (AGO-21).
       const approvalId = approvalIdFor({ runId: ctx.runId, step, callId });
       let expiresAt = new Date(now() + approvalTtlMs);
@@ -509,6 +536,32 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
         },
       });
       return fail("The tool input was invalid. It was not run.");
+    }
+
+    // A resumed call that carries an approval runs only on a consumed grant (AGO-47), even if the policy now says
+    // plain `allow`. Order: policy (above), input check (above), then this consume, then `beforeRun`, then the tool.
+    // The hash is computed here from the exact call about to run; the one stored with the approval is only compared.
+    if (grantedApprovalId !== undefined) {
+      const store = deps.approvals;
+      const expectedHash = approvalPayloadHash(call.name, call.input);
+      const grantRef = {
+        workspaceId: ctx.workspaceId,
+        runId: ctx.runId,
+        approvalId: grantedApprovalId,
+      };
+      const consumed =
+        store === undefined ? null : await store.consume(grantRef, expectedHash, new Date(now()));
+      if (consumed === null) {
+        const refusal: ApprovalRefusal =
+          store === undefined
+            ? APPROVAL_REFUSAL.notGranted
+            : describeApprovalRefusal(await store.get(grantRef), expectedHash, now());
+        await emitter.emit({
+          type: "tool_call.failed",
+          payload: { call_id: callId, error_code: refusal.errorCode, message: refusal.message },
+        });
+        return fail(refusal.text);
+      }
     }
 
     // Saved before the tool is touched: a crash after this point never runs the call a second time (AGO-30).
@@ -776,37 +829,38 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
       };
 
       /**
-       * What a resumed `awaiting_approval` call does (AGO-21): wait again, or close without running. The tool is
-       * never run from here, whatever the approval says: `approved` is not honoured until AGO-47 binds it to the
-       * payload hash and makes it single use, so it fails closed like every other status except a live `pending`.
+       * What a resumed `awaiting_approval` call does (AGO-21, AGO-47): wait again, go on to the grant check, or
+       * close without running. This only screens the row. It consumes nothing and runs nothing: `candidate` means
+       * the row is `approved`, unused, in time and bound to the hash this call stored when it asked. The caller
+       * (`executeToolCall`) then asks the policy again and consumes the approval against a hash it computes itself,
+       * right before the tool runs. Every other state fails closed.
        */
       const resolveApproval = async (
         step: number,
         call: CheckpointCall,
       ): Promise<
         | { readonly kind: "waiting" }
-        | {
-            readonly kind: "closed";
-            readonly errorCode: string;
-            readonly message: string;
-            readonly text: string;
-          }
+        | { readonly kind: "candidate"; readonly approvalId: string }
+        | ({ readonly kind: "closed" } & ApprovalRefusal)
       > => {
-        const notGranted = {
-          kind: "closed",
-          errorCode: "approval_not_granted",
-          message: "no approval was recorded for this call",
-          text: "The tool call needed a human approval that was not given. It was not run.",
-        } as const;
+        const closed = (refusal: ApprovalRefusal) => ({ kind: "closed" as const, ...refusal });
         const store = deps.approvals;
-        if (store === undefined) return notGranted;
+        if (store === undefined) return closed(APPROVAL_REFUSAL.notGranted);
         const ref = {
           workspaceId: ctx.workspaceId,
           approvalId: approvalIdFor({ runId: ctx.runId, step, callId: call.call_id }),
         };
         let approval = await store.get(ref);
-        // No row, or a row for another payload than the one this call stored: nothing is bound to this call.
-        if (approval === null || approval.payloadHash !== call.payload_hash) return notGranted;
+        if (approval === null) return closed(APPROVAL_REFUSAL.notGranted);
+        // A row for another payload than the one this call stored: nothing is bound to this call. For an approved
+        // row that is a changed payload and is reported as such; any other state stays plain "not granted".
+        if (approval.payloadHash !== call.payload_hash) {
+          return closed(
+            approval.status === APPROVAL_STATUS.approved
+              ? APPROVAL_REFUSAL.payloadMismatch
+              : APPROVAL_REFUSAL.notGranted,
+          );
+        }
 
         if (approval.status === APPROVAL_STATUS.pending) {
           if (approval.expiresAt.getTime() > now()) return { kind: "waiting" };
@@ -825,35 +879,18 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
             });
           }
           approval = await store.get(ref);
-          if (approval === null) return notGranted;
+          if (approval === null) return closed(APPROVAL_REFUSAL.notGranted);
           // Still pending after the attempt, though past its time: it is an expiry all the same.
-          if (approval.status === APPROVAL_STATUS.pending) {
-            return {
-              kind: "closed",
-              errorCode: "approval_expired",
-              message: "the approval request expired",
-              text: "The approval request for this tool call expired before a human answered. It was not run.",
-            };
-          }
+          if (approval.status === APPROVAL_STATUS.pending) return closed(APPROVAL_REFUSAL.expired);
         }
 
-        if (approval.status === APPROVAL_STATUS.rejected) {
-          return {
-            kind: "closed",
-            errorCode: "approval_expired",
-            message: "the approval request expired",
-            text: "The approval request for this tool call expired before a human answered. It was not run.",
-          };
+        if (approval.status === APPROVAL_STATUS.approved) {
+          // The hash was checked above. Unused and in time: a candidate. `consume` makes the final, atomic call.
+          const isGrantable = approval.consumedAt === null && approval.expiresAt.getTime() > now();
+          if (isGrantable) return { kind: "candidate", approvalId: ref.approvalId };
         }
-        if (approval.status === APPROVAL_STATUS.denied) {
-          return {
-            kind: "closed",
-            errorCode: "approval_denied",
-            message: "a human denied the approval request",
-            text: "A human denied this tool call. It was not run.",
-          };
-        }
-        return notGranted;
+        // rejected (expired), denied, approved but used or expired, or anything unexpected: a denial with its reason.
+        return closed(describeApprovalRefusal(approval, call.payload_hash ?? "", now()));
       };
 
       const runSteps = async (): Promise<RunOutcome> => {
@@ -1051,13 +1088,16 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
             }
             // The model's answer is saved before any tool runs: a crash from here on resumes these exact calls
             // instead of asking the model again (and maybe getting different ones).
+            // One id per call, fixed here and saved with the step, so each call has its own approval (AGO-47).
+            const callIds = uniqueStepCallIds(
+              step,
+              calls.map((call) => call.id),
+            );
             openStep = {
               step,
               hadError: false,
               calls: calls.map((call, index) => ({
-                call_id: VALID_CALL_ID.test(call.id)
-                  ? call.id
-                  : `call_${String(step)}_${String(index)}`,
+                call_id: callIds[index] ?? `call_${String(step)}_${String(index)}`,
                 name: call.name.slice(0, 128),
                 input: call.input,
                 status: "pending" as const,
@@ -1086,12 +1126,31 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
                   summary: "waiting for a human to approve a tool call",
                 };
               }
-              result = await closeWithoutRunning(
-                call,
-                resolution.errorCode,
-                resolution.message,
-                resolution.text,
-              );
+              if (resolution.kind === "candidate") {
+                // Policy again, input check, then the atomic consume, then the tool (AGO-47). Nothing here trusts
+                // the row: `executeToolCall` hashes the exact call itself and `consume` decides.
+                result = await executeToolCall(
+                  ctx,
+                  { id: call.call_id, name: call.name, input: call.input },
+                  current.step,
+                  index,
+                  signal,
+                  policyTimeoutMs,
+                  offeredNames,
+                  async () => {
+                    call.status = "started";
+                    await persist();
+                  },
+                  resolution.approvalId,
+                );
+              } else {
+                result = await closeWithoutRunning(
+                  call,
+                  resolution.errorCode,
+                  resolution.message,
+                  resolution.text,
+                );
+              }
             } else if (call.status === "started") {
               // The worker stopped after this call began and before its result was saved. It may have run, so it
               // is not run again (AGO-30 AC1); the model learns the outcome is unknown and decides what to do.
