@@ -70,6 +70,9 @@ function stateFor(error: unknown): AgentWizardState {
               : APPROVAL_ERROR,
           },
         };
+      case "limits_not_saved":
+        // The agent exists: say so (a retry would only hit "name is taken").
+        return { error: error.message };
       case "failed":
         break;
     }

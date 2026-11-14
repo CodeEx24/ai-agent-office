@@ -17,6 +17,13 @@ export const AGENT_DAILY_BUDGET_DEFAULT_CENTS = 500;
 export const AGENT_DAILY_BUDGET_MAX_CENTS = 5_000;
 
 /**
+ * Optional "Max tokens per run" override (AGO-40). Duplicates `RUN_LIMIT_BOUNDS.maxTokens` from
+ * `run-limits.ts` (which imports zod, so the client cannot); a test keeps the numbers equal.
+ */
+export const AGENT_MAX_TOKENS_MIN = 1_000;
+export const AGENT_MAX_TOKENS_MAX = 5_000_000;
+
+/**
  * Models an owner can pick. A small static list: no API call, and no model is preselected, so the wizard
  * never makes a paid choice for the user.
  */
@@ -44,6 +51,7 @@ export const AGENT_FIELDS = [
   "skillIds",
   "capabilities",
   "dailyBudget",
+  "maxTokens",
 ] as const;
 export type AgentField = (typeof AGENT_FIELDS)[number];
 
@@ -55,6 +63,7 @@ export const AGENT_FIELD_LABELS: Record<AgentField, string> = {
   skillIds: "Skills",
   capabilities: "Capabilities",
   dailyBudget: "Daily budget",
+  maxTokens: "Max tokens per run",
 };
 
 /** One message per rule. Each names the field, so the error is clear even away from its input. */
@@ -72,6 +81,8 @@ export const AGENT_MESSAGES = {
     "Daily budget must be a number of dollars with at most two decimals, for example 5.00.",
   budgetNotPositive: "Daily budget must be more than $0.",
   budgetTooHigh: `Daily budget can be at most $${(AGENT_DAILY_BUDGET_MAX_CENTS / 100).toFixed(2)}.`,
+  maxTokensNotWhole: "Max tokens per run must be a whole number, for example 50000.",
+  maxTokensOutOfRange: `Max tokens per run must be between ${AGENT_MAX_TOKENS_MIN.toLocaleString("en-US")} and ${AGENT_MAX_TOKENS_MAX.toLocaleString("en-US")}.`,
   capabilityApproval:
     "Capabilities: a Tier 3 or 4 capability always needs a person's approval; it cannot run automatically.",
 } as const;
@@ -101,6 +112,20 @@ export function parseDailyBudget(text: string): DailyBudgetParse {
   return { ok: true, cents };
 }
 
+export type MaxTokensParse = { ok: true; tokens: number | null } | { ok: false; message: string };
+
+/** Optional field: empty means no override (tokens null). Otherwise a whole number inside the run-limit bounds. */
+export function parseMaxTokens(text: string): MaxTokensParse {
+  const trimmed = text.trim();
+  if (trimmed === "") return { ok: true, tokens: null };
+  if (!/^\d{1,15}$/.test(trimmed)) return { ok: false, message: AGENT_MESSAGES.maxTokensNotWhole };
+  const tokens = Number(trimmed);
+  if (tokens < AGENT_MAX_TOKENS_MIN || tokens > AGENT_MAX_TOKENS_MAX) {
+    return { ok: false, message: AGENT_MESSAGES.maxTokensOutOfRange };
+  }
+  return { ok: true, tokens };
+}
+
 export type AgentFieldErrors = Partial<Record<AgentField, string>>;
 
 /** The text fields of a draft, as typed. Skills and capabilities are checked on the server and by the DB. */
@@ -110,6 +135,8 @@ export interface AgentDraftText {
   model: string;
   prompt: string;
   dailyBudget: string;
+  /** Optional; "" means no override. */
+  maxTokens: string;
 }
 
 /** Zod-free field checks for the client. Returns a message per invalid field; empty means valid. */
@@ -132,6 +159,9 @@ export function checkAgentDraft(draft: AgentDraftText): AgentFieldErrors {
 
   const budget = parseDailyBudget(draft.dailyBudget);
   if (!budget.ok) errors.dailyBudget = budget.message;
+
+  const maxTokens = parseMaxTokens(draft.maxTokens);
+  if (!maxTokens.ok) errors.maxTokens = maxTokens.message;
   return errors;
 }
 
@@ -140,6 +170,6 @@ export const AGENT_WIZARD_STEPS = [
   { id: "basics", title: "Basics", fields: ["name", "role", "model", "prompt"] },
   { id: "skills", title: "Skills", fields: ["skillIds"] },
   { id: "capabilities", title: "Capabilities", fields: ["capabilities"] },
-  { id: "budget", title: "Budget", fields: ["dailyBudget"] },
+  { id: "budget", title: "Budget", fields: ["dailyBudget", "maxTokens"] },
   { id: "review", title: "Review", fields: [] },
 ] as const satisfies readonly { id: string; title: string; fields: readonly AgentField[] }[];

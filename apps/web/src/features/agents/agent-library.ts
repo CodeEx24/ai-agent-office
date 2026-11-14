@@ -16,7 +16,12 @@ import { listCapabilities } from "../capabilities/capability-catalog";
 import { listSkills } from "../skills/skill-library";
 import { requireWorkspaceRole } from "../workspaces/workspace-access";
 
-export type AgentLibraryErrorCode = "name_taken" | "invalid" | "not_found" | "forbidden" | "failed";
+export type AgentLibraryErrorCode =
+  "name_taken" | "invalid" | "not_found" | "forbidden" | "failed" | "limits_not_saved";
+
+/** Shown when the agent exists but the optional token limit could not be saved (AGO-40). Safe to show. */
+export const LIMITS_NOT_SAVED_MESSAGE =
+  "The agent was created, but its max tokens per run limit was not saved, so the default applies. You can set the limit later. Do not create the agent again.";
 
 /** Thrown when an agent cannot be created. Carries a code, the field it belongs to, and a safe message. */
 export class AgentLibraryError extends Error {
@@ -155,6 +160,19 @@ export const agentCreator: AgentCreator = {
       p_capabilities: resolved.grants.map((grant) => ({ key: grant.key, mode: grant.mode })),
     });
     if (error) throw toLibraryError(error);
+
+    // AGO-40: the optional token override goes through the existing owner-only RPC. A separate call, so the
+    // agent already exists if it fails; it then runs with the safe default and the owner is told not to retry.
+    if (input.maxTokens !== null) {
+      const { error: limitsError } = await supabase.rpc("set_agent_run_limits", {
+        p_workspace_id: access.workspaceId,
+        p_agent_id: data,
+        p_limits: { maxTokens: input.maxTokens },
+      });
+      if (limitsError) {
+        throw new AgentLibraryError("limits_not_saved", "maxTokens", LIMITS_NOT_SAVED_MESSAGE);
+      }
+    }
     return { id: data };
   },
 };

@@ -63,6 +63,7 @@ const baseInput = {
   prompt: "Find sources.",
   skillIds: [] as string[],
   dailyBudget: 500,
+  maxTokens: null,
 };
 
 /** The two steps the server action runs, from a posted form. */
@@ -78,6 +79,7 @@ async function postForm(
     model: "claude-haiku-5-5",
     prompt: "Find sources.",
     dailyBudget: "5.00",
+    maxTokens: "",
     skillIds: "[]",
     capabilities: JSON.stringify(capabilities),
     ...extra,

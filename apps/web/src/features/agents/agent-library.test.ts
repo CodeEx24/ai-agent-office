@@ -18,7 +18,10 @@ interface RpcResult {
   error: { code?: string; message?: string } | null;
 }
 let rpcResult: RpcResult = { data: "agent-1", error: null };
-const rpc = vi.fn((_name: string, _args: Record<string, unknown>) => Promise.resolve(rpcResult));
+let limitsResult: RpcResult = { data: null, error: null };
+const rpc = vi.fn((name: string, _args: Record<string, unknown>) =>
+  Promise.resolve(name === "set_agent_run_limits" ? limitsResult : rpcResult),
+);
 vi.mock("../../lib/supabase/server", () => ({
   createSupabaseServerClient: () => Promise.resolve({ rpc }),
 }));
@@ -46,11 +49,13 @@ const input = {
   skillIds: [SKILL],
   capabilities: [{ key: "vault.read", mode: "automatic" as const }],
   dailyBudget: 500,
+  maxTokens: null as number | null,
 };
 
 beforeEach(() => {
   rpc.mockClear();
   rpcResult = { data: "agent-1", error: null };
+  limitsResult = { data: null, error: null };
   requireWorkspaceRole.mockReset();
   requireWorkspaceRole.mockResolvedValue({ userId: "u", workspaceId: WORKSPACE, role: "owner" });
   listCapabilities.mockReset();
@@ -84,6 +89,43 @@ describe("agentCreator.createAgent", () => {
       p_skill_ids: [SKILL],
       p_capabilities: [{ key: "vault.read", mode: "automatic" }],
     });
+  });
+
+  it("AGO-40: does not call set_agent_run_limits when no token limit is given", async () => {
+    await agentCreator.createAgent({ ...input, maxTokens: null });
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual(["create_agent"]);
+  });
+
+  it("AGO-40: saves a given token limit with the exact set_agent_run_limits arguments, after create_agent", async () => {
+    await expect(agentCreator.createAgent({ ...input, maxTokens: 50_000 })).resolves.toEqual({
+      id: "agent-1",
+    });
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual(["create_agent", "set_agent_run_limits"]);
+    expect(rpc.mock.calls[1]?.[1]).toEqual({
+      p_workspace_id: WORKSPACE,
+      p_agent_id: "agent-1",
+      p_limits: { maxTokens: 50_000 },
+    });
+  });
+
+  it("AGO-40: does not save the limit when create_agent fails", async () => {
+    rpcResult = { data: null, error: { code: "23505", message: "dup" } };
+    await expect(agentCreator.createAgent({ ...input, maxTokens: 50_000 })).rejects.toMatchObject({
+      code: "name_taken",
+    });
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual(["create_agent"]);
+  });
+
+  it("AGO-40: says the agent was created when only the token limit failed to save", async () => {
+    limitsResult = { data: null, error: { code: "XX000", message: "boom" } };
+    const error = await agentCreator
+      .createAgent({ ...input, maxTokens: 50_000 })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(AgentLibraryError);
+    expect(error).toMatchObject({ code: "limits_not_saved", field: "maxTokens" });
+    expect((error as Error).message).toMatch(/agent was created/i);
+    expect((error as Error).message).toMatch(/not saved/i);
+    expect((error as Error).message).toMatch(/set the limit later/i);
   });
 
   it("refuses an automatic tier 3 capability before the database is called (tampered request)", async () => {
