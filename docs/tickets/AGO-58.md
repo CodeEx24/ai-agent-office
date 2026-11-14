@@ -1,10 +1,10 @@
 # AGO-58 - US-045 Make approval routes human-only
 
 - Ticket: https://stratyge.atlassian.net/browse/AGO-58 (Story, Epic EP-16, wave 2, WS-E, sprint 10)
-- PRs: (pending)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/68 (draft)
 - Blocked by: AGO-21 (approval request flow, done), AGO-148 (agent identity and credentials, done). Builds on AGO-47 (payload hash) and AGO-51 (static check).
 - Related: unblocks AGO-140 (Reviewer lane), AGO-129 (red-team suite), AGO-163 (note-edit proposals). Must-fix carried over from AGO-21 (Jira comment 15493).
-- Type: Feature - Risk: **high** (human-in-the-loop invariant, auth) - Status: In progress
+- Type: Feature - Risk: **high** (human-in-the-loop invariant, auth) - Status: In review
 
 ## Overview
 "As the product owner, I want: make approval routes human-only. Reject agent tokens on approval routes and treat Reviewer verdicts as advisory only."
