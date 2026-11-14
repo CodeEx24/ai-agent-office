@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { BUDGET_SCOPES, BUDGET_STOP_REASONS } from "../budget/budget.js";
+
 /**
  * Typed run events (AGO-164, v1).
  *
@@ -105,15 +107,21 @@ export const RUN_EVENT_SCHEMAS = [
     payload_hash: sha256,
   }),
   // Budget
+  // `cost_cents` (AGO-40): the call's cost, rounded up, exactly what was added to the budget ledger.
   event("budget.usage", {
     input_tokens: count,
     output_tokens: count,
     cost_micros: count.optional(),
+    cost_cents: count.optional(),
   }),
+  // A call was refused, or the run stopped, because of a budget (AGO-40). `reason` is a specific code a human can
+  // read; `estimate` is the worst-case cost reserved for the refused call, in cents.
   event("budget.exceeded", {
-    scope: z.enum(["run", "agent_daily", "workspace_monthly"]),
+    scope: z.enum(BUDGET_SCOPES),
+    reason: z.enum(BUDGET_STOP_REASONS),
     limit: count,
     used: count,
+    estimate: count.optional(),
   }),
   // Handoffs
   event("handoff.created", { handoff_id: id, to_agent_id: uuid, reason: shortText }),

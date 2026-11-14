@@ -44,6 +44,11 @@ export interface ModelResponse {
 }
 
 export interface ModelProvider {
+  /**
+   * The model that serves the calls, as priced in `MODEL_PRICES` (AGO-40). The budget check prices every call by it;
+   * a provider that leaves it out, or names a model with no price, has its calls refused when a budget is wired.
+   */
+  readonly model?: string;
   complete(request: ModelRequest): Promise<ModelResponse>;
 }
 

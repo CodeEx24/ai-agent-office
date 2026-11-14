@@ -15,6 +15,7 @@ import {
   AGENT_ROLE_MAX_LENGTH,
   normalizeText,
   parseDailyBudget,
+  parseMaxTokens,
   type AgentField,
 } from "./agent-limits.js";
 
@@ -63,6 +64,19 @@ export const agentDailyBudgetSchema = z
     return result.cents;
   });
 
+/** Optional max tokens per run, as typed. Empty or missing is null (no override); otherwise a bounded integer. */
+export const agentMaxTokensSchema = z
+  .string()
+  .optional()
+  .transform((value, ctx) => {
+    const result = parseMaxTokens(value ?? "");
+    if (!result.ok) {
+      ctx.addIssue({ code: "custom", message: result.message });
+      return z.NEVER;
+    }
+    return result.tokens;
+  });
+
 /** A capability the owner ticked, and how it should run. The tier is never sent: the server reads it. */
 export const agentCapabilityChoiceSchema = z.strictObject({
   key: capabilityKeySchema,
@@ -85,6 +99,7 @@ export const createAgentSchema = z.strictObject({
     .array(agentCapabilityChoiceSchema)
     .max(MAX_AGENT_CAPABILITIES, "Capabilities: choose at most 50."),
   dailyBudget: agentDailyBudgetSchema,
+  maxTokens: agentMaxTokensSchema,
 });
 export type CreateAgentInput = z.infer<typeof createAgentSchema>;
 
