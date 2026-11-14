@@ -79,6 +79,16 @@ An agent that can read **untrusted content**, see **private data** and **send da
 - **Prompt text** is stored in every version and shown as plain text; it is never run as markup.
 - **Not covered:** the worker does not yet refuse to claim work for an agent archived after assignment, and does not use `thinking_effort`. Names are not unique, so a duplicate can share a name.
 
+### Strict by default, human promotion (AGO-99)
+
+- **Every new agent starts in Strict.** The wizard, a template, a duplicate and (later) a pack import send no mode at all, so the `agents.mode` column default (`strict`) applies. `DEFAULT_AGENT_MODE` in `packages/shared/src/agents/agent-mode.ts` is the one named place for it; pack import (AGO-194) must use it. A duplicate never copies the source's mode: a promoted agent's copy is Strict.
+- **Promotion is a person's decision.** On the agent page an owner sees an **Autonomy** section: the current mode, a "New mode" list (Strict, Standard, Relaxed), a confirm box ("I reviewed this agent's runs...") and **Change mode**. Nothing is sent until the box is ticked. Tier 3 and 4 actions need approval in every mode (AGO-43). Members and viewers see the mode as text only; an archived agent shows no form.
+- **Human only, at three layers.** `setAgentModeAction` refuses an agent credential before it reads anything (an agent can never change a mode, its own included); the editor requires the owner role; the database function `set_agent_mode` checks `auth.uid()` and the owner role again (an agent credential has no member) and is not executable by `service_role`.
+- **Logged.** The function changes the mode and appends one row to `agent_mode_changes` (agent, from, to, member, time) in the same transaction. The table is append-only for every role. A guard trigger refuses any other change of `agents.mode`, so no path changes a mode without a log row, and a new agent row must start in `strict`.
+- **Any change is allowed, in either direction** (owner decision 2026-11-14): promote Strict to Standard or Relaxed, or demote back. Setting the mode the agent already has is refused.
+- **Status of the database part:** the migration (mode CHECK, `agent_mode_changes`, `set_agent_mode`, the guard) is written as a draft in `docs/tickets/AGO-99-migration-draft.sql` and is added to `supabase/migrations` when the schema slot is free. Until it runs, **Change mode** shows a generic failure message because the function does not exist yet.
+- **Not covered:** no minimum number of reviewed runs is required before a promotion; the confirm box is the owner's own statement. The mode log is not shown on the agent page yet. A rejected agent-credential attempt returns an error but writes no event (a web action has no run to attach one to).
+
 ## How to extend it
 - New capability: map it to a leg in `trifecta-lint.ts` or list it as neutral in `trifecta-lint.test.ts`.
 - New create path or capability edit: call `lintTrifecta` there too; nothing else enforces it. Duplicate copies grants from an agent that already passed.

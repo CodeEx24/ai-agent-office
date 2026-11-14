@@ -7,6 +7,7 @@ import {
   agentRefSchema,
   createAgentSchema,
   duplicateAgentSchema,
+  setAgentModeSchema,
   updateAgentSchema,
 } from "@ago/shared";
 import { z } from "zod";
@@ -23,6 +24,12 @@ import {
 } from "./create-agent";
 import { createAgentFromTemplateWith } from "./create-from-template";
 import { agentEditor } from "./agent-editor";
+import { agentModeEditor } from "./agent-mode-editor";
+import {
+  AGENT_CREDENTIAL_MODE_ERROR,
+  setAgentModeWith,
+  type AgentModeState,
+} from "./promote-agent";
 import {
   AGENT_CREDENTIAL_EDIT_ERROR,
   archiveAgentWith,
@@ -168,6 +175,40 @@ export async function archiveAgentAction(
   if (!parsed.success) return invalidInputState(parsed.issues);
 
   const result = await archiveAgentWith(agentEditor, parsed.data);
+  if (result.done) revalidateAgents(parsed.data.agentId);
+  return result;
+}
+
+/**
+ * Changes an agent's mode (AGO-99): promotion out of Strict, or demotion back. Human only, owners only. The
+ * human-only check runs first, before anything is parsed or written, so an agent credential (even one
+ * attached to a forwarded human session) can never change a mode, its own included. The change and its log
+ * row are one database call (`set_agent_mode`).
+ */
+export async function setAgentModeAction(
+  _prev: AgentModeState,
+  formData: FormData,
+): Promise<AgentModeState> {
+  try {
+    await requireHumanRequest();
+  } catch (error) {
+    if (error instanceof AgentCredentialRejectedError) {
+      return { error: AGENT_CREDENTIAL_MODE_ERROR };
+    }
+    throw error;
+  }
+
+  const parsed = parseInput(setAgentModeSchema, formDataToRecord(formData), GENERIC_ERROR);
+  if (!parsed.success) {
+    const fieldErrors: NonNullable<AgentModeState["fieldErrors"]> = {};
+    for (const issue of parsed.issues) {
+      if (issue.path[0] === "mode") fieldErrors.mode ??= issue.message;
+      else if (issue.path[0] === "confirm") fieldErrors.confirm ??= issue.message;
+    }
+    return Object.keys(fieldErrors).length > 0 ? { fieldErrors } : { error: GENERIC_ERROR };
+  }
+
+  const result = await setAgentModeWith(agentModeEditor, parsed.data);
   if (result.done) revalidateAgents(parsed.data.agentId);
   return result;
 }

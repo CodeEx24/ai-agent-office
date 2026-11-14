@@ -9,6 +9,7 @@ export * from "./skills/skill-schemas.js";
 export * from "./context/context-schemas.js";
 export * from "./agents/agent-schemas.js";
 export * from "./agents/agent-edit-schemas.js";
+export * from "./agents/agent-mode.js";
 export * from "./agents/agent-template-schemas.js";
 export * from "./seed/seed-ids.js";
 export * from "./identity/credential-schemas.js";

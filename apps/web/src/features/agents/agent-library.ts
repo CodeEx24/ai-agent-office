@@ -90,14 +90,14 @@ export async function listArchivedAgents(workspaceId: string): Promise<AgentSumm
 export async function getAgentDetail(
   workspaceId: string,
   agentId: string,
-): Promise<{ agent: EditableAgent; versions: AgentVersion[] }> {
+): Promise<{ agent: EditableAgent; versions: AgentVersion[]; mode: string }> {
   const access = await requireWorkspaceRole(workspaceId, "viewer");
   const supabase = await createSupabaseServerClient();
   const [agentResult, versionsResult, membersResult] = await Promise.all([
     supabase
       .from("agents")
       .select(
-        "id, name, role, model, thinking_effort, prompt, daily_budget_cents, version, archived_at",
+        "id, name, role, model, mode, thinking_effort, prompt, daily_budget_cents, version, archived_at",
       )
       .eq("workspace_id", access.workspaceId)
       .eq("id", agentId)
@@ -151,6 +151,7 @@ export async function getAgentDetail(
       isArchived: row.archived_at !== null,
     },
     versions,
+    mode: row.mode,
   };
 }
 

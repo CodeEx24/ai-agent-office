@@ -2,9 +2,16 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
-import { hasMinRole } from "@ago/shared";
+import {
+  AGENT_MODE_DESCRIPTIONS,
+  AGENT_MODE_LABELS,
+  AGENT_MODES,
+  hasMinRole,
+  parsePolicyAgentMode,
+} from "@ago/shared";
 
 import { AgentEditForm } from "../../../../features/agents/AgentEditForm";
+import { AgentModeForm } from "../../../../features/agents/AgentModeForm";
 import { AgentVersionList } from "../../../../features/agents/AgentVersionList";
 import { AgentLibraryError, getAgentDetail } from "../../../../features/agents/agent-library";
 import { getCurrentUser } from "../../../../features/auth/current-user";
@@ -32,8 +39,13 @@ export default async function AgentPage({ params }: { params: Promise<{ agentId:
     throw error;
   }
 
-  const { agent, versions } = detail;
+  const { agent, versions, mode } = detail;
   const canEdit = hasMinRole(workspace.role, "owner");
+  const modeOptions = AGENT_MODES.map((id) => ({
+    id,
+    label: AGENT_MODE_LABELS[id],
+    description: AGENT_MODE_DESCRIPTIONS[id],
+  }));
 
   return (
     <main className="mx-auto grid max-w-3xl gap-8 p-8 [&>*]:min-w-0">
@@ -60,6 +72,21 @@ export default async function AgentPage({ params }: { params: Promise<{ agentId:
         <AgentEditForm workspaceId={workspace.id} agent={agent} />
       ) : (
         <p className="text-sm text-muted-foreground">Only workspace owners can edit agents.</p>
+      )}
+
+      {canEdit ? (
+        <AgentModeForm
+          workspaceId={workspace.id}
+          agentId={agent.id}
+          currentMode={mode}
+          modes={modeOptions}
+          isArchived={agent.isArchived}
+        />
+      ) : (
+        <p className="text-sm text-muted-foreground" data-testid="agent-mode">
+          Mode: {AGENT_MODE_LABELS[parsePolicyAgentMode(mode)]}. Only workspace owners can change
+          it.
+        </p>
       )}
 
       <section className="grid gap-2" aria-labelledby="agent-history-heading">
