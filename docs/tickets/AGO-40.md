@@ -2,10 +2,10 @@
 
 ## Links
 - Ticket: [AGO-40](https://stratyge.atlassian.net/browse/AGO-40) (US-040), epic EP-06, wave 2 (Agent Runtime + Guardrails)
-- PRs: [#65](https://github.com/CodeEx24/ai-agent-office/pull/65) (draft)
+- PRs: [#65](https://github.com/CodeEx24/ai-agent-office/pull/65)
 - Related: AGO-164 (typed run event emitter, Done), AGO-167 (agent tool loop, Done), AGO-166 (per-agent run limits, Done), AGO-141 (agent wizard + `daily_budget_cents`, Done), AGO-177 / AGO-56 / AGO-153 (blocked by this ticket)
 
-**Status: In review** · Type: Feature · Risk: high (spend guardrail: money and the human-in-the-loop budget cap)
+**Status: Merged** · Type: Feature · Risk: high (spend guardrail: money and the human-in-the-loop budget cap)
 
 ## Overview
 Track model usage and stop runs at three limits: per run (tokens), per agent per day (money) and per workspace per
@@ -126,7 +126,7 @@ Dashboard (AGO-56), alerts and forecast (AGO-177), run view budget display (AGO-
 budget. Replace the static price table with a verified source.
 
 ## Outcome
-(pending: closed at merge)
+**Status: Merged** (2026-11-14, by the owner: human-merge path because the PR edits `scripts/ago-164-acceptance.test.mjs`). Three rounds. Round 1: security CHANGES (released a possibly billed call). Round 2: UX CHANGES (copy promised a missing edit path). Round 3: ux and code PASS; the approver ESCALATEd on the merge path and the read-time clamp, and the clamp was accepted under the owner's standing recommended-option rule. Gates passed in rounds 2 and 3 (pgTAP included); round 1 was red only on the known ago-151 flake (AGO-212). AC1-AC3 met; agent cost $37.79.
 
 Feature guide: [docs/features/budgets.md](../features/budgets.md)
 
