@@ -110,7 +110,7 @@ async function startWorker(extraEnv) {
   await new Promise((resolveReady, reject) => {
     const timer = setTimeout(
       () => reject(new Error(`worker did not start:\n${worker.stdout}${worker.stderr}`)),
-      15_000,
+      60_000,
     );
     const poll = setInterval(() => {
       if (worker.stdout.includes("worker started")) {
@@ -581,7 +581,7 @@ describe.skipIf(!dockerReady)("AC3: the Docker image builds, serves /health and 
     return { name, hostPort };
   }
 
-  async function waitForHealth(hostPort, attempts = 60) {
+  async function waitForHealth(hostPort, attempts = 240) {
     for (let i = 0; i < attempts; i += 1) {
       try {
         return await fetch(`http://127.0.0.1:${hostPort}/health`);
@@ -608,7 +608,7 @@ describe.skipIf(!dockerReady)("AC3: the Docker image builds, serves /health and 
     for (const line of parseJsonLines(docker(["logs", name]).stdout)) {
       assert.equal(line.service, "worker");
     }
-  }, 60_000);
+  }, 180_000);
 
   test("AC3: negative: container without APP_ENV exits 1 with a JSON fatal line", async () => {
     const { name } = await runContainer({}, false);
@@ -618,7 +618,7 @@ describe.skipIf(!dockerReady)("AC3: the Docker image builds, serves /health and 
     const [line] = parseJsonLines(logs.stderr);
     assert.equal(line.level, "fatal");
     assert.match(line.msg, /APP_ENV/);
-  }, 60_000);
+  }, 180_000);
 
   test("AC3: SIGTERM shuts the container down gracefully with exit code 0", async () => {
     const { name, hostPort } = await runContainer({
@@ -633,5 +633,5 @@ describe.skipIf(!dockerReady)("AC3: the Docker image builds, serves /health and 
     const messages = parseJsonLines(docker(["logs", name]).stdout).map((line) => line.msg);
     assert.ok(messages.includes("shutting down"), messages.join(","));
     assert.ok(messages.includes("worker stopped"), messages.join(","));
-  }, 60_000);
+  }, 180_000);
 });

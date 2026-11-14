@@ -53,6 +53,11 @@ function fakeRunStore(initial: string, checkpoints?: MemoryCheckpointStore) {
       if (canWake) state.status = RUN_STATUS.queued;
       return Promise.resolve(canWake);
     },
+    markStopped: (_ref, from) => {
+      const canStop = (from as readonly string[]).includes(state.status);
+      if (canStop) state.status = RUN_STATUS.stopped;
+      return Promise.resolve(canStop);
+    },
     revertResume: () => {
       if (state.status === RUN_STATUS.queued) state.status = RUN_STATUS.paused;
       return Promise.resolve();
