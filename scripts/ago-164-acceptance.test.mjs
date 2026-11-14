@@ -77,7 +77,7 @@ const VALID = {
   "approval.requested": { approval_id: "ap1", call_id: "c1", payload_hash: HASH, tier: 3, expires_at: FUTURE },
   "approval.decided": { approval_id: "ap1", outcome: "approved", decided_by: "human", payload_hash: HASH },
   "budget.usage": { input_tokens: 10, output_tokens: 20 },
-  "budget.exceeded": { scope: "run", limit: 100, used: 120 },
+  "budget.exceeded": { scope: "run", reason: "run_token_limit_reached", limit: 100, used: 120 },
   "handoff.created": { handoff_id: "h1", to_agent_id: UUID, reason: "needs review" },
   "handoff.accepted": { handoff_id: "h1", by_agent_id: UUID },
   "error.raised": { code: "unexpected", message: "oops", retryable: false },

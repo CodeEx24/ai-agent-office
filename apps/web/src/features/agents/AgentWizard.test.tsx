@@ -101,6 +101,70 @@ describe("AgentWizard", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Daily budget can be at most $50.00.");
   });
 
+  describe("max tokens per run (AGO-40)", () => {
+    async function toBudget(user: ReturnType<typeof userEvent.setup>) {
+      await fillBasics(user);
+      await user.click(screen.getByRole("button", { name: "Next" })); // skills
+      await user.click(screen.getByRole("button", { name: "Next" })); // capabilities
+      await user.click(screen.getByRole("button", { name: "Next" })); // budget
+    }
+
+    it("shows an optional, empty field with a hint next to the daily budget", async () => {
+      const { user, hidden } = setup();
+      await toBudget(user);
+      const field = screen.getByLabelText(/Max tokens per run/);
+      expect(field).toHaveValue("");
+      expect(field).toHaveAttribute("aria-invalid", "false");
+      const hint = document.getElementById(field.getAttribute("aria-describedby") ?? "");
+      expect(hint).toHaveTextContent(/token is a small piece of text/);
+      expect(hint).toHaveTextContent(/Leave empty to use the default/);
+      expect(hidden("maxTokens")).toBe("");
+    });
+
+    it("shows its error next to the field, names the field and focuses it", async () => {
+      const { user } = setup();
+      await toBudget(user);
+      const field = screen.getByLabelText(/Max tokens per run/);
+      await user.type(field, "999");
+      await user.click(screen.getByRole("button", { name: "Next" }));
+
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Max tokens per run must be between 1,000 and 5,000,000.",
+      );
+      expect(field).toHaveAttribute("aria-invalid", "true");
+      expect(field.getAttribute("aria-describedby")).toContain("agent-maxTokens-error");
+      expect(field).toHaveFocus();
+      expect(screen.getByRole("heading", { name: "Budget" })).toBeInTheDocument();
+
+      await user.clear(field);
+      await user.type(field, "12.5");
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Max tokens per run must be a whole number",
+      );
+    });
+
+    it("sends a valid value in the hidden form field and shows it on the review step", async () => {
+      const { user, hidden } = setup();
+      await toBudget(user);
+      await user.type(screen.getByLabelText(/Max tokens per run/), "50000");
+      expect(hidden("maxTokens")).toBe("50000");
+      await user.click(screen.getByRole("button", { name: "Next" }));
+
+      expect(screen.getByRole("heading", { name: "Review" })).toBeInTheDocument();
+      expect(screen.getByTestId("review")).toHaveTextContent("Max tokens per run");
+      expect(screen.getByTestId("review")).toHaveTextContent("50,000");
+    });
+
+    it("shows 'Not set (default)' on the review step when left empty", async () => {
+      const { user, hidden } = setup();
+      await toBudget(user);
+      await user.click(screen.getByRole("button", { name: "Next" }));
+      expect(screen.getByTestId("review")).toHaveTextContent("Not set (default)");
+      expect(hidden("maxTokens")).toBe("");
+    });
+  });
+
   it("keeps the draft when going back and forward", async () => {
     const { user } = setup();
     await fillBasics(user);

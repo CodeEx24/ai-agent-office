@@ -48,6 +48,7 @@ describe("createAgentFromTemplateWith", () => {
         role: template.role,
         model: template.model,
         dailyBudget: template.dailyBudgetCents,
+        maxTokens: null,
         skillIds: [],
         capabilities: template.capabilities,
       });
