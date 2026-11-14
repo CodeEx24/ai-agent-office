@@ -71,10 +71,16 @@ function configuredSecret(): string | undefined {
   }
 }
 
-function anonymousClient(): RejectionRecorderClient {
-  const { url, anonKey } = getSupabasePublicEnv();
-  // No cookies, no session: the caller is an agent, and the function checks the claims itself.
-  return createClient<Database>(url, anonKey, {
+/**
+ * The function is executable by `service_role` only, so this server-only client uses `SUPABASE_SERVICE_ROLE_KEY`.
+ * It is used for this one call and nowhere else in apps/web. Without the key there is no client: the caller logs
+ * "failed" and the 403 is unchanged.
+ */
+function serviceClient(): RejectionRecorderClient | undefined {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (serviceKey === undefined || serviceKey === "") return undefined;
+  const { url } = getSupabasePublicEnv();
+  return createClient<Database>(url, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
@@ -128,7 +134,14 @@ export async function recordAgentRouteRejection(
       return "unverified";
     }
 
-    const client = input.client ?? anonymousClient();
+    const client = input.client ?? serviceClient();
+    if (client === undefined) {
+      log("could not record the agent credential rejection", {
+        route: input.pathname,
+        code: "no_service_key",
+      });
+      return "failed";
+    }
     const { error } = await client.rpc("record_agent_approval_rejection", {
       p_workspace_id: workspace_id,
       p_run_id: run_id,

@@ -185,7 +185,11 @@ second layer. The recorder verifies the token's signature in the web layer first
 same code the worker uses); only a genuinely signed credential names a real run, so only then is one event
 `error.raised` with the fixed code `approval_route_rejected` and the message `<METHOD> <route>` appended (the approved v1
 event list is not amended; the run row names the agent), through the narrow database function
-`record_agent_approval_rejection` (the web app holds no service role and `run_events` is runtime-only). The event never
+`record_agent_approval_rejection` (`run_events` is runtime-only; the function is executable by `service_role` only, and
+the server-only recorder uses `SUPABASE_SERVICE_ROLE_KEY` for this one call, nowhere else in the web app; the decide
+route itself still uses the member's own session). The function checks the credential id belongs to the named
+workspace, agent and run, accepts only approval routes and five methods, and stays quiet past 20 events per run per
+minute. The event never
 holds the token, a header, the body or the query. A forged or malformed token still gets the same 403; it has no
 verifiable run, so it is logged (reason code and route only) and no event is written.
 
