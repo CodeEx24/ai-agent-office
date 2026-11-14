@@ -2,10 +2,10 @@
 
 ## Links
 - Ticket: [AGO-40](https://stratyge.atlassian.net/browse/AGO-40) (US-040), epic EP-06, wave 2 (Agent Runtime + Guardrails)
-- PRs: (pending)
+- PRs: [#65](https://github.com/CodeEx24/ai-agent-office/pull/65) (draft)
 - Related: AGO-164 (typed run event emitter, Done), AGO-167 (agent tool loop, Done), AGO-166 (per-agent run limits, Done), AGO-141 (agent wizard + `daily_budget_cents`, Done), AGO-177 / AGO-56 / AGO-153 (blocked by this ticket)
 
-**Status: In progress** · Type: Feature · Risk: high (spend guardrail: money and the human-in-the-loop budget cap)
+**Status: In review** · Type: Feature · Risk: high (spend guardrail: money and the human-in-the-loop budget cap)
 
 ## Overview
 Track model usage and stop runs at three limits: per run (tokens), per agent per day (money) and per workspace per
