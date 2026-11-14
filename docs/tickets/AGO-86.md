@@ -2,7 +2,7 @@
 
 ## Links
 - Ticket: https://stratyge.atlassian.net/browse/AGO-86
-- PRs: (pending)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/71
 - Related: AGO-167 (agent tool loop, Done), AGO-82 (workspaces and roles, Done), AGO-30 (pause/resume seams, merged), AGO-58 (human-only guard, merged a761f9d), AGO-40 (budget hard stops, waiting for merge), AGO-84 (kill switch, blocked by this), AGO-178 (right-click controls UI, blocked by this)
 
 Status: In review (built, round 1). Type: Feature. Risk: high (human control, agent loop, auth, migration). Epic EP-06, wave 2.
