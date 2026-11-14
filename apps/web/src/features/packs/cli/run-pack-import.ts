@@ -78,6 +78,15 @@ export function formatPreview(preview: ImportPreview): string[] {
     lines.push(
       `  agent ${agent.name}: ${agent.action}${agent.conflict ? " (name already exists)" : ""}`,
     );
+    if (agent.trifecta.declared) {
+      lines.push(
+        `    WARNING: declares a trifecta combination (${agent.trifecta.legs.join(", ")})${
+          agent.trifecta.remainsAfterIgnoring
+            ? ""
+            : "; it is gone once ignored capabilities are dropped"
+        }`,
+      );
+    }
     for (const capability of agent.capabilities) {
       const tier = capability.tier === null ? "unknown tier" : `tier ${String(capability.tier)}`;
       lines.push(`    capability ${capability.name} [${tier}]: ${capability.status}`);

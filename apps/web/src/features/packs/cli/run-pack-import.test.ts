@@ -32,6 +32,7 @@ const PREVIEW = {
       name: "Scout",
       action: "create",
       conflict: false,
+      trifecta: { declared: false, remainsAfterIgnoring: false, legs: [] },
       capabilities: [{ name: "vault.read", tier: 0, status: "applied" }],
     },
   ],
@@ -154,6 +155,44 @@ describe("runPackImport (pnpm pack:import)", () => {
     expect(await runPackImport(ARGS, deps)).toBe(1);
     expect(out.join("\n")).toContain("BLOCKED: Model not allowed");
     expect(out.join("\n")).toContain("Importable: no.");
+  });
+
+  it("warns about a declared trifecta in the readable summary", async () => {
+    previewAgentPackImport.mockResolvedValue({
+      ok: true,
+      preview: {
+        ...PREVIEW,
+        agents: [
+          {
+            ...PREVIEW.agents[0],
+            trifecta: {
+              declared: true,
+              remainsAfterIgnoring: true,
+              legs: ["untrusted_input", "private_data", "external_comms"],
+            },
+          },
+        ],
+      },
+    });
+    const { deps, out } = setup();
+    await runPackImport(ARGS, deps);
+    expect(out.join("\n")).toContain("WARNING: declares a trifecta combination");
+  });
+
+  it("never prints an unrecognized field name, even one shaped like a secret", async () => {
+    const secretKey = `ghp_${"A".repeat(36)}`;
+    previewAgentPackImport.mockResolvedValue({
+      ok: false,
+      error: {
+        code: "invalid_pack",
+        message: "The file is not a valid agent pack (1 problem).",
+        issues: [{ path: "agents.0", message: "1 unrecognized field." }],
+      },
+    });
+    const { deps, out, err } = setup();
+    expect(await runPackImport(ARGS, deps)).toBe(1);
+    expect([...out, ...err].join("\n")).not.toContain(secretKey);
+    expect(err.join("\n")).toContain("agents.0: 1 unrecognized field.");
   });
 
   it("has no apply option: --apply says so and does nothing", async () => {

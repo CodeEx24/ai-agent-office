@@ -151,6 +151,21 @@ function* walkStrings(
   }
 }
 
+/** Every object key in the value, with the path of the object that holds it (the key itself is not in the path). */
+function* walkKeys(
+  value: unknown,
+  path: PathSegment[] = [],
+): Generator<{ path: PathSegment[]; key: string }> {
+  if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) yield* walkKeys(item, [...path, index]);
+  } else if (typeof value === "object" && value !== null) {
+    for (const [key, item] of Object.entries(value)) {
+      yield { path, key };
+      yield* walkKeys(item, [...path, key]);
+    }
+  }
+}
+
 /** A name for an issue message. A secret-shaped name is never echoed: pack text is untrusted and issues get logged. */
 function quoteName(name: string): string {
   return findSecretShape(name) ? "(a value that looks like a secret)" : `"${name}"`;
@@ -228,6 +243,15 @@ function refinePack(pack: PackBody, ctx: z.RefinementCtx): void {
         );
       }
       seenRefs.add(ref);
+    }
+  }
+
+  // Field names are untrusted text too: report where, never the name.
+  for (const { path, key } of walkKeys(pack)) {
+    if (key.length > MAX_SCANNED_TEXT_LENGTH) continue;
+    const label = findSecretShape(key);
+    if (label) {
+      addIssue(ctx, path, `A field name looks like a ${label}. A pack never holds secret values.`);
     }
   }
 
