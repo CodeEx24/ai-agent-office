@@ -4,7 +4,7 @@ import { PgBoss } from "pg-boss";
 import { createApprovalExpirySweeper, createPgApprovalStore } from "../approvals/index.js";
 import { createPgRunEventStore, createRunEventEmitter } from "../events/index.js";
 import { withContext, type Logger } from "../logger.js";
-import { hardenPgbossFunctions } from "./pgboss-hardening.js";
+import { hardenPgbossFunctionsSettled, isBamSettled } from "./pgboss-hardening.js";
 import {
   DEFAULT_RUN_RETRY_POLICY,
   idempotencyKeySchema,
@@ -75,6 +75,8 @@ export interface JobQueueOptions {
   /** Delay before retrying a failed start (database not up yet). */
   readonly startRetryMs?: number;
   readonly connectionTimeoutMs?: number;
+  /** Upper bound on stopping a pg-boss instance whose start failed (default 5 s). Only tests set it. */
+  readonly failedStartStopTimeoutMs?: number;
   /**
    * Base name of the pg-boss queue (dead letter: `<name>-dead`). Defaults to `agent-run`. Only tests
    * set it, to give each suite its own queue on the shared database (AGO-202).
@@ -87,6 +89,9 @@ export interface JobQueueOptions {
 /** pg-boss default schema; created (and locked down) by the AGO-151 migration. */
 const PGBOSS_SCHEMA = "pgboss";
 
+/** Per-statement client timeout on the hardening pool: a stalled socket errors instead of hanging. */
+const HARDENING_QUERY_TIMEOUT_MS = 10_000;
+
 type QueueState = "starting" | "ready" | "stopped";
 
 const DEFAULTS = {
@@ -95,7 +100,20 @@ const DEFAULTS = {
   pollingIntervalSeconds: 2,
   startRetryMs: 5_000,
   connectionTimeoutMs: 5_000,
+  failedStartStopTimeoutMs: 5_000,
 } as const;
+
+/** Resolves when `work` settles or after `ms`, whichever is first. Never rejects. */
+function settleWithin(work: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    work.then(done, done);
+  });
+}
 
 interface DepthRow {
   name: string;
@@ -119,6 +137,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
   const policy = options.retryPolicy ?? DEFAULT_RUN_RETRY_POLICY;
   const shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULTS.shutdownTimeoutMs;
   const startRetryMs = options.startRetryMs ?? DEFAULTS.startRetryMs;
+  const stopBoundMs = options.failedStartStopTimeoutMs ?? DEFAULTS.failedStartStopTimeoutMs;
   const connectionTimeoutMillis = options.connectionTimeoutMs ?? DEFAULTS.connectionTimeoutMs;
 
   // Our own statements (claim, run events) use this pool; pg-boss keeps its own.
@@ -129,6 +148,20 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
     idleTimeoutMillis: 10_000,
   });
   pool.on("error", () => undefined);
+  // Hardening gets a small pool of its own, so a stalled socket cannot take the claim pool down. keepAlive
+  // and a query timeout make a dead socket fail instead of pinning a checked-out client (AGO-213).
+  // The idle-in-transaction timeout lets the server end an orphaned hardening session that still holds
+  // the advisory lock, so other workers are not blocked until TCP gives up (AGO-213 round 3).
+  const hardeningPool = new pg.Pool({
+    connectionString: options.connectionString,
+    max: 2,
+    connectionTimeoutMillis,
+    idleTimeoutMillis: 10_000,
+    keepAlive: true,
+    query_timeout: HARDENING_QUERY_TIMEOUT_MS,
+    options: "-c idle_in_transaction_session_timeout=15s",
+  });
+  hardeningPool.on("error", () => undefined);
   const runs = createPgRunStore(pool);
   const events = createPgRunEventStore(pool);
   const checkpoints = createPgCheckpointStore(pool);
@@ -175,12 +208,23 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
     return instance;
   };
 
+  /** Stops a pg-boss instance that will not be used. Resolves within the bound even if stop() hangs. */
+  async function discardBoss(instance: PgBoss): Promise<void> {
+    await settleWithin(
+      instance.stop({ close: true, graceful: false }).catch(() => undefined),
+      stopBoundMs,
+    );
+  }
+
   async function connect(): Promise<void> {
     const instance = newBoss();
     try {
       await instance.start();
-      // pg-boss may have (re)created functions during install or upgrade: close their default PUBLIC grant.
-      await hardenPgbossFunctions(pool);
+      // pg-boss creates functions during install, upgrade and its background (bam) migrations, which keep
+      // running after start() returns: close their default PUBLIC grant once those have settled (AGO-213).
+      await hardenPgbossFunctionsSettled(hardeningPool, {
+        isSettled: async () => isBamSettled(await instance.getBamStatus()),
+      });
       await instance.createQueue(deadLetterQueue, { policy: "standard" });
       const queueSettings = {
         deadLetter: deadLetterQueue,
@@ -222,11 +266,12 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
         );
       }
     } catch (error) {
-      await instance.stop({ close: true, graceful: false }).catch(() => undefined);
+      // Bounded: pg-boss stop() can wait on a stalled client, and the start must still fail and retry.
+      await discardBoss(instance);
       throw error;
     }
     if (isStopped()) {
-      await instance.stop({ close: true, graceful: false }).catch(() => undefined);
+      await discardBoss(instance);
       return;
     }
     boss = instance;
@@ -355,6 +400,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
             logger.error({ err: error }, "job queue did not stop cleanly");
           });
       }
+      await hardeningPool.end().catch(() => undefined);
       await pool.end().catch(() => undefined);
     },
   };

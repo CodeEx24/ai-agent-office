@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// AGO-213: every case re-imports the env module (vi.resetModules); under a loaded full-suite run that
+// import alone can pass the 5 s default. Wait for the work, not a short clock.
+vi.setConfig({ testTimeout: 30_000 });
+
 // AGO-104 fix round 1: an invalid NEXT_PUBLIC_SENTRY_DSN must never take the app down.
 const SUPABASE = {
   NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
