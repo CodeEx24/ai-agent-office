@@ -55,18 +55,24 @@ Out: the approvals inbox UI (AGO-37), the Reviewer lane (AGO-140), resuming a ru
 `POST /api/approvals/[id]/decision`: 200 `{ id, status }`, 400 bad input, 401 signed out, 403 agent credential (fixed body `agent_credential_not_allowed`) or not a member, 404 not decidable.
 
 ## Database changes
-None for the decision. q1-A would add one SECURITY DEFINER function that appends one event type (needs the schema slot; ask first).
+None for the decision (RLS policy `approvals_update_member` already exists). One SECURITY DEFINER function, `record_agent_approval_rejection`, appends the `approval.route_rejected` event (owner decision q2-A). It is written as a local draft and is NOT in this PR: it goes on this branch after the orchestrator grants the schema slot (AGO-192 holds it).
 
 ## Dependencies on other tickets
 AGO-21, AGO-148 (done). AGO-47, AGO-51 (merged). AGO-192 holds the schema slot.
 
 ## Known limitations
-To fill at the end. Expected: the AGO-51 scanner gaps (declare-default forms, out-of-scope roots) are recorded as follow-ups, not fixed, to keep `scripts/` out of this PR.
+- **The event needs the migration, which is not in this PR yet (owner decision q2, 2026-11-14).** CLAUDE.md allows one schema-changing ticket at a time and AGO-192 holds the slot. The web recorder calls the database function `record_agent_approval_rejection`; until the migration that creates it lands, the call fails, the recorder logs the failure (route and error code only) and the 403 is still returned. So AC1's 403 holds from this PR, and its event holds once the migration is merged (it lands on this branch after the orchestrator grants the schema slot).
+- Open design point for the migration: the owner asked for EXECUTE to be granted to the narrowest role and revoked from `anon`, but the web app has no service-role key and an agent-token request has no human session (it reaches the database as `anon`). Granting to `anon` is the only way the web layer can call it, so the function must itself be the bound: it appends one fixed-shape event and only for a `jti` that matches a real, unrevoked `agent_credentials` row in the same workspace, agent and run. Needs the owner's call before the migration is finalised.
+- A forged or malformed agent token still gets the 403 but no event: it names no verifiable run, so it is logged only.
+- The Reviewer lane (AGO-140) does not exist yet; the advisory rule is proven with the gate predicate and the worker loop, not with a real Reviewer.
+- The AGO-51 scanner gaps (declare-default forms, out-of-scope roots) are recorded as follow-ups, not fixed, to keep `scripts/` out of this PR.
 
 ## Testing notes
-`pnpm --filter @ago/web test`, `pnpm --filter @ago/worker test`, `no-auto-approve`. pgTAP only if q1-A. No model calls.
+`pnpm --filter @ago/web test` (route, recorder, inventory), `pnpm --filter @ago/worker test` (Reviewer advisory, wake race, `no-auto-approve`), `pnpm --filter @ago/shared test` (event table, decision schemas). pgTAP for the function (grants, append-only, cross-workspace denial) comes with the migration. Fake tokens and secrets are built at runtime. No model calls.
 
 ## Follow-up tasks
 - AGO-37 builds the inbox UI on the decide route.
 - AGO-140: Reviewer lane must keep its verdict advisory (test added here is the guard).
-- AGO-51 scanner gaps (see docs/tickets/AGO-51.md Outcome).
+- AGO-51 scanner gaps (see docs/tickets/AGO-51.md Outcome): the remaining declare-default forms and the out-of-scope roots. Both are edits to `scripts/`-adjacent tooling, so they need their own ticket.
+- The migration for `record_agent_approval_rejection` (with pgTAP and rollback evidence) once the schema slot is granted.
+- A Jira comment on AGO-21 that the timeout-wake race is fixed here.

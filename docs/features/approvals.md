@@ -1,17 +1,17 @@
 # Approval requests
-Tickets: AGO-21 (created) · AGO-47 (payload-hash binding, single use, expiry limit) · AGO-51 (timeout means deny, guarded by a static check)
+Tickets: AGO-21 (created) · AGO-47 (payload-hash binding, single use, expiry limit) · AGO-51 (timeout means deny, guarded by a static check) · AGO-58 (human-only decide route, agent tokens refused with an event, Reviewer verdict is advisory)
 
 ## What it does
 When the policy engine says a tool call `needs_approval` (tier 3 and 4, or any call a policy escalates), the worker
 records a **pending approval**, pauses the run, and waits for a human. If nobody answers in time the approval becomes
 `rejected` and the agent is told the call was not run. A human is always in the loop: nothing here lets an agent or the
 loop approve anything, and the tool runs in no path that is not an honoured approval. An approval is honoured only
-for the exact call it was given for, once, and before it expires (AGO-47). Until the human decide route exists (AGO-58),
-no `approved` row appears in production.
+for the exact call it was given for, once, and before it expires (AGO-47). The only thing that writes `approved` or
+`denied` is a person, through the human-only decide route (AGO-58, below).
 
 ## Screens
-None yet. The decide routes (approve or deny) and the inbox UI are AGO-58 and AGO-37. Until then nobody can answer a
-request in production, so every request ends in a timeout denial.
+None yet. The inbox UI is AGO-37; it will call `POST /api/approvals/[id]/decision`. Until it ships, a member can decide
+through that route directly, and every request nobody answers still ends in a timeout denial.
 
 ## Data model
 One table, `public.approvals` (created in AGO-74, RLS in AGO-107). This feature adds no migration.
@@ -112,9 +112,10 @@ or rejected past its limit; `now == expires_at` is expired), `approval_denied`, 
 index 1.
 
 **Accepted gaps (owner Decision 4, recorded in `docs/tickets/AGO-21.md`).**
-- The timeout wake checks the pause flag, then moves the run to `queued`, with a few database calls between. A stale
-  wake in that window could override a human's re-pause for one step of calls the policy already allows (tier 3 and 4
-  still need approval). Nothing in production calls pause or resume yet. It must be fixed in or before AGO-58.
+- ~~The timeout wake checked the pause flag, then moved the run a few database calls later.~~ **Fixed in AGO-58.** The
+  wake is now one conditional update (`RunStore.wakeRunAfterExpiry`): the run moves `paused` → `queued` only if the
+  human pause flag is not set, in the same statement. Two concurrent wakes make exactly one transition, and a human
+  re-pause that lands between the check and the move is never overridden (tests in `run-control.test.ts`).
 - `approval.decided` is not retried. It can be missing if the sweep's update succeeds and the event write fails
   (logged and sent to the error tracker), and likewise in the resume-time check. The call is denied either way; only
   the audit event is lost.
@@ -149,8 +150,9 @@ the comparison forms in `clean-comparisons.sql.fixture` and look-alikes that onl
 violations planted into the real `approval-store.ts` and `expire-approvals.ts` text must be caught. The fixtures folder
 and the Playwright `e2e/` folder (which plays the human decider against a local database) are excluded explicitly.
 
-**The one exception.** A human decide route (AGO-58) must write `approved`. It is listed in `HUMAN_DECISION_FILES` in the
-check, which keeps the exception visible in review; the list is empty until that route exists. The check is a tripwire
+**The one exception.** The human decide route (AGO-58) writes `approved`. Its file
+(`apps/web/src/features/approvals/decide-approval.ts`) is the single entry in `HUMAN_DECISION_FILES` in the check,
+which keeps the exception visible in review. The check is a tripwire
 (it follows constants, pure aliases, concatenations and ternaries within one file, not a status built across files); the
 runtime enforcement remains the conditional `expire` and `consume` SQL, the RLS policy and the loop's refusal codes.
 
@@ -169,10 +171,50 @@ The static check is a tripwire, not a proof. It follows values inside one file: 
 - files outside the scanned roots. The scan covers `apps/`, `packages/` and `supabase/migrations/` only, and only `.ts`, `.tsx` and `.sql`. These are never read: `supabase/seed.sql`, `supabase/tests/*.sql`, `supabase/rollbacks/*.sql`, and `.js`, `.mjs` and `.cjs` files under `apps/` and `packages/`
 - folders and files skipped on purpose: any folder named `e2e` (Playwright code that plays the human decider against a local database, `apps/web/e2e`), `__fixtures__`, `node_modules`, `dist`, `.next`, `.turbo`, `coverage`, plus `*.test.ts(x)`, `*.spec.ts(x)` and `*.d.ts` files. Code placed in one of these is not checked
 
+## Human-only decisions (AGO-58)
+**The route.** `POST /api/approvals/[id]/decision` with `{ workspace_id, decision: "approved" | "denied" }` (strict: a
+`payload_hash`, `status` or any other key is a 400). Order: (1) `rejectAgentCredential` → 403 plus an event; (2) Zod
+input → 400; (3) signed-in → 401, workspace member → 403; (4) update scoped by workspace and `pending`, not consumed,
+not expired → 200 `{ id, status }` or 404 when nothing could be decided. It runs on the caller's own session (RLS policy
+`approvals_update_member`), never a service role, and writes only `status`, `decided_by`, `decided_at`: the payload
+hash stays what the runtime stored, so the decision still unlocks only the exact call it was raised for (AGO-47).
+
+**An agent token is refused with 403 and an event.** `proxy.ts` refuses any `ago_agt_` credential first. On an approval
+path (`/api/approvals…`) it also calls `recordAgentRouteRejection`, and the route repeats the guard and the record as a
+second layer. The recorder verifies the token's signature in the web layer first (`@ago/shared/credential-token`, the
+same code the worker uses); only a genuinely signed credential names a real run, so only then is one event
+`approval.route_rejected` `{ agent_id, route, method }` appended, through the narrow database function
+`record_agent_approval_rejection` (the web app holds no service role and `run_events` is runtime-only). The event never
+holds the token, a header, the body or the query. A forged or malformed token still gets the same 403; it has no
+verifiable run, so it is logged (reason code and route only) and no event is written.
+
+**A Reviewer's APPROVE does not satisfy a Tier 3 gate.** The gate reads one thing: an `approved` approval row bound to
+the call's payload hash. A Reviewer verdict (AGO-140) is advice shown to the human; nothing turns it into a row
+(`REVIEWER_VERDICT_IS_ADVISORY`, `satisfiesApprovalGate` in `packages/shared`). Tested in
+`agent-loop.approvals.reviewer.test.ts`: after a Reviewer APPROVE the approval stays pending and the call does not run;
+a human approval bound to a different payload does not run it either; a human approval of the exact call runs it once.
+
+**Inventory of approval-deciding entry points** (each proven to refuse an agent token, or to be unable to decide):
+
+| Entry point | Can it decide? | Agent token | Proof |
+|---|---|---|---|
+| `POST /api/approvals/[id]/decision` | yes, human only | 403 + event (proxy and route) | `route.test.ts`, `record-agent-rejection.test.ts` |
+| Any other route under `/api/approvals` | none exist | 403 at the proxy | `approval-deciders.inventory.test.ts` |
+| Server actions | none touch approvals | `requireHumanRequest` required if one is added | inventory test |
+| Direct table write from web | only `decide-approval.ts` | not reachable without the route | inventory test, `no-auto-approve.test.ts` |
+| Database policy `approvals_update_member` | a member, not an agent | agent tokens carry no member session | AGO-107 RLS tests |
+| Worker (`resolveApproval`, `consume`) | reads `approved`, never writes it | n/a | `no-auto-approve.test.ts` |
+| Sweeper (`expire`) | writes `rejected` only | n/a | AGO-51 tests |
+
+**Follow-ups (not in this ticket).** The AGO-51 scanner still has declare-default gaps and fixed scan roots; closing
+them means editing `scripts/`, which keeps this PR on the agent-merge path, so they are recorded in
+`docs/tickets/AGO-58.md`.
+
 ## How to extend it
 - **Possible false positives.** The check is name-based, so a UI helper can match it. Examples: a React state setter such as `setStatus("approved")` (a filter or a local view state, not an approval), or a count object such as `stats.status.approved` assigned to a `status` property. Fix them in this order: rename the identifier so it no longer matches (for example `setStatusFilter`, or `approvedCount` instead of `status.approved`); or move the code out of the scanned roots. Do not add a file to `HUMAN_DECISION_FILES` to silence a false positive; that list is only for the human decide route (AGO-58), and review must see it.
-- Add the human decision: write `approved` or `denied` from a human-only route (AGO-58). The grant path (hash binding,
-  single use, expiry) already exists; the route only has to write the status.
+- Add another way to decide: do not. The decide route (AGO-58) is the one human entry point. A second one must be added
+  to the inventory test (`approval-deciders.inventory.test.ts`) and `HUMAN_DECISION_FILES` on purpose, call
+  `rejectAgentCredential` first, and write only `status`, `decided_by` and `decided_at`.
 - A crash between `consume` and the `started` checkpoint leaves a spent approval; the call is then denied on resume
   (`approval_already_used`) and the human must approve again. Safe, by design.
 - The checkpoint stores a scrubbed copy of the input (AGO-30); a call the scrubber changes hashes differently and is
