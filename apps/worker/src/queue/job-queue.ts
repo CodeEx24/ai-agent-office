@@ -75,6 +75,8 @@ export interface JobQueueOptions {
   /** Delay before retrying a failed start (database not up yet). */
   readonly startRetryMs?: number;
   readonly connectionTimeoutMs?: number;
+  /** Upper bound on stopping a pg-boss instance whose start failed (default 5 s). Only tests set it. */
+  readonly failedStartStopTimeoutMs?: number;
   /**
    * Base name of the pg-boss queue (dead letter: `<name>-dead`). Defaults to `agent-run`. Only tests
    * set it, to give each suite its own queue on the shared database (AGO-202).
@@ -98,7 +100,20 @@ const DEFAULTS = {
   pollingIntervalSeconds: 2,
   startRetryMs: 5_000,
   connectionTimeoutMs: 5_000,
+  failedStartStopTimeoutMs: 5_000,
 } as const;
+
+/** Resolves when `work` settles or after `ms`, whichever is first. Never rejects. */
+function settleWithin(work: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    work.then(done, done);
+  });
+}
 
 interface DepthRow {
   name: string;
@@ -122,6 +137,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
   const policy = options.retryPolicy ?? DEFAULT_RUN_RETRY_POLICY;
   const shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULTS.shutdownTimeoutMs;
   const startRetryMs = options.startRetryMs ?? DEFAULTS.startRetryMs;
+  const stopBoundMs = options.failedStartStopTimeoutMs ?? DEFAULTS.failedStartStopTimeoutMs;
   const connectionTimeoutMillis = options.connectionTimeoutMs ?? DEFAULTS.connectionTimeoutMs;
 
   // Our own statements (claim, run events) use this pool; pg-boss keeps its own.
@@ -189,6 +205,14 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
     return instance;
   };
 
+  /** Stops a pg-boss instance that will not be used. Resolves within the bound even if stop() hangs. */
+  async function discardBoss(instance: PgBoss): Promise<void> {
+    await settleWithin(
+      instance.stop({ close: true, graceful: false }).catch(() => undefined),
+      stopBoundMs,
+    );
+  }
+
   async function connect(): Promise<void> {
     const instance = newBoss();
     try {
@@ -239,11 +263,12 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
         );
       }
     } catch (error) {
-      await instance.stop({ close: true, graceful: false }).catch(() => undefined);
+      // Bounded: pg-boss stop() can wait on a stalled client, and the start must still fail and retry.
+      await discardBoss(instance);
       throw error;
     }
     if (isStopped()) {
-      await instance.stop({ close: true, graceful: false }).catch(() => undefined);
+      await discardBoss(instance);
       return;
     }
     boss = instance;

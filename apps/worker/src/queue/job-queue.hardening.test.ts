@@ -87,6 +87,24 @@ describe("job queue and pgboss function hardening (AGO-213)", () => {
     expect(boss.stop).toHaveBeenCalled();
   });
 
+  it("still rejects and retries a failed start when pg-boss stop() never resolves (bounded cleanup)", async () => {
+    vi.mocked(hardenPgbossFunctionsSettled).mockRejectedValueOnce(
+      new Error("hardening did not settle"),
+    );
+    boss.stop.mockImplementationOnce(() => new Promise<void>(() => undefined));
+    const queue = createQueue({ startRetryMs: 10, failedStartStopTimeoutMs: 50 });
+
+    await queue.start();
+    const deadline = Date.now() + 2_000;
+    while (boss.work.mock.calls.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(hardenPgbossFunctionsSettled).toHaveBeenCalledTimes(2);
+    expect(boss.work).toHaveBeenCalledTimes(1);
+    await queue.stop();
+  });
+
   it("starts the consumer once hardening succeeds (control for the fail-closed case)", async () => {
     const queue = createQueue();
 
