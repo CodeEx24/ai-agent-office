@@ -1,4 +1,5 @@
 # Tasks: claims with expiry
+Tickets: AGO-160 (claims with expiry created)
 
 How one agent owns a task at a time, and how abandoned work frees up (AGO-160, epic EP-05). Code:
 `apps/worker/src/claims/`, `packages/shared/src/claims/`, migration
@@ -14,6 +15,28 @@ How one agent owns a task at a time, and how abandoned work frees up (AGO-160, e
 - Every claim, renewal, release, completion and expiry is one row in the append-only `claim_events` table.
 - A person is still in the loop: a claim only reserves a task. It does not approve anything, and claims are
   written by the worker (`service_role`) only. An agent never claims on behalf of another agent.
+
+## Screens
+None yet. Claims are a worker and database feature; the board will read `claims` for task ownership later.
+
+## Data model
+- `claims` (one row per claim): `task_id`, `agent_id`, `run_id?`, `claimed_at`, `expires_at` (not null),
+  `renewed_at`, `released_at`, `release_reason` (`released`, `completed`, `expired_takeover`, `expired_sweep`), `claim_token` (the fence).
+  A partial unique index `claims_one_active_per_task_idx` allows one row per task with `released_at is null`.
+- `claim_events`: append-only history, one row per acquire, renew, release, complete or expiry.
+- A claim belongs to a workspace, a task and an agent; all three must be in the same workspace.
+
+## Data flow
+```mermaid
+flowchart LR
+  Run[Worker run code] --> Store[createPgClaimStore]
+  Run --> HB[startClaimHeartbeat]
+  HB -->|renew every ttl/3| Store
+  Store -->|Zod-checked call| Fn[claim_task / renew_claim / release_claim]
+  Fn --> Claims[(claims)]
+  Fn --> Events[(claim_events)]
+  Sweep[sweep_expired_claims] --> Claims
+```
 
 ## The four functions
 All are `SECURITY DEFINER` with `search_path = ''`, fully qualified names, and `EXECUTE` for `service_role` only
@@ -83,3 +106,10 @@ outlives a deleted task.
 - Sweeping is not scheduled yet (follow-up). Lazy expiry covers correctness; the sweep only tidies.
 - `tasks.status` is not changed by a claim (decision D6); the board reads claims for ownership.
 - The run loop does not call the claim store yet; wiring it in is the run loop's ticket.
+
+## How to extend it
+- New refusal reason: add it in the SQL function, then to `CLAIM_REFUSAL_REASONS` (or `CLAIM_FENCE_REASONS`) in
+  `packages/shared/src/claims/claim-schemas.ts`, then a pgTAP case in `task_claims.test.sql`.
+- New event type: add it to the `claim_events` type check in a new migration and log it with `private.log_claim_event`.
+- Wire claims into a run: call `ClaimStore.claim`, start `startClaimHeartbeat`, and finish with `release(..., "completed")`.
+- Schedule the sweep: a pg-boss job that calls `ClaimStore.sweepExpired`.
