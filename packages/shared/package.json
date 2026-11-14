@@ -42,6 +42,10 @@
       "types": "./dist/redaction/index.d.ts",
       "default": "./dist/redaction/index.js"
     },
+    "./pack-export": {
+      "types": "./dist/packs/agent-pack-export.d.ts",
+      "default": "./dist/packs/agent-pack-export.js"
+    },
     "./agent-pack.schema.json": "./schemas/agent-pack.v1.schema.json"
   },
   "scripts": {

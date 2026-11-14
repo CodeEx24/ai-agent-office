@@ -55,9 +55,9 @@ select is(
     where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
       and (c.relname <> 'agent_credentials' and not exists (select 1 from pg_attribute a where a.attrelid = c.oid and a.attname = 'created_at'
              and a.atttypid = 'timestamptz'::regtype and a.attnotnull)
-        or (c.relname not in ('run_events', 'skill_versions', 'agent_versions', 'agent_credentials', 'agent_identities', 'claim_events') and not exists (select 1 from pg_attribute a where a.attrelid = c.oid
+        or (c.relname not in ('run_events', 'skill_versions', 'agent_versions', 'agent_credentials', 'agent_identities', 'claim_events', 'pack_events') and not exists (select 1 from pg_attribute a where a.attrelid = c.oid
              and a.attname = 'updated_at' and a.atttypid = 'timestamptz'::regtype and a.attnotnull)))),
-  0, 'every table has timestamptz created_at/updated_at (run_events, skill_versions, agent_versions, agent_credentials, agent_identities and claim_events have no updated_at; agent_credentials stamps issued_at instead of created_at)');
+  0, 'every table has timestamptz created_at/updated_at (run_events, skill_versions, agent_versions, agent_credentials, agent_identities, claim_events and pack_events have no updated_at; agent_credentials stamps issued_at instead of created_at)');
 
 -- 7. run_events: append-only-ready (no updated_at, ordering column)
 select hasnt_column('public', 'run_events', 'updated_at', 'run_events has no updated_at');
