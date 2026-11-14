@@ -56,6 +56,11 @@ export interface BudgetGuard {
   ): Promise<BudgetSettlement>;
   /** Give the reservation back after a call that was rejected without cost. Never throws. */
   release(reservation: Reservation): Promise<void>;
+  /**
+   * Count the reservation as spent, at the reserved worst case, after a call whose outcome is unknown (a dropped
+   * connection after the request was sent, a malformed answer, an abort): it may have been billed. Never throws.
+   */
+  chargeReserved(reservation: Reservation): Promise<void>;
 }
 
 export interface BudgetGuardOptions {
@@ -140,6 +145,16 @@ export function createBudgetGuard(options: BudgetGuardOptions): BudgetGuard {
         await store.release(reservation);
       } catch (error) {
         // Cents stay held: the ledger over-counts, which is the safe side.
+        report(error);
+      }
+    },
+
+    async chargeReserved(reservation) {
+      try {
+        // Tokens are unknown for an unanswered call, so only the money is recorded; the hold becomes spend.
+        await store.settle(reservation, { cents: reservation.cents, tokens: 0 });
+      } catch (error) {
+        // The hold stays in the ledger either way: it over-counts, which is the safe side.
         report(error);
       }
     },

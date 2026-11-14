@@ -8,6 +8,7 @@ import {
   emptyRunCheckpointState,
   LOOP_REPEAT_THRESHOLD,
   MIN_NEVER_AUTOMATIC_TIER,
+  utf8Length,
   type CheckpointCall,
   type CheckpointStep,
   type RunCheckpointState,
@@ -957,10 +958,11 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
             const model = provider.model;
             let reservation: Reservation | null = null;
             if (budget !== undefined) {
+              // UTF-8 bytes, not UTF-16 characters: a token is never shorter than one byte, so bytes bound the cost.
               const requestChars =
-                built.system.length +
-                built.messages.reduce((sum, message) => sum + message.content.length, 0) +
-                JSON.stringify(offeredTools).length;
+                utf8Length(built.system) +
+                built.messages.reduce((sum, message) => sum + utf8Length(message.content), 0) +
+                utf8Length(JSON.stringify(offeredTools));
               const decision = await abortable(
                 callSafely(() =>
                   budget.reserve({
@@ -1005,14 +1007,22 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
                 () => interruption(ctx.signal),
               );
             } catch (error) {
-              // A call the provider rejected cost nothing: give the held cents back. An abort or an unknown failure
-              // may have been billed, so its reservation stays counted (the ledger over-counts, never under).
-              if (
-                budget !== undefined &&
-                reservation !== null &&
-                error instanceof ModelProviderError
-              ) {
-                await budget.release(reservation);
+              // Only a call the provider answered with an HTTP error status (rejected before any generation) cost
+              // nothing: give the held cents back. Every other failure (a dropped connection after the request was
+              // sent, a malformed 200, an abort) may have been billed, so the reservation is counted as spent at its
+              // worst case and the event says why (the ledger over-counts, never under).
+              if (budget !== undefined && reservation !== null) {
+                if (error instanceof ModelProviderError && error.status !== undefined) {
+                  await budget.release(reservation);
+                } else {
+                  await budget.chargeReserved(reservation);
+                  await emitBudgetExceeded({
+                    scope: "ledger",
+                    reason: "call_outcome_unknown_charged",
+                    limit: reservation.cents,
+                    used: reservation.cents,
+                  });
+                }
               }
               if (signal.aborted) throw interruption(ctx.signal);
               if (error instanceof ModelProviderError && !error.isRetryable) {

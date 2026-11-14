@@ -55,11 +55,26 @@ export function costCents(model: string, usage: TokenUsage): number | null {
   return Math.ceil(microCents / 1_000_000);
 }
 
-/** Characters per token assumed when sizing a prompt before the call. Low on purpose: it over-estimates. */
+/**
+ * Units per token assumed when sizing a prompt before the call. Low on purpose: it over-estimates. The unit is UTF-8
+ * BYTES (a token is never shorter than one byte, so bytes are a real upper bound; UTF-16 characters are not for
+ * CJK text or emoji).
+ */
 export const ESTIMATE_CHARS_PER_TOKEN = 3;
 
+/** `characters` is the size of the request in UTF-8 bytes (see `utf8Length`). */
 export function estimateInputTokens(characters: number): number {
   return Math.ceil(Math.max(0, characters) / ESTIMATE_CHARS_PER_TOKEN);
+}
+
+/** UTF-8 byte length of a string. Shared has no Node or DOM types, so it is counted by hand per code point. */
+export function utf8Length(text: string): number {
+  let bytes = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+  }
+  return bytes;
 }
 
 /**
@@ -114,6 +129,7 @@ export const BUDGET_STOP_REASONS = [
   "model_not_priced",
   "budget_check_failed",
   "call_cost_overran_reservation",
+  "call_outcome_unknown_charged",
 ] as const;
 export type BudgetStopReason = (typeof BUDGET_STOP_REASONS)[number];
 
@@ -130,4 +146,6 @@ export const BUDGET_STOP_MESSAGES: Readonly<Record<BudgetStopReason, string>> = 
     "The budget could not be checked, so the call was not made (no check means no spend).",
   call_cost_overran_reservation:
     "A model call cost more than was reserved for it, so the run was stopped.",
+  call_outcome_unknown_charged:
+    "A model call ended without a clear answer from the provider, so it may have been billed. Its full reserved cost was counted as spent.",
 };

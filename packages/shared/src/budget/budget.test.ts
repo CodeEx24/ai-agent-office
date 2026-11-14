@@ -16,8 +16,18 @@ import {
   effectiveMonthlyBudgetCents,
   estimateInputTokens,
   priceFor,
+  utf8Length,
   worstCaseCostCents,
 } from "./budget.js";
+
+describe("utf8Length", () => {
+  it.each(["", "abc", "é", "日本語", "😀", "a日😀é", "\ud800"])(
+    "matches the real UTF-8 size of %j",
+    (text) => {
+      expect(utf8Length(text)).toBe(new TextEncoder().encode(text).length);
+    },
+  );
+});
 
 describe("price table", () => {
   it("prices every model on the allowlist", () => {

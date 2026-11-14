@@ -223,6 +223,37 @@ describe("agent loop: money budget (AGO-40)", () => {
     expect(store.monthUsed()).toBe(0);
   });
 
+  it.each([
+    [
+      "a dropped connection after the request was sent",
+      new ModelProviderError("reset", undefined, true),
+    ],
+    ["a malformed 200 answer", new ModelProviderError("bad body", undefined, false)],
+    ["an unexpected failure", new Error("boom")],
+  ])(
+    "KEEPS the cents and settles them as spent when the outcome is unknown: %s",
+    async (_name, failure) => {
+      const { loop, ctx, rows, store } = setup({ complete: () => Promise.reject(failure) });
+      await expect(loop.execute(ctx)).rejects.toBeDefined();
+      // The reserved worst case stays in the ledger as spend (at least 1 cent), in both scopes.
+      expect(store.dayUsed()).toBeGreaterThan(0);
+      expect(store.monthUsed()).toBe(store.dayUsed());
+      expect(payloadOf(rows, "budget.exceeded")).toMatchObject({
+        scope: "ledger",
+        reason: "call_outcome_unknown_charged",
+        used: store.dayUsed(),
+      });
+    },
+  );
+
+  it("does not record an unknown-outcome event for a provider rejection with a status", async () => {
+    const { loop, ctx, rows } = setup({
+      complete: () => Promise.reject(new ModelProviderError("rate limited", 429, true)),
+    });
+    await expect(loop.execute(ctx)).rejects.toBeDefined();
+    expect(types(rows)).not.toContain("budget.exceeded");
+  });
+
   it("emits budget.exceeded before run.limit_reached when the run's token budget is reached", async () => {
     const { loop, ctx, rows } = setup({ script: () => toolCall(60, 60), maxTokens: 100 });
     const outcome = await loop.execute(ctx);
