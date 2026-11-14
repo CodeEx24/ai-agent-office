@@ -79,9 +79,23 @@ overrides a human: if a human asked for a pause, the answer is `human_paused`, t
 is kept, and the expired call is closed `approval_expired` when the human resumes. `resumeRun` still requires a human,
 and a timeout resume does not clear a human's pause request.
 
-**What does not run.** An `approved` row is closed `approval_not_granted` (fail closed) until AGO-47 adds payload-hash
-binding and single use. A missing row, a wrong hash, another workspace or no store are all denials. A `denied` row
-closes the call `approval_denied`.
+**What runs (AGO-47).** A resumed call runs only when its approval is `approved`, unused, not past `expires_at`, and
+bound to the exact call. In order: (1) `resolveApproval` screens the row (no state change); (2) `executeToolCall` asks
+the policy again and validates the input: a policy deny, an unoffered tool or invalid input closes the call and leaves
+the approval untouched; (3) the worker computes `approvalPayloadHash(tool name, input)` itself (SHA-256 of the canonical
+JSON, so key order does not matter and any value change does), never taking a hash from the model, checkpoint or row;
+(4) `ApprovalStore.consume` does one conditional update (workspace, run, `approved`, `consumed_at is null`,
+`expires_at > now`, same hash) and returns the row to exactly one caller; (5) only then does the tool run. A consumed
+approval is spent even if the tool fails. This holds even when the policy now says plain `allow`.
+
+**What does not run.** Every other case is a denial with its own `error_code` on `tool_call.failed`:
+`approval_payload_mismatch` (approved, different call), `approval_already_used`, `approval_expired` (approved, pending
+or rejected past its limit; `now == expires_at` is expired), `approval_denied`, otherwise `approval_not_granted`
+(missing row, other workspace or run, no store, pending-with-other-hash).
+
+**Same call id twice in a step.** The loop gives a repeated or invalid call id its index-based id
+(`call_<step>_<index>`, made unique), so each call has its own approval row and an approval for index 0 never grants
+index 1.
 
 **Accepted gaps (owner Decision 4, recorded in `docs/tickets/AGO-21.md`).**
 - The timeout wake checks the pause flag, then moves the run to `queued`, with a few database calls between. A stale
@@ -92,13 +106,16 @@ closes the call `approval_denied`.
   the audit event is lost.
 - A run still `running` when its approval expires is denied on its next resume instead of being woken.
 
-**Follow-ups.** AGO-47: two calls with the same call id in one step share one approval row; bind approvals to the
-payload hash and single use. `resumeRun` with an undefined actor throws a `TypeError` instead of
+**Follow-ups.** `resumeRun` with an undefined actor throws a `TypeError` instead of
 `HumanActorRequiredError` (pre-existing `assertHuman`); the call is still refused.
 
 ## How to extend it
-- Add the human decision: write `approved` or `denied` from a human-only route (AGO-58). Honour `approved` only with
-  payload-hash binding and single use (AGO-47), in `resolveApproval`.
+- Add the human decision: write `approved` or `denied` from a human-only route (AGO-58). The grant path (hash binding,
+  single use, expiry) already exists; the route only has to write the status.
+- A crash between `consume` and the `started` checkpoint leaves a spent approval; the call is then denied on resume
+  (`approval_already_used`) and the human must approve again. Safe, by design.
+- The checkpoint stores a scrubbed copy of the input (AGO-30); a call the scrubber changes hashes differently and is
+  refused `approval_payload_mismatch` (fail closed).
 - Change the timeout: the TTL is `approvalTtlMs` in the loop deps; the sweep interval is `intervalMs`.
 - Add a status: add it to `APPROVAL_STATUS` in `packages/shared`, then decide in `resolveApproval` what a resumed call
   does with it. Unknown statuses must stay a denial.
