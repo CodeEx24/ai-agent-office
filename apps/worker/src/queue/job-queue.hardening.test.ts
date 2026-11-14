@@ -122,6 +122,19 @@ describe("job queue and pgboss function hardening (AGO-213)", () => {
     }
   });
 
+  it("AGO-213: the hardening pool has its own two connections with keepAlive and a 10 s query timeout", async () => {
+    const poolSpy = vi.spyOn(pg, "Pool");
+    try {
+      const queue = createQueue();
+      const hardeningCall = poolSpy.mock.calls.find(([config]) => config?.keepAlive === true);
+
+      expect(hardeningCall?.[0]).toMatchObject({ max: 2, keepAlive: true, query_timeout: 10_000 });
+      await queue.stop();
+    } finally {
+      poolSpy.mockRestore();
+    }
+  });
+
   it("starts the consumer once hardening succeeds (control for the fail-closed case)", async () => {
     const queue = createQueue();
 
