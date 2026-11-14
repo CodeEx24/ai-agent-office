@@ -49,8 +49,9 @@ export const RUN_EVENT_SCHEMAS = [
   event("run.completed", { steps: count, summary: shortText.optional() }),
   event("run.failed", { reason: code, message: shortText }),
   event("run.paused", { requested_by: actor, reason: code }),
-  // Humans resume; an agent can never resume itself (human in the loop).
-  event("run.resumed", { resumed_by: z.literal("human") }),
+  // Humans resume; an agent can never resume itself (human in the loop). `timeout` (AGO-21): an approval
+  // request expired, so the run wakes to be told its call was denied. It can only produce a denial.
+  event("run.resumed", { resumed_by: z.enum(["human", "timeout"]) }),
   // A retry picked the run up from its checkpoint (AGO-30): counts only, never the stored content.
   event("run.recovered", { step: count, completed_calls: count }),
   event("run.stopped", { stopped_by: actor, reason: code }),
