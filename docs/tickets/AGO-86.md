@@ -5,7 +5,7 @@
 - PRs: (pending)
 - Related: AGO-167 (agent tool loop, Done), AGO-82 (workspaces and roles, Done), AGO-30 (pause/resume seams, merged), AGO-58 (human-only guard, merged a761f9d), AGO-40 (budget hard stops, waiting for merge), AGO-84 (kill switch, blocked by this), AGO-178 (right-click controls UI, blocked by this)
 
-Status: In progress. Type: Feature. Risk: high (human control, agent loop, auth, migration). Epic EP-06, wave 2.
+Status: In review (built, round 1). Type: Feature. Risk: high (human control, agent loop, auth, migration). Epic EP-06, wave 2.
 
 ## Overview
 As an owner I want to pause, resume or stop any agent so that I can intervene instantly. Today `createRunControl` (AGO-30) has worker-side `requestRunPause` and `resumeRun` seams but no route a person can call, no way to stop a run for good, and the pause flag is checked at step and call boundaries inside the loop rather than at the single policy-check point. This ticket adds the human-only control routes, a final `stop`, and the control-flag check at the one place every tool call goes through.
@@ -49,8 +49,18 @@ Rollback: drop the function and columns.
 
 ## Known limitations / out of scope
 No UI (AGO-178 and the controls UI own that). No kill switch (AGO-84). No approvals UI or autonomy code touched.
+- Stopping a `running` run whose worker died only lands when a retry reclaims it and its loop sees the flag.
+- A tool already running when a pause or stop arrives is allowed to finish; nothing new starts after it.
+- AGO-40 (budget hard stops) is not merged yet, so the order control, budget, policy, tool is proven for control, policy, tool only. Add the ordering test when AGO-40 lands (merge origin/main, keep both checks).
+
+## Deviations
+- 2026-11-14: `supabase/tests/rls_every_table_qa.test.sql` (outside the owned paths) had its definer-function allow-list widened by one entry for `request_run_control`; the existing test fails otherwise.
+- 2026-11-14: `record_agent_approval_rejection` was widened in the same migration to also record rejections on the control route (`error.raised`, `control_route_rejected`), so the AGO-58 guard is reused rather than copied.
 
 ## Testing
+Feature guide: `docs/features/control.md`. Run on this branch: worker Vitest (992+ tests incl. `agent-loop.control.test.ts`, `run-control-sweep.test.ts`), full pgTAP (27 files, 908 tests) and the live apply, roll back, re-apply test, all under the db lock.
+
+Plan:
 Unit: loop order (control, budget, policy, tool), pause and stop between calls, fail-closed on flag read error, concurrent pause. Route: agent credential 403 plus event, 401, 403, 400, happy paths, resume of a stopped run refused. pgTAP for the function (membership, workspace scope, anon refused) under the db lock. No real model calls.
 
 ## Outcome
