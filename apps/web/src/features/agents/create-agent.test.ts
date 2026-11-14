@@ -45,6 +45,7 @@ function form(overrides: Record<string, string> = {}): FormData {
     model: "claude-haiku-5-5",
     prompt: "Find sources.",
     dailyBudget: "5.00",
+    maxTokens: "",
     skillIds: JSON.stringify([SKILL]),
     capabilities: JSON.stringify([{ key: "vault.read", mode: "automatic" }]),
     ...overrides,
@@ -75,6 +76,39 @@ describe("createAgentWith", () => {
         capabilities: [{ key: "vault.read", mode: "automatic" }],
       }),
     );
+  });
+
+  it("AGO-40: passes an empty max tokens as null and a value as a number", async () => {
+    const empty = creatorThatReturns();
+    await createAgentWith(empty.creator, form());
+    expect(empty.createAgent).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: null }));
+
+    const set = creatorThatReturns();
+    const result = await createAgentWith(set.creator, form({ maxTokens: "50000" }));
+    expect(result).toEqual({ createdId: "agent-1" });
+    expect(set.createAgent).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 50_000 }));
+  });
+
+  it("AGO-40: returns the max tokens field error and never calls the creator", async () => {
+    const { creator, createAgent } = creatorThatReturns();
+    for (const maxTokens of ["999", "5000001", "12.5", "abc", "-3"]) {
+      const result = await createAgentWith(creator, form({ maxTokens }));
+      expect(result.createdId, maxTokens).toBeUndefined();
+      expect(result.fieldErrors?.maxTokens, maxTokens).toContain("Max tokens per run");
+    }
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it("AGO-40: tells the owner the agent exists when only the token limit was not saved", async () => {
+    const result = await createAgentWith(
+      creatorThatThrows(
+        new AgentLibraryError("limits_not_saved", "maxTokens", "The agent was created, but x."),
+      ),
+      form({ maxTokens: "50000" }),
+    );
+    expect(result.createdId).toBeUndefined();
+    expect(result.error).toBe("The agent was created, but x.");
+    expect(result.fieldErrors).toBeUndefined();
   });
 
   it("names the field in each validation error and never calls the creator", async () => {

@@ -5,14 +5,18 @@ import {
   AGENT_FIELD_LABELS,
   AGENT_FIELDS,
   AGENT_MESSAGES,
+  AGENT_MAX_TOKENS_MAX,
+  AGENT_MAX_TOKENS_MIN,
   AGENT_MODELS,
   checkAgentDraft,
   createAgentSchema,
   fieldErrorsFromIssues,
   parseDailyBudget,
+  parseMaxTokens,
   resolveCapabilityGrants,
   type AgentDraftText,
 } from "./agent-schemas.js";
+import { RUN_LIMIT_BOUNDS } from "./run-limits.js";
 
 const WORKSPACE = "14100000-0000-4000-8000-0000000000a1";
 const SKILL = "14100000-0000-4000-8000-0000000000b1";
@@ -34,7 +38,47 @@ const draft: AgentDraftText = {
   model: "claude-haiku-5-5",
   prompt: "Find sources.",
   dailyBudget: "5",
+  maxTokens: "",
 };
+
+describe("max tokens bounds", () => {
+  it("equal the run-limit bounds the DB and the worker use", () => {
+    expect(AGENT_MAX_TOKENS_MIN).toBe(RUN_LIMIT_BOUNDS.maxTokens.min);
+    expect(AGENT_MAX_TOKENS_MAX).toBe(RUN_LIMIT_BOUNDS.maxTokens.max);
+  });
+});
+
+describe("parseMaxTokens", () => {
+  it.each([
+    ["", null],
+    ["   ", null],
+    ["50000", 50_000],
+    [" 1000 ", 1_000],
+    ["5000000", 5_000_000],
+  ])("accepts %j", (input, tokens) => {
+    expect(parseMaxTokens(input)).toEqual({ ok: true, tokens });
+  });
+
+  it.each([
+    ["999", AGENT_MESSAGES.maxTokensOutOfRange],
+    ["0", AGENT_MESSAGES.maxTokensOutOfRange],
+    ["5000001", AGENT_MESSAGES.maxTokensOutOfRange],
+    ["12.5", AGENT_MESSAGES.maxTokensNotWhole],
+    ["abc", AGENT_MESSAGES.maxTokensNotWhole],
+    ["-3", AGENT_MESSAGES.maxTokensNotWhole],
+    ["1e5", AGENT_MESSAGES.maxTokensNotWhole],
+  ])("rejects %j", (input, message) => {
+    expect(parseMaxTokens(input)).toEqual({ ok: false, message });
+  });
+
+  it("names the field and the range in its messages", () => {
+    for (const message of [AGENT_MESSAGES.maxTokensNotWhole, AGENT_MESSAGES.maxTokensOutOfRange]) {
+      expect(message).toContain(AGENT_FIELD_LABELS.maxTokens);
+    }
+    expect(AGENT_MESSAGES.maxTokensOutOfRange).toContain("1,000");
+    expect(AGENT_MESSAGES.maxTokensOutOfRange).toContain("5,000,000");
+  });
+});
 
 describe("parseDailyBudget", () => {
   it.each([
@@ -78,6 +122,26 @@ describe("createAgentSchema", () => {
     const result = createAgentSchema.safeParse({ ...valid, name: "  Scout ", prompt: "a\r\nb " });
     expect(result.success && result.data.prompt).toBe("a\nb");
     expect(result.success && result.data.name).toBe("Scout");
+  });
+
+  it("turns an empty or missing max tokens into null and a number into an integer", () => {
+    const empty = createAgentSchema.safeParse({ ...valid, maxTokens: "" });
+    expect(empty.success && empty.data.maxTokens).toBeNull();
+    const missing = createAgentSchema.safeParse(valid);
+    expect(missing.success && missing.data.maxTokens).toBeNull();
+    const set = createAgentSchema.safeParse({ ...valid, maxTokens: "50000" });
+    expect(set.success && set.data.maxTokens).toBe(50_000);
+  });
+
+  it("refuses an out-of-range or non-integer max tokens against its field", () => {
+    for (const maxTokens of ["999", "5000001", "12.5", "abc", "-3"]) {
+      const result = createAgentSchema.safeParse({ ...valid, maxTokens });
+      expect(result.success, maxTokens).toBe(false);
+      if (result.success) continue;
+      expect(fieldErrorsFromIssues(result.error.issues).maxTokens, maxTokens).toContain(
+        AGENT_FIELD_LABELS.maxTokens,
+      );
+    }
   });
 
   it("names the field in every error", () => {
@@ -136,6 +200,11 @@ describe("client checks match the server schema", () => {
     { dailyBudget: "0" },
     { dailyBudget: "abc" },
     { dailyBudget: "50.01" },
+    { maxTokens: "50000" },
+    { maxTokens: "999" },
+    { maxTokens: "5000001" },
+    { maxTokens: "12.5" },
+    { maxTokens: "-3" },
   ];
 
   it.each(cases)("agrees on %j", (override) => {

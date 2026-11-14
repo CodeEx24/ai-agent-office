@@ -1,4 +1,5 @@
 import { createPgApprovalStore } from "../approvals/index.js";
+import { createBudgetGuard, createPgBudgetStore } from "../budget/index.js";
 import { createContextBuilder, createPgRunContextSource } from "../context/index.js";
 import { createAgentLoop } from "./agent-loop.js";
 import { createPgCheckpointStore } from "./checkpoint-store.js";
@@ -74,5 +75,13 @@ export function createProductionAgentExecutor(options: {
     checkpoints: createPgCheckpointStore(pool),
     // AGO-21: a call that needs approval gets a pending approval row before the run pauses.
     approvals: createPgApprovalStore(pool),
+    // AGO-40: the money budgets (agent daily, workspace monthly) are checked before every model call. A ledger that
+    // cannot answer refuses the call, so a database fault stops spending rather than lifting the limit.
+    budget: createBudgetGuard({
+      store: createPgBudgetStore(pool),
+      onStoreError: (error) => {
+        logger.error({ err: error }, "budget ledger error; the model call is refused");
+      },
+    }),
   });
 }
