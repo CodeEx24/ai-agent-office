@@ -97,6 +97,27 @@ export function createMemoryApprovalStore(): MemoryApprovalStore {
       rows.set(row.approvalId, consumed);
       return Promise.resolve(consumed);
     },
+    rejectPendingForRun(ref) {
+      const moved: ExpiredApproval[] = [];
+      for (const row of [...rows.values()]) {
+        if (
+          row.workspaceId !== ref.workspaceId ||
+          row.runId !== ref.runId ||
+          row.status !== APPROVAL_STATUS.pending ||
+          row.consumedAt !== null
+        ) {
+          continue;
+        }
+        rows.set(row.approvalId, { ...row, status: APPROVAL_STATUS.rejected });
+        moved.push({
+          approvalId: row.approvalId,
+          workspaceId: row.workspaceId,
+          runId: row.runId,
+          payloadHash: row.payloadHash,
+        });
+      }
+      return Promise.resolve(moved);
+    },
     expireDue(now, limit) {
       const moved: ExpiredApproval[] = [];
       for (const row of [...rows.values()].sort(

@@ -38,6 +38,18 @@ export class CheckpointTooLargeError extends Error {
   }
 }
 
+export interface RunControlFlags {
+  readonly pauseRequested: boolean;
+  readonly stopRequested: boolean;
+}
+
+/** One open request from `public.request_run_control`. `requestedBy` is the person's user id, when recorded. */
+export interface ControlRequest extends CheckpointRef {
+  readonly stopRequested: boolean;
+  readonly resumeRequested: boolean;
+  readonly requestedBy: string | null;
+}
+
 export interface CheckpointStore {
   /** Throws `CheckpointUnreadableError` when a stored state does not parse: the loop never guesses. */
   load(ref: CheckpointRef): Promise<LoadedCheckpoint>;
@@ -47,8 +59,17 @@ export interface CheckpointStore {
   isPauseRequested(ref: CheckpointRef): Promise<boolean>;
   /** Record a pause request for a `queued` or `running` run. False when the run is not in such a state. */
   requestPause(ref: CheckpointRef): Promise<boolean>;
-  /** Forget the pause request (a resume does this). */
+  /** Forget the pause request and any resume request (a resume does this). */
   clearPause(ref: CheckpointRef): Promise<void>;
+  /**
+   * The human control flags of a run, in ONE read (AGO-86): the loop calls this before every tool call. A failure
+   * throws, so the attempt fails and is retried: a flag that cannot be read never lets a call through.
+   */
+  readControl(ref: CheckpointRef): Promise<RunControlFlags>;
+  /** Forget only the resume request (the sweep has handled it, whatever came of it). */
+  clearResumeRequest(ref: CheckpointRef): Promise<void>;
+  /** Runs with a stop or resume request a person recorded and the worker has not handled yet (AGO-86). */
+  listControlRequests(limit: number): Promise<readonly ControlRequest[]>;
   /** Delete the checkpoint and the pause request (the run is over; the event log keeps the history). */
   clear(ref: CheckpointRef): Promise<void>;
 }
@@ -60,6 +81,9 @@ export const noopCheckpointStore: CheckpointStore = {
   isPauseRequested: () => Promise.resolve(false),
   requestPause: () => Promise.resolve(false),
   clearPause: () => Promise.resolve(),
+  readControl: () => Promise.resolve({ pauseRequested: false, stopRequested: false }),
+  clearResumeRequest: () => Promise.resolve(),
+  listControlRequests: () => Promise.resolve([]),
   clear: () => Promise.resolve(),
 };
 
@@ -119,10 +143,53 @@ export function createPgCheckpointStore(pool: pg.Pool): CheckpointStore {
 
     async clearPause({ workspaceId, runId }) {
       await pool.query(
-        `update private.run_checkpoints set pause_requested_at = null
+        `update private.run_checkpoints set pause_requested_at = null, resume_requested_at = null
           where workspace_id = $1 and run_id = $2`,
         [workspaceId, runId],
       );
+    },
+
+    async readControl({ workspaceId, runId }) {
+      const result = await pool.query<{ is_pause: boolean; is_stop: boolean }>(
+        `select pause_requested_at is not null as is_pause, stop_requested_at is not null as is_stop
+           from private.run_checkpoints where workspace_id = $1 and run_id = $2`,
+        [workspaceId, runId],
+      );
+      const row = result.rows[0];
+      return { pauseRequested: row?.is_pause === true, stopRequested: row?.is_stop === true };
+    },
+
+    async clearResumeRequest({ workspaceId, runId }) {
+      await pool.query(
+        `update private.run_checkpoints set resume_requested_at = null
+          where workspace_id = $1 and run_id = $2`,
+        [workspaceId, runId],
+      );
+    },
+
+    async listControlRequests(limit) {
+      const result = await pool.query<{
+        workspace_id: string;
+        run_id: string;
+        is_stop: boolean;
+        is_resume: boolean;
+        control_requested_by: string | null;
+      }>(
+        `select workspace_id, run_id, stop_requested_at is not null as is_stop,
+                resume_requested_at is not null as is_resume, control_requested_by
+           from private.run_checkpoints
+          where stop_requested_at is not null or resume_requested_at is not null
+          order by coalesce(stop_requested_at, resume_requested_at)
+          limit $1`,
+        [limit],
+      );
+      return result.rows.map((row) => ({
+        workspaceId: row.workspace_id,
+        runId: row.run_id,
+        stopRequested: row.is_stop,
+        resumeRequested: row.is_resume,
+        requestedBy: row.control_requested_by,
+      }));
     },
 
     async clear({ workspaceId, runId }) {

@@ -3,6 +3,7 @@ import { parseRunCheckpointState, type RunCheckpointState } from "@ago/shared";
 import {
   CheckpointUnreadableError,
   type CheckpointRef,
+  type ControlRequest,
   type CheckpointStore,
 } from "./checkpoint-store.js";
 
@@ -10,6 +11,9 @@ import {
 interface MemoryRow {
   raw: unknown;
   pauseRequested: boolean;
+  stopRequested: boolean;
+  resumeRequested: boolean;
+  requestedBy: string | null;
 }
 
 export interface MemoryCheckpointStore extends CheckpointStore {
@@ -26,6 +30,17 @@ export interface MemoryCheckpointStore extends CheckpointStore {
    * step like the real conditional update (`RunStore.wakeRunAfterExpiry`, AGO-58).
    */
   isPauseRequestedNow(ref: CheckpointRef): boolean;
+  /** AGO-86: what a person's request to the control route would have recorded. */
+  flagStop(ref: CheckpointRef, requestedBy?: string | null): void;
+  flagResume(ref: CheckpointRef, requestedBy?: string | null): void;
+  flagPause(ref: CheckpointRef): void;
+  isStopRequestedNow(ref: CheckpointRef): boolean;
+  isResumeRequestedNow(ref: CheckpointRef): boolean;
+  /** One entry (the run id) per `readControl` call, in order: a test counts the checks before each tool call. */
+  controlReads(): readonly string[];
+  failControlReads(): void;
+  /** Runs (and awaits) before `readControl` answers: a test records a request landing in that window. */
+  onControlRead(hook: (() => Promise<void>) | null): void;
 }
 
 const keyOf = ({ workspaceId, runId }: CheckpointRef): string => `${workspaceId}:${runId}`;
@@ -36,12 +51,21 @@ export function createMemoryCheckpointStore(
 ): MemoryCheckpointStore {
   const rows = new Map<string, MemoryRow>();
   const saves: RunCheckpointState[] = [];
+  const reads: string[] = [];
   let saveFails = false;
+  let readsFail = false;
+  let onControlRead: (() => Promise<void>) | null = null;
   const row = (ref: CheckpointRef): MemoryRow => {
     const key = keyOf(ref);
     const existing = rows.get(key);
     if (existing !== undefined) return existing;
-    const created: MemoryRow = { raw: null, pauseRequested: false };
+    const created: MemoryRow = {
+      raw: null,
+      pauseRequested: false,
+      stopRequested: false,
+      resumeRequested: false,
+      requestedBy: null,
+    };
     rows.set(key, created);
     return created;
   };
@@ -86,8 +110,70 @@ export function createMemoryCheckpointStore(
     },
     clearPause(ref) {
       const existing = rows.get(keyOf(ref));
-      if (existing !== undefined) existing.pauseRequested = false;
+      if (existing !== undefined) {
+        existing.pauseRequested = false;
+        existing.resumeRequested = false;
+      }
       return Promise.resolve();
+    },
+    readControl(ref) {
+      reads.push(ref.runId);
+      if (readsFail) return Promise.reject(new Error("checkpoint store is down"));
+      const existing = rows.get(keyOf(ref));
+      const flags = {
+        pauseRequested: existing?.pauseRequested === true,
+        stopRequested: existing?.stopRequested === true,
+      };
+      const hook = onControlRead;
+      return hook === null ? Promise.resolve(flags) : hook().then(() => flags);
+    },
+    clearResumeRequest(ref) {
+      const existing = rows.get(keyOf(ref));
+      if (existing !== undefined) existing.resumeRequested = false;
+      return Promise.resolve();
+    },
+    listControlRequests() {
+      const open: ControlRequest[] = [];
+      for (const [key, value] of rows) {
+        if (!value.stopRequested && !value.resumeRequested) continue;
+        const [workspaceId = "", runId = ""] = key.split(":");
+        open.push({
+          workspaceId,
+          runId,
+          stopRequested: value.stopRequested,
+          resumeRequested: value.resumeRequested,
+          requestedBy: value.requestedBy,
+        });
+      }
+      return Promise.resolve(open);
+    },
+    flagStop(ref, requestedBy = null) {
+      const target = row(ref);
+      target.stopRequested = true;
+      target.requestedBy = requestedBy;
+    },
+    flagResume(ref, requestedBy = null) {
+      const target = row(ref);
+      target.resumeRequested = true;
+      target.requestedBy = requestedBy;
+    },
+    flagPause(ref) {
+      row(ref).pauseRequested = true;
+    },
+    controlReads() {
+      return reads;
+    },
+    failControlReads() {
+      readsFail = true;
+    },
+    onControlRead(hook) {
+      onControlRead = hook;
+    },
+    isStopRequestedNow(ref) {
+      return rows.get(keyOf(ref))?.stopRequested === true;
+    },
+    isResumeRequestedNow(ref) {
+      return rows.get(keyOf(ref))?.resumeRequested === true;
     },
     clear(ref) {
       rows.delete(keyOf(ref));

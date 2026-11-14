@@ -58,6 +58,16 @@ export interface ApprovalStore {
   /** The same move for every pending approval past `expires_at`, oldest first, at most `limit`. */
   expireDue(now: Date, limit: number): Promise<readonly ExpiredApproval[]>;
   /**
+   * AGO-86: a person stopped the run, so its still-pending approvals are closed: `pending` -> `rejected` for every
+   * pending, unused approval of this run, however far from `expires_at`. The runtime writes only `rejected`
+   * (never `approved`), so this can deny but never grant. Returns the rows it moved, once, to the one caller
+   * that moved them.
+   */
+  rejectPendingForRun(ref: {
+    workspaceId: string;
+    runId: string;
+  }): Promise<readonly ExpiredApproval[]>;
+  /**
    * Use an approval (AGO-47), once. One conditional update: it moves only a row of this workspace and run that
    * is `approved`, not consumed, not past `expires_at`, and whose stored `payloadHash` equals the hash the caller
    * computed from the exact call about to run. Returns the row it consumed, or null when any condition fails
@@ -181,6 +191,16 @@ export function createPgApprovalStore(pool: pg.Pool): ApprovalStore {
             and status = $2 and consumed_at is null
           returning id, workspace_id, run_id, payload_hash`,
         [APPROVAL_STATUS.rejected, APPROVAL_STATUS.pending, now, limit],
+      );
+      return result.rows.map(toExpired);
+    },
+
+    async rejectPendingForRun({ workspaceId, runId }) {
+      const result = await pool.query<ExpiredRow>(
+        `update public.approvals set status = $3
+          where workspace_id = $1 and run_id = $2 and status = $4 and consumed_at is null
+          returning id, workspace_id, run_id, payload_hash`,
+        [workspaceId, runId, APPROVAL_STATUS.rejected, APPROVAL_STATUS.pending],
       );
       return result.rows.map(toExpired);
     },
