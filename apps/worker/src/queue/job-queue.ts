@@ -87,6 +87,9 @@ export interface JobQueueOptions {
 /** pg-boss default schema; created (and locked down) by the AGO-151 migration. */
 const PGBOSS_SCHEMA = "pgboss";
 
+/** Per-statement client timeout on the hardening pool: a stalled socket errors instead of hanging. */
+const HARDENING_QUERY_TIMEOUT_MS = 10_000;
+
 type QueueState = "starting" | "ready" | "stopped";
 
 const DEFAULTS = {
@@ -129,6 +132,17 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
     idleTimeoutMillis: 10_000,
   });
   pool.on("error", () => undefined);
+  // Hardening gets a small pool of its own, so a stalled socket cannot take the claim pool down. keepAlive
+  // and a query timeout make a dead socket fail instead of pinning a checked-out client (AGO-213).
+  const hardeningPool = new pg.Pool({
+    connectionString: options.connectionString,
+    max: 2,
+    connectionTimeoutMillis,
+    idleTimeoutMillis: 10_000,
+    keepAlive: true,
+    query_timeout: HARDENING_QUERY_TIMEOUT_MS,
+  });
+  hardeningPool.on("error", () => undefined);
   const runs = createPgRunStore(pool);
   const events = createPgRunEventStore(pool);
   const checkpoints = createPgCheckpointStore(pool);
@@ -181,7 +195,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
       await instance.start();
       // pg-boss creates functions during install, upgrade and its background (bam) migrations, which keep
       // running after start() returns: close their default PUBLIC grant once those have settled (AGO-213).
-      await hardenPgbossFunctionsSettled(pool, {
+      await hardenPgbossFunctionsSettled(hardeningPool, {
         isSettled: async () => isBamSettled(await instance.getBamStatus()),
       });
       await instance.createQueue(deadLetterQueue, { policy: "standard" });
@@ -358,6 +372,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
             logger.error({ err: error }, "job queue did not stop cleanly");
           });
       }
+      await hardeningPool.end().catch(() => undefined);
       await pool.end().catch(() => undefined);
     },
   };
