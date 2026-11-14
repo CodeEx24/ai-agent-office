@@ -23,3 +23,10 @@ export function viaHolderAlias() {
   const s = APPROVAL_STATUS;
   return { status: s.approved };
 }
+
+// A chain of pure aliases: b is an alias of a, which is an alias of the holder.
+export function viaHolderChain() {
+  const a = APPROVAL_STATUS;
+  const b = a;
+  return { status: b.approved };
+}

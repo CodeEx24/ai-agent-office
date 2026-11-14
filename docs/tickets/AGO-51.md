@@ -63,6 +63,9 @@ The static check is a tripwire, not a proof. It follows values inside one file: 
 - runtime-built values: `.join("")`, `.toLowerCase()`, row data, a function's return value, a parameter
 - plpgsql dynamic SQL (`execute format(...)`), and SQL assembled in another file
 - setter calls whose name is not a write verb (`set`, `update`, `mark`, `save`, `write`, `change`, `transition`, `record`) followed by `Status`, `Decision` or `Outcome`, or whose status argument is not a literal or a bound alias (`store.write(id, "approved")`)
+- name shadowing: variables and aliases are bound per file, not per function or block, and the last declaration wins, so a name reused in another function can bind to the wrong value (a false positive or a miss)
+- flow-insensitive reassignment: one value per name per file. A variable bound to approved and later reassigned to a safe value still counts (a false positive), and a variable reassigned to approved through an expression the scanner cannot evaluate (`v := f()`) is missed
+- INSERT with `$n` bound to approved: only a literal `'approved'` in an INSERT is caught
 
 The runtime guarantee (the RLS policy "an expired approval can no longer be approved", the worker's conditional `expire` and `consume`) stays the real enforcement.
 

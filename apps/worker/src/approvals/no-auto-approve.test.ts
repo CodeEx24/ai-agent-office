@@ -28,8 +28,10 @@ import { describe, expect, it } from "vitest";
  *
  * It is a tripwire, not a proof. It follows values inside one file only. It does not follow computed keys, object or
  * array indirection (`S.ok`, `["approved"][0]`), values from another module, runtime-built strings (`.join`,
- * `.toLowerCase()`, a function's return value, row data) or dynamic SQL (`execute format(...)`). The list of misses is
- * in docs/features/approvals.md under "Timeout means deny (AGO-51)". Review is the backstop for those. The runtime
+ * `.toLowerCase()`, a function's return value, row data), dynamic SQL (`execute format(...)`), a name reused in another
+ * function (name shadowing), a reassignment that is not flow-checked, or an INSERT with a `$n` bound to approved. The
+ * list of misses is in docs/features/approvals.md and docs/tickets/AGO-51.md under "Known limitations", and the two
+ * must match. Review is the backstop for those. The runtime
  * guarantees (the conditional `expire` and `consume` SQL, the RLS policy, the loop's refusal codes) are the real
  * enforcement.
  */
@@ -98,13 +100,16 @@ function collectEnv(source: ts.SourceFile): Env {
  * an import alias). An alias counts only when its initializer is a bare identifier, a property access or an import,
  * so `const counts = countByStatus(...)` is not a holder.
  */
-function isStatusHolder(expression: ts.Expression, env: Env): boolean {
+const MAX_ALIAS_HOPS = 8;
+
+function isStatusHolder(expression: ts.Expression, env: Env, depth = 0): boolean {
   if (STATUS_HOLDER.test(expression.getText())) return true;
-  if (!ts.isIdentifier(expression)) return false;
+  if (!ts.isIdentifier(expression) || depth >= MAX_ALIAS_HOPS) return false;
   const bound = env.get(expression.text);
   if (bound === undefined) return false;
-  const isPure =
-    ts.isIdentifier(bound) || ts.isPropertyAccessExpression(bound) || ts.isImportSpecifier(bound);
+  // A chain of pure aliases (`const a = APPROVAL_STATUS; const b = a;`) is followed hop by hop.
+  if (ts.isIdentifier(bound)) return isStatusHolder(bound, env, depth + 1);
+  const isPure = ts.isPropertyAccessExpression(bound) || ts.isImportSpecifier(bound);
   return isPure && STATUS_HOLDER.test(bound.getText());
 }
 
@@ -175,13 +180,33 @@ function normalizeSql(raw: string): string {
   return joined;
 }
 
-/** plpgsql variables assigned in this text: `v_status := 'approved';` binds v_status to `'approved'`. */
+/**
+ * plpgsql variables bound in this text. `v_status := 'approved';` binds v_status. So do the declared forms
+ * `declare v text := 'approved';` and `v text default 'approved';`, with an optional type after the name. The
+ * declared forms run first, so a later `:=` for the same name wins (flow-insensitive: one value per name).
+ */
+const DECLARED_DEFAULT =
+  /(?<![.\w])(\w+)\s+(?:\w+(?:\s*\([^)]*\))?\s+)?(?::=|default\s)\s*([^;]*)/g;
+const ASSIGNED = /(?<![.\w])(\w+)\s*:=\s*([^;]*)/g;
+
 function sqlVariables(normalized: string): ReadonlyMap<string, string> {
   const vars = new Map<string, string>();
-  for (const match of normalized.matchAll(/(?<![.\w])(\w+)\s*:=\s*([^;]*)/g)) {
+  for (const match of normalized.matchAll(DECLARED_DEFAULT)) {
+    vars.set(match[1] ?? "", match[2] ?? "");
+  }
+  for (const match of normalized.matchAll(ASSIGNED)) {
     vars.set(match[1] ?? "", match[2] ?? "");
   }
   return vars;
+}
+
+/** Drops a trailing cast (`v::text`) and the parentheses around a bare name (`(v)`). */
+function unwrapSqlValue(expression: string): string {
+  const uncast = expression
+    .trim()
+    .replace(/::\s*[\w\s[\]]+$/, "")
+    .trim();
+  return uncast.replace(/^\(\s*(\w+)\s*\)$/, "$1");
 }
 
 /** Split on top-level commas (not inside parentheses or quotes). */
@@ -233,9 +258,11 @@ function sqlApproves(
 ): string[] {
   const sql = normalizeSql(rawSql);
   const bindings = vars ?? sqlVariables(sql);
-  const valueOf = (expression: string): string => {
-    const trimmed = expression.trim();
-    return bindings.get(trimmed) ?? trimmed;
+  // Follows a variable to its value, and a chain of variables (`b := a;`) hop by hop.
+  const valueOf = (expression: string, depth = 0): string => {
+    const trimmed = unwrapSqlValue(expression);
+    const bound = bindings.get(trimmed);
+    return bound !== undefined && depth < MAX_ALIAS_HOPS ? valueOf(bound, depth + 1) : trimmed;
   };
   const hits: string[] = [];
   for (const match of sql.matchAll(/\bset ([^;]*)/g)) {
@@ -633,7 +660,7 @@ describe("AGO-51 AC1: the widened shapes are caught", () => {
   it("a const or alias bound to approved or APPROVAL_STATUS.approved, then written", () => {
     const findings = fixture("alias-approved.ts.fixture");
     expect(rulesOf(findings)).toEqual(["R1-status-write"]);
-    expect(findings).toHaveLength(4);
+    expect(findings).toHaveLength(5);
   });
 
   it("a SQL string built with + from a variable bound to approved", () => {
@@ -650,6 +677,19 @@ describe("AGO-51 AC1: the widened shapes are caught", () => {
 
   it("a comparison against approved is not a write (negative fixture, must report nothing)", () => {
     expect(fixture("clean-comparisons.sql.fixture")).toEqual([]);
+  });
+
+  it("a plpgsql variable declared with a default (:= or default) and written: set status = v, v::text, new.status = v, a chain", () => {
+    const findings = fixture("plpgsql-declare.sql.fixture");
+    expect(rulesOf(findings)).toEqual(["R3-sql-approve"]);
+    expect(findings).toHaveLength(4);
+    const snippets = findings.map((f) => f.snippet).join("\n");
+    expect(snippets).toContain("set status = v::text");
+    expect(snippets).toContain("new.status = w");
+  });
+
+  it("a declared variable bound to pending, and a default-bound guard, stay clean (negative fixture)", () => {
+    expect(fixture("plpgsql-declare-clean.sql.fixture")).toEqual([]);
   });
 });
 

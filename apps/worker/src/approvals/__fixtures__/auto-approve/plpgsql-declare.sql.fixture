@@ -1,0 +1,35 @@
+-- PLANTED VIOLATIONS: plpgsql variables bound to 'approved' by a declaration, then written. Each write must be reported.
+create or replace function public.approve_declared_assign() returns void
+language plpgsql as $$
+declare v text := 'approved';
+begin
+  update public.approvals set status = v where status = 'pending' and expires_at <= now();
+end;
+$$;
+
+create or replace function public.approve_declared_default() returns void
+language plpgsql as $$
+declare v text default 'approved';
+begin
+  update public.approvals set status = v::text where status = 'pending';
+end;
+$$;
+
+create or replace function public.guard_declared_assign() returns trigger
+language plpgsql as $$
+declare w text := 'approved';
+begin
+  new.status = w;
+  return new;
+end;
+$$;
+
+create or replace function public.approve_declared_chain() returns void
+language plpgsql as $$
+declare a text := 'approved';
+  b text;
+begin
+  b := a;
+  update public.approvals set status = b where status = 'pending';
+end;
+$$;

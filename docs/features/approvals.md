@@ -138,7 +138,7 @@ source could approve without a human. It scans non-test `.ts`/`.tsx` under `apps
 |---|---|
 | R1 status write | `status: approved`, `status` shorthand, `x.status = approved`, a setter call such as `setStatus(id, "approved")`; also through a constant, a pure alias (`const s = APPROVAL_STATUS`, an import alias), a concatenation or a ternary |
 | R2 timeout allows | an expiry/timeout/deadline/ttl/sweep handler, or an `if`/`?:` on an expiry condition, that resolves to allow, approved or proceed or runs the call; an `approval.decided` event that is `approved` and decided by the timeout |
-| R3 SQL approves | `UPDATE ... SET status = 'approved'`, `new.status := 'approved'`, `new.status = 'approved'` at the start of a statement (a plain `=` in plpgsql is an assignment), an `INSERT` of an approved row, a `$n` bound to approved, a SQL `||` join or a plpgsql variable bound to approved, in `.sql` files and in strings in TypeScript (also built with `+`) |
+| R3 SQL approves | `UPDATE ... SET status = 'approved'`, `new.status := 'approved'`, `new.status = 'approved'` at the start of a statement (a plain `=` in plpgsql is an assignment), an `INSERT` whose values contain a literal `'approved'`, a `$n` bound to approved in an `UPDATE`, a SQL `||` join, or a plpgsql variable bound to approved (`v := 'approved'`, `declare v text := 'approved'`, `v text default 'approved'`, a `::text` cast, a chain `b := a`), in `.sql` files and in strings in TypeScript (also built with `+`) |
 
 Comparisons are not writes and stay clean: `where status = 'approved'`, `if new.status = 'approved'`, `case when status = 'approved'`, a trigger `when (new.status = 'approved')`, and `set status = case when status = 'approved' ...`.
 
@@ -162,8 +162,12 @@ new code that builds a status:
 - runtime-built values: `.join("")`, `.toLowerCase()`, row data, a function's return value, a parameter
 - plpgsql dynamic SQL (`execute format(...)`), and SQL assembled in another file
 - setter calls whose name is not a write verb (`set`, `update`, `mark`, `save`, `write`, `change`, `transition`, `record`) followed by `Status`, `Decision` or `Outcome`, or whose status argument is not a literal or a bound alias (`store.write(id, "approved")`)
+- name shadowing: variables and aliases are bound per file, not per function or block, and the last declaration wins, so a name reused in another function can bind to the wrong value (a false positive or a miss)
+- flow-insensitive reassignment: one value per name per file. A variable bound to approved and later reassigned to a safe value still counts (a false positive), and a variable reassigned to approved through an expression the scanner cannot evaluate (`v := f()`) is missed
+- INSERT with `$n` bound to approved: only a literal `'approved'` in an INSERT is caught
 
 ## How to extend it
+- **Possible false positives.** The check is name-based, so a UI helper can match it. Examples: a React state setter such as `setStatus("approved")` (a filter or a local view state, not an approval), or a count object such as `stats.status.approved` assigned to a `status` property. Fix them in this order: rename the identifier so it no longer matches (for example `setStatusFilter`, or `approvedCount` instead of `status.approved`); or move the code out of the scanned roots. Do not add a file to `HUMAN_DECISION_FILES` to silence a false positive; that list is only for the human decide route (AGO-58), and review must see it.
 - Add the human decision: write `approved` or `denied` from a human-only route (AGO-58). The grant path (hash binding,
   single use, expiry) already exists; the route only has to write the status.
 - A crash between `consume` and the `started` checkpoint leaves a spent approval; the call is then denied on resume

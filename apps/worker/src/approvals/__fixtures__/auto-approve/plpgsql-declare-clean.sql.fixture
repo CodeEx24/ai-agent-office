@@ -1,0 +1,20 @@
+-- CLEAN: declared plpgsql variables bound to values other than approved, written to a status. Must report nothing.
+create or replace function public.expire_declared_pending() returns void
+language plpgsql as $$
+declare v text := 'pending';
+begin
+  update public.approvals set status = v where status = 'approved' and expires_at <= now();
+end;
+$$;
+
+create or replace function public.guard_declared_default() returns trigger
+language plpgsql as $$
+declare allowed text default 'pending';
+begin
+  if new.status = allowed then
+    return new;
+  end if;
+  new.status = 'rejected';
+  return new;
+end;
+$$;
