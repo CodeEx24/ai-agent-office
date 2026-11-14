@@ -2,10 +2,10 @@
 
 ## Links
 - Ticket: https://stratyge.atlassian.net/browse/AGO-47
-- PRs: https://github.com/CodeEx24/ai-agent-office/pull/63 (draft)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/63
 - Related: AGO-21 (approval request flow, done, blocker); AGO-74 (`approvals` table), AGO-107 (RLS); unblocks AGO-54 (server-rendered approval cards); AGO-58 (human-only decide routes) and AGO-37 (inbox UI) are separate
 
-Status: In progress · Type: Feature · Risk: high (human-in-the-loop invariant: approvals bound to payload hash) · Wave 2
+Status: Merged · Type: Feature · Risk: high (human-in-the-loop invariant: approvals bound to payload hash) · Wave 2
 
 ## Overview
 After AGO-21 a call that needs approval gets a pending row and the run pauses, but an `approved` row is still closed `approval_not_granted`: nothing can ever run. This ticket makes a grant real, and only in the narrow case the AC describe. On resume, an `awaiting_approval` call runs only if its approval is `approved`, not expired, not consumed, and its stored `payload_hash` equals the hash of the exact payload about to run. The grant is consumed in one conditional update before the tool starts, so it is single use even with two workers racing. Every other case is a denial. Timeout still means deny; an agent still cannot approve (no code here writes `approved`).
@@ -75,5 +75,13 @@ Unit tests with fakes (no model calls). Integration tests against the local stac
 - Consider an `approval.consumed` run event if the audit trail needs it (would add an event type).
 
 ## Outcome
-Feature guide: docs/features/approvals.md
+Status: Merged · Feature guide: docs/features/approvals.md
 PR: https://github.com/CodeEx24/ai-agent-office/pull/63
+
+- AC1 changed payload rejected: met (worker-computed canonical hash; the store refuses a mismatch, unit + live-DB tests).
+- AC2 used approval not reusable: met (one conditional UPDATE consumes it; live two-worker race, exactly one runs).
+- AC3 expires at its limit: met (boundary tests at exactly the limit and one millisecond before).
+- AC4 tests, docs, review: met (worker 907/907; round 1 tester-functional, reviewer-code, reviewer-security and invariants all PASS; approver APPROVE).
+- Rounds: 1. The round-1 gate was red only on the known scripts/ago-151-* pg-boss flake (AGO-212); the pre-merge re-gate on 0e8000b was fully green.
+- Deviations: none from the accepted record.
+- Follow-ups: AGO-58 (human-only decide route); optional approval.consumed run event; approver hardening note: compare expiry against least(worker clock, DB now()) in consume.
