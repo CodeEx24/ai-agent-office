@@ -14,7 +14,7 @@ None yet. The inbox UI is AGO-37; it will call `POST /api/approvals/[id]/decisio
 through that route directly, and every request nobody answers still ends in a timeout denial.
 
 ## Data model
-One table, `public.approvals` (created in AGO-74, RLS in AGO-107). This feature adds no migration.
+One table, `public.approvals` (created in AGO-74, RLS in AGO-107). The approval flow itself adds no table or column. AGO-58 adds one database function, `public.record_agent_approval_rejection` (see "Human-only decisions"), which appends a run event and touches no approval row.
 
 | Column | Use here |
 |---|---|
@@ -51,6 +51,22 @@ flowchart LR
   Consume -->|no row| Refuse["describeApprovalRefusal: tool_call.failed with a code"]
 ```
 
+**Human decide route and agent refusal (AGO-58).**
+```mermaid
+flowchart LR
+  Agent["agent request (ago_agt_ bearer)"] --> Proxy["proxy.ts: rejectAgentCredential"]
+  Proxy --> Rec["recordAgentRouteRejection"]
+  Rec --> Ver["verifyCredentialToken (signature)"]
+  Ver -->|signed| Rpc["rpc record_agent_approval_rejection (service role)"]
+  Rpc --> Ev[("run_events: error.raised approval_route_rejected")]
+  Ver -->|forged or malformed| Log["log line only"]
+  Proxy --> R403["403 agent_credential_not_allowed"]
+  Human["human request (session)"] --> Proxy2["proxy.ts: passes"]
+  Proxy2 --> Route["POST /api/approvals/[id]/decision"]
+  Route --> Decide["decideApproval (own session, RLS)"]
+  Decide --> Table[("approvals: approved or denied")]
+```
+
 ## Main functions and files
 | function / component | file | role |
 |---|---|---|
@@ -66,6 +82,14 @@ flowchart LR
 | `createRunControl().resumeAfterApprovalExpiry` | `apps/worker/src/queue/run-control.ts` | the narrow system wake-up |
 | `createJobQueue` | `apps/worker/src/queue/job-queue.ts` | builds the sweeper; starts and stops it with the queue |
 | `createProductionAgentExecutor` | `apps/worker/src/agent/wire.ts` | gives the loop its pg approval store |
+| `POST` (decision route) | `apps/web/src/app/api/approvals/[id]/decision/route.ts` | agent guard, input check, then `decideApproval`; maps errors to 400/401/403/404 |
+| `decideApproval` | `apps/web/src/features/approvals/decide-approval.ts` | the one web writer of `approved` / `denied`, on the caller's own session |
+| `recordAgentRouteRejection`, `isApprovalRoute` | `apps/web/src/features/approvals/record-agent-rejection.ts` | verifies the token signature, then calls the database function; never throws, never changes the 403 |
+| `proxy` (approval-route branch) | `apps/web/src/proxy.ts` | refuses an agent credential and records the attempt on an approval path |
+| `record_agent_approval_rejection` | `supabase/migrations/20261114130001_ago_58_agent_approval_rejection_event.sql` | SECURITY DEFINER function, `service_role` only; appends one `error.raised` event |
+| `decideApprovalBodySchema`, `satisfiesApprovalGate`, `REVIEWER_VERDICT_IS_ADVISORY` | `packages/shared/src/approvals/approval-decision.ts` | strict body schema; only a human `approved` row satisfies a gate |
+| `verifyCredentialToken` (moved) | `packages/shared/src/identity/credential-token.ts` | token check now shared by the worker and the web app |
+| `RunStore.wakeRunAfterExpiry` | `apps/worker/src/queue/run-store.ts` | atomic `paused` to `queued` wake that respects a human pause request |
 | `run.resumed` schema | `packages/shared/src/events/run-events.ts` | `resumed_by` is `human` or `timeout`, never `agent` |
 
 ## Rules and edge cases
@@ -213,6 +237,23 @@ a human approval bound to a different payload does not run it either; a human ap
 | Database policy `approvals_update_member` | a member, not an agent | agent tokens carry no member session | AGO-107 RLS tests |
 | Worker (`resolveApproval`, `consume`) | reads `approved`, never writes it | n/a | `no-auto-approve.test.ts` |
 | Sweeper (`expire`) | writes `rejected` only | n/a | AGO-51 tests |
+
+**The event does not carry `agent_id`.** The ticket design once said the payload names the agent. The shipped event
+is only `{ version, code, message, retryable }`. The agent is identified through the run row (`run_events.run_id`
+leads to the run, which names the agent). The database function still takes the agent id and checks it against the
+credential, run and workspace, so a caller cannot attribute an event to the wrong run.
+
+**Known limitations / follow-ups (for owners).** These are not shipped behaviour.
+- **Set `SUPABASE_SERVICE_ROLE_KEY` for the web server (server-only, never `NEXT_PUBLIC_`).** The function is
+  `service_role` only, so without the key the agent is still refused with 403 but no event is written (a
+  `no_service_key` log line is the only trace). Deployed environments already fail startup without the key.
+- **A forged or malformed agent token gets 403 and a log line, but no event.** It names no verifiable run to attach
+  an event to. A workspace-less audit sink would be a follow-up.
+- **The 20 events per run per minute cap is best-effort.** It counts, then inserts, so parallel requests can exceed
+  it. A hard cap needs `pg_advisory_xact_lock(hashtext(run_id))` or a per-run debounce.
+- **The proxy awaits the RPC with no timeout.** A slow database delays the 403. A bounded wait that still returns
+  the 403 is a follow-up. The recorder also builds a service client on each call (a lazy singleton is a follow-up).
+- The inventory test matches the literal key name, so it is a tripwire, not a guarantee.
 
 **Follow-ups (not in this ticket).** The AGO-51 scanner still has declare-default gaps and fixed scan roots; closing
 them means editing `scripts/`, which keeps this PR on the agent-merge path, so they are recorded in

@@ -76,3 +76,7 @@ AGO-21, AGO-148 (done). AGO-47, AGO-51 (merged). AGO-192 holds the schema slot.
 - AGO-51 scanner gaps (see docs/tickets/AGO-51.md Outcome): the remaining declare-default forms and the out-of-scope roots. Both are edits to `scripts/`-adjacent tooling, so they need their own ticket.
 - Deployment: set `SUPABASE_SERVICE_ROLE_KEY` for the web server (needed for the audit event only).
 - A Jira comment on AGO-21 that the timeout-wake race is fixed here.
+
+## Outcome
+- Feature guide: [docs/features/approvals.md](../features/approvals.md) (section "Human-only decisions (AGO-58)").
+- Deviation from the Design section: the shipped event payload does not carry `agent_id`. The run row names the agent, and the database function cross-checks agent against run through `agent_credentials`.
