@@ -75,3 +75,5 @@ Unit: shared schemas and draft checks, `edit-agent.ts` error mapping and owner/a
 
 ## Outcome
 (filled at merge)
+
+Feature guide: `docs/features/agents.md` (how the agent area works today).
