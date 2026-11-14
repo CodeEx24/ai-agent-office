@@ -614,6 +614,9 @@ isOneToOne: false
               "expires_at": string,"outcome": string,"reason": string
             }[]
                            },
+"request_run_control":
+{ Args: { "p_action": string,"p_run_id": string,"p_workspace_id": string }; Returns: string
+                           },
 "set_agent_run_limits":
 { Args: { "p_agent_id": string,"p_limits": Json,"p_workspace_id": string }; Returns: undefined
                            },

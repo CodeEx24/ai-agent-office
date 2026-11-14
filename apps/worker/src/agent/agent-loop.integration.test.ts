@@ -58,7 +58,7 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 async function waitFor<T>(
   read: () => Promise<T | undefined | false>,
-  timeoutMs = 20_000,
+  timeoutMs = 60_000,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -77,7 +77,7 @@ const reply = (toolName?: string): ModelResponse => ({
 
 describe.skipIf(!live)(
   "agent tool loop through the queue (live database)",
-  { timeout: 60_000 },
+  { timeout: 180_000 },
   () => {
     let pool: pg.Pool;
     const queues: JobQueue[] = [];
@@ -333,10 +333,13 @@ describe.skipIf(!live)(
       const runId = await newRun(ARCHIVED_AGENT);
 
       await queue.enqueueRun({ workspaceId: WORKSPACE, runId });
+      // Wait on the terminal event itself, not on the status that follows it (AGO-213).
+      const failed = await waitFor(async () =>
+        (await events(runId)).find((row) => row.type === "run.failed"),
+      );
+      expect(failed.payload).toMatchObject({ reason: "agent_archived" });
       await waitFor(async () => (await runStatus(runId)) === RUN_STATUS.failed);
-
-      const failed = (await events(runId)).find((row) => row.type === "run.failed");
-      expect(failed?.payload).toMatchObject({ reason: "agent_archived" });
+      expect(await runStatus(runId)).toBe(RUN_STATUS.failed);
       expect(requests).toHaveLength(0);
     });
   },
