@@ -1,0 +1,20 @@
+-- CLEAN: a policy that lets a human decide, a trigger that guards, and a sweep that only rejects. Must report nothing.
+create policy approvals_decide on public.approvals for update
+  using (status = 'pending' and expires_at > now())
+  with check (status in ('approved', 'denied') and expires_at > now());
+
+create or replace function public.expire_approvals() returns void
+language sql as $$
+  update public.approvals set status = 'rejected' where status = 'pending' and expires_at <= now();
+$$;
+
+-- an expired approval can no longer be approved
+create or replace function public.guard_approval() returns trigger
+language plpgsql as $$
+begin
+  if new.status = 'approved' and old.expires_at <= now() then
+    raise exception 'expired';
+  end if;
+  return new;
+end;
+$$;
