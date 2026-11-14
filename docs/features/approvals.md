@@ -10,8 +10,32 @@ for the exact call it was given for, once, and before it expires (AGO-47). The o
 `denied` is a person, through the human-only decide route (AGO-58, below).
 
 ## Screens
-None yet. The inbox UI is AGO-37; it will call `POST /api/approvals/[id]/decision`. Until it ships, a member can decide
-through that route directly, and every request nobody answers still ends in a timeout denial.
+**Approvals inbox (AGO-37), `/app/approvals`.** One list of every pending approval in the workspace, oldest request
+first. Each card shows the agent, how long it has waited and how long is left (timeout means deny), why it stopped
+(the policy reason code and tier), the tool, a fingerprint of the exact call (the payload hash), the run's recent steps
+and its cost so far. Members and owners get **Approve** and **Reject**; viewers see the inbox read-only.
+
+- **One decision path.** Both buttons post `{ workspace_id, decision }` to `POST /api/approvals/[id]/decision` (AGO-58)
+  and nowhere else. Agent credentials stay refused there. The inbox never writes the `approvals` table itself.
+- **Inert text.** Every card field is rendered as React text. Agent-derived strings are never inserted as HTML.
+- **Within 2 seconds.** The open inbox re-reads the server every second (`INBOX_REFRESH_MS`), and a decision made in
+  the inbox shows its result at once. The live test `inbox.integration.test.ts` measures decision to the next inbox
+  read and the stored state against the local stack (under the db lock). Realtime would need `approvals` in the realtime
+  publication, which is a migration; it is a follow-up.
+- **Deferred.** The card shows the payload hash, not the payload: the table stores only the hash. Edit and Ask are shown
+  disabled with a reason (no backend yet). Waking the paused run after a decision stays with AGO-86.
+  Follow-ups: store the approval payload (migration plus worker), Edit, Ask, Realtime.
+
+Without the inbox a member can still decide through the route directly, and every request nobody answers still ends in
+a timeout denial.
+
+| function / component | file | role |
+|---|---|---|
+| `ApprovalsPage` | `apps/web/src/app/app/approvals/page.tsx` | thin route: workspace from the session, then the inbox |
+| `listPendingApprovals` | `apps/web/src/features/approvals/inbox-data.ts` | read-only: pending rows, agent names, run events, all under RLS |
+| `buildApprovalCards` | `apps/web/src/features/approvals/approval-card.ts` | pure: reason, recent steps and cost from validated run events |
+| `ApprovalInbox` | `apps/web/src/features/approvals/ApprovalInbox.tsx` | client: polling, the decide call, per-card result |
+| `ApprovalCard` | `apps/web/src/features/approvals/ApprovalCard.tsx` | presentational card |
 
 ## Data model
 One table, `public.approvals` (created in AGO-74, RLS in AGO-107). The approval flow itself adds no table or column. AGO-58 adds one database function, `public.record_agent_approval_rejection` (see "Human-only decisions"), which appends a run event and touches no approval row.
