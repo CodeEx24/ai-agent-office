@@ -4,7 +4,7 @@
 - PRs: https://github.com/CodeEx24/ai-agent-office/pull/66
 - Blocked by: AGO-21 (approval request flow, done). Unblocks AGO-162 (Phase 1 gate). Builds on AGO-47 (merged, e694493).
 - Risk: **high** (human-in-the-loop invariant: timeout means deny)
-- Status: In progress (record accepted by the owner via the orchestrator, 2026-11-14)
+- Status: Merged (2026-11-14)
 
 ## Overview
 "As the product owner, I want: guarantee timeout means deny. Ensure expired approvals deny and notify the agent, with no auto-approve path in code."
@@ -82,3 +82,7 @@ The runtime guarantee (the RLS policy "an expired approval can no longer be appr
 ## Outcome
 Feature guide: [docs/features/approvals.md](../features/approvals.md) (section "Timeout means deny (AGO-51)").
 PR: https://github.com/CodeEx24/ai-agent-office/pull/66
+
+**Status: Merged** (2026-11-14). Three rounds. Round 1: tester-functional CHANGES (plpgsql `=` assignment missed by the scanner). Round 2: tester PASS, reviewer-code CHANGES (declare-default variables; the documented limits list was incomplete). Round 3: tester-functional, reviewer-code, reviewer-security and invariants PASS; approver APPROVE. Gates passed every round; the pre-merge re-gate on 00a18e7 (main 7e4334d) was fully green, pgTAP included.
+
+Known limitations: the static auto-approve check is a pattern scanner with documented limits (see the feature guide). Reviewer nits (remaining declare-default gaps, out-of-scope roots) are logged as follow-ups for AGO-58.
