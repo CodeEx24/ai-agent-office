@@ -1,0 +1,21 @@
+-- PLANTED VIOLATIONS: DB-side auto-approve, as a trigger function and as a scheduled update.
+create or replace function public.approvals_auto_approve() returns trigger
+language plpgsql as $$
+begin
+  if new.expires_at <= now() then
+    new.status := 'approved';
+  end if;
+  return new;
+end;
+$$;
+
+select cron.schedule('auto-approve', '* * * * *',
+  $$update public.approvals set status = 'approved' where status = 'pending' and expires_at <= now()$$);
+
+create or replace function public.expire_and_approve() returns void
+language sql as $$
+  update public.approvals
+     set status = case when expires_at <= now() then 'approved' else status end,
+         decided_at = now()
+   where status = 'pending';
+$$;

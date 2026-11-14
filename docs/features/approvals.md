@@ -1,5 +1,5 @@
 # Approval requests
-Tickets: AGO-21 (created) · AGO-47 (payload-hash binding, single use, expiry limit)
+Tickets: AGO-21 (created) · AGO-47 (payload-hash binding, single use, expiry limit) · AGO-51 (timeout means deny, guarded by a static check)
 
 ## What it does
 When the policy engine says a tool call `needs_approval` (tier 3 and 4, or any call a policy escalates), the worker
@@ -122,6 +122,34 @@ index 1.
 
 **Follow-ups.** `resumeRun` with an undefined actor throws a `TypeError` instead of
 `HumanActorRequiredError` (pre-existing `assertHuman`); the call is still refused.
+
+## Timeout means deny (AGO-51)
+A timeout can only deny. The system writes `rejected` (never `approved`; `denied` stays reserved for a human), the agent
+gets `approval_expired` with the text "expired before a human answered. It was not run.", an `approval.decided`
+(`expired`, `timeout`) event is appended, and the run finishes instead of waiting. This is covered end to end on the
+sweeper path and the resume-time path in `agent-loop.approvals.test.ts` (including exactly at, just after and long after
+the limit, and that a late human `approved` row is refused and left as the human wrote it).
+
+**The static check** (`apps/worker/src/approvals/no-auto-approve.test.ts`, part of `pnpm test`) fails the build when any
+source could approve without a human. It scans non-test `.ts`/`.tsx` under `apps/**` and `packages/**` and every
+`supabase/migrations/*.sql` for:
+
+| Rule | Catches |
+|---|---|
+| R1 status write | `status: approved`, `status` shorthand, `x.status = approved`, also through a constant, a concatenation or a ternary |
+| R2 timeout allows | an expiry/timeout/deadline/ttl/sweep handler, or an `if`/`?:` on an expiry condition, that resolves to allow, approved or proceed or runs the call; an `approval.decided` event that is `approved` and decided by the timeout |
+| R3 SQL approves | `UPDATE ... SET status = 'approved'`, `new.status := 'approved'`, an `INSERT` of an approved row, a `$n` bound to approved, in `.sql` files and in strings in TypeScript |
+
+The test proves itself: planted violations in `__fixtures__/auto-approve/` (a direct update, a computed status, SQL strings,
+a ternary on expiry, a timeout-decided approved event, a DB trigger, a cron update and a CASE expression) must each be
+reported, look-alikes that only read `approved` must not, a sanity check asserts the real scan saw the files, and two
+violations planted into the real `approval-store.ts` and `expire-approvals.ts` text must be caught. The fixtures folder
+and the Playwright `e2e/` folder (which plays the human decider against a local database) are excluded explicitly.
+
+**The one exception.** A human decide route (AGO-58) must write `approved`. It is listed in `HUMAN_DECISION_FILES` in the
+check, which keeps the exception visible in review; the list is empty until that route exists. The check is a tripwire
+(it follows constants, concatenations and ternaries within one file, not a status built across files); the runtime
+enforcement remains the conditional `expire` and `consume` SQL, the RLS policy and the loop's refusal codes.
 
 ## How to extend it
 - Add the human decision: write `approved` or `denied` from a human-only route (AGO-58). The grant path (hash binding,

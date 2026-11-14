@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { approvalIdFor } from "../approvals/approval-id.js";
+import { expireDueApprovals } from "../approvals/expire-approvals.js";
 import {
   createMemoryApprovalStore,
   type MemoryApprovalStore,
@@ -429,5 +430,143 @@ describe("AGO-21: the tool runs in no path that is not an approval it honours", 
 
     expect(world.risky.run).not.toHaveBeenCalled();
     expect(failedCodes(b.rows)).toEqual(["approval_not_granted"]);
+  });
+});
+
+/** Run the real expiry sweep on the world's store and clock. Its events and wake-ups are the test's. */
+async function sweep(world: Awaited<ReturnType<typeof pauseForApproval>>) {
+  const sweepRows: RunEventRow[] = [];
+  const wake = vi.fn(() => Promise.resolve("resumed" as const));
+  const expired = await expireDueApprovals({
+    approvals: world.approvals,
+    events: {
+      insert: (row) => {
+        sweepRows.push(row);
+        return Promise.resolve({
+          id: String(sweepRows.length),
+          seq: sweepRows.length,
+          created_at: "now",
+        });
+      },
+    },
+    control: { resumeAfterApprovalExpiry: wake },
+    logger: createLogger({ level: "silent" }),
+    now: () => world.clock.now,
+  });
+  return { sweepRows, wake, expired };
+}
+
+describe("AGO-51 AC2: a timed-out approval denies the call and tells the agent", () => {
+  it("sweeps, wakes the run, and the resumed run ends with an explicit denial, an event and no tool side effect", async () => {
+    const world = await pauseForApproval();
+    expect(world.outcome).toMatchObject({ end: "paused", pauseReason: "approval_required" });
+    world.clock.now = T0 + TTL_MS + 1;
+
+    const swept = await sweep(world);
+
+    // The sweep denies (never approves), records why in run_events and wakes exactly this run.
+    expect(swept.expired).toBe(1);
+    expect(world.approvals.peek(world.approvalId)?.status).toBe("rejected");
+    expect(swept.sweepRows.map((r) => r.type)).toEqual(["approval.decided"]);
+    expect(swept.sweepRows[0]?.payload).toMatchObject({
+      approval_id: world.approvalId,
+      outcome: "expired",
+      decided_by: "timeout",
+    });
+    expect(swept.wake).toHaveBeenCalledWith({
+      workspaceId: WS,
+      runId: RUN,
+      approvalId: world.approvalId,
+    });
+
+    // The woken run does not hang: it finishes, and the agent is told with a reason code.
+    const b = resume(world);
+    const outcome = await b.loop.execute(b.ctx);
+    expect(outcome.end).toBe("completed");
+    expect(world.risky.run).not.toHaveBeenCalled();
+    const failed = b.rows.filter((r) => r.type === "tool_call.failed");
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.payload).toMatchObject({
+      call_id: "toolu_0",
+      error_code: "approval_expired",
+      message: "the approval request expired",
+    });
+    expect(types(b.rows)).not.toContain("tool_call.started");
+    expect(types(b.rows)).not.toContain("tool_call.completed");
+    // The model's next request carries the explicit denial.
+    expect(JSON.stringify(b.model.requests.at(-1)?.messages)).toContain(
+      "expired before a human answered. It was not run.",
+    );
+    // Still not approved, and the sweep that already denied it does not write a second decision.
+    expect(world.approvals.peek(world.approvalId)?.status).toBe("rejected");
+    expect(types(b.rows)).not.toContain("approval.decided");
+  });
+
+  it("denies a late approval too: an approved row past expires_at is never run and is not rewritten", async () => {
+    const world = await pauseForApproval();
+    world.approvals.setStatus(world.approvalId, "approved");
+    world.clock.now = T0 + TTL_MS; // exactly due
+    const b = resume(world);
+
+    const outcome = await b.loop.execute(b.ctx);
+
+    expect(outcome.end).toBe("completed");
+    expect(world.risky.run).not.toHaveBeenCalled();
+    expect(failedCodes(b.rows)).toEqual(["approval_expired"]);
+    expect(world.approvals.peek(world.approvalId)?.status).toBe("approved"); // a human's word is never rewritten
+    expect(world.approvals.peek(world.approvalId)?.consumedAt).toBeNull();
+  });
+});
+
+describe("AGO-51: a pending approval past its limit can only move to a deny state", () => {
+  const DENY_STATES = ["rejected", "denied"];
+  const clocks = [
+    ["exactly at the limit", TTL_MS],
+    ["one millisecond past it", TTL_MS + 1],
+    ["long past it", TTL_MS * 1000],
+  ] as const;
+
+  it.each(clocks)(
+    "the sweep (%s) moves it to rejected, never approved, and a second sweep changes nothing",
+    async (_label, afterMs) => {
+      const world = await pauseForApproval();
+      world.clock.now = T0 + afterMs;
+
+      await sweep(world);
+      const status = world.approvals.peek(world.approvalId)?.status;
+      expect(DENY_STATES).toContain(status);
+      expect(status).not.toBe("approved");
+
+      const again = await sweep(world);
+      expect(again.expired).toBe(0);
+      expect(world.approvals.peek(world.approvalId)?.status).toBe(status);
+    },
+  );
+
+  it.each(clocks)(
+    "the resume-time check (%s) moves it to rejected, never approved, and the call never runs",
+    async (_label, afterMs) => {
+      const world = await pauseForApproval();
+      world.clock.now = T0 + afterMs;
+      const b = resume(world);
+
+      await b.loop.execute(b.ctx);
+
+      const status = world.approvals.peek(world.approvalId)?.status;
+      expect(DENY_STATES).toContain(status);
+      expect(status).not.toBe("approved");
+      expect(world.risky.run).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not expire a pending approval before its limit (no early denial, no approval)", async () => {
+    const world = await pauseForApproval();
+    world.clock.now = T0 + TTL_MS - 1;
+
+    const swept = await sweep(world);
+
+    expect(swept.expired).toBe(0);
+    expect(world.approvals.peek(world.approvalId)?.status).toBe("pending");
+    expect(swept.wake).not.toHaveBeenCalled();
   });
 });

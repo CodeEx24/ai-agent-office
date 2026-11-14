@@ -1,0 +1,22 @@
+// CLEAN look-alikes: reads and comparisons of approved, and expiry code that only denies. Must report nothing.
+import { APPROVAL_STATUS } from "@ago/shared";
+
+export function isGranted(row: { status: string; consumedAt: Date | null }) {
+  return row.status === APPROVAL_STATUS.approved && row.consumedAt === null;
+}
+
+export async function expireDue(client: { query(sql: string, params?: unknown[]): Promise<unknown> }, now: Date) {
+  await client.query(
+    "update public.approvals set status = $1 where status = $2 and expires_at <= $3",
+    [APPROVAL_STATUS.rejected, APPROVAL_STATUS.pending, now],
+  );
+  await client.query("select 1 from public.approvals where status = 'approved' and consumed_at is null");
+}
+
+export function resolveAtDeadline(approval: { expiresAt: Date; status: string }, now: number) {
+  const isExpired = approval.expiresAt.getTime() <= now;
+  return isExpired ? { kind: "closed", code: "approval_expired" } : { kind: "waiting" };
+}
+
+export const decided = { type: "approval.decided", payload: { outcome: "expired", decided_by: "timeout" } };
+export const outcomes = ["approved", "denied", "expired"] as const;
