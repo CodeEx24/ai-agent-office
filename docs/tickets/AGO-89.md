@@ -74,6 +74,18 @@ Unit: shared schemas and draft checks, `edit-agent.ts` error mapping and owner/a
 3. Edit skills and capabilities of an existing agent (with an approval design), and restore an old version (pairs with AGO-156).
 
 ## Outcome
-(filled at merge)
+Status: **Merged** (PR #61, squash-merged 2026-11-14 after a green pre-merge re-gate on de919ae).
+
+- All four acceptance criteria met. Edits are versioned and audited in the append-only `agent_versions` table. A database trigger stops tasks being assigned to archived agents. Duplicates copy skills and capabilities and start in Strict mode. Tests, review and docs are done.
+- Rounds: 3.
+  - Round 1: the device tester found that model and effort reverted after save (F1) and that the history copy showed "Changed ." (F2).
+  - Round 2: F1 and F2 were fixed. A new N1 appeared: the Unarchive form was nested inside the edit form, so the button did nothing.
+  - Round 3: N1 fixed. The gate, device test, and code, security, UI and invariants reviews all passed. The approver said APPROVE.
+- Deviations from the design:
+  - Member update rights on `agents` (from AGO-107) are replaced by owner-only update.
+  - `description` is no longer directly editable.
+- Accepted gaps: the two UI-review nits are not fixed. Row links are smaller than a 44 pt touch target, and disabled fields on archived agents show faint text.
+- Follow-ups: see "Follow-up tasks" above (thinking effort in the worker, an archived-agent check in the claim path, editing skills and capabilities, restoring versions).
+- Pre-merge: the first re-gate failed only on the known `ago-151-concurrent-start` flake (fixed by AGO-212, PR #60). The re-run passed.
 
 Feature guide: `docs/features/agents.md` (how the agent area works today).
