@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 
 import { expect, isLiveStack, test } from "./fixtures";
 import { hex64, inAnHour, seedTask, svcInsert, svcRow, uniq, type Row } from "./support/rls-world";
@@ -104,6 +104,50 @@ test.describe("AGO-37: approvals inbox (local stack)", () => {
       cost_micros: 12_345,
     });
     return approval.id as string;
+  }
+
+  /** Starts a timer in the page: from the next click on a button called `buttonName` to a new verdict on a card. */
+  async function armLatencyTimer(page: Page, buttonName: string): Promise<void> {
+    await page.evaluate((name) => {
+      interface Timer {
+        before: number;
+        clickAt?: number;
+        doneAt?: number;
+      }
+      const w = window as unknown as { __timer?: Timer };
+      const count = () => document.querySelectorAll("[data-testid=approval-result]").length;
+      const timer: Timer = { before: count() };
+      w.__timer = timer;
+      document.addEventListener(
+        "click",
+        (e) => {
+          const button = (e.target as HTMLElement | null)?.closest("button");
+          if (button?.textContent === name && timer.clickAt === undefined) {
+            timer.clickAt = performance.now();
+          }
+        },
+        true,
+      );
+      new MutationObserver(() => {
+        if (timer.clickAt !== undefined && timer.doneAt === undefined && count() > timer.before) {
+          timer.doneAt = performance.now();
+        }
+      }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    }, buttonName);
+  }
+
+  async function readLatencyMs(page: Page): Promise<number | null> {
+    return page.evaluate(() => {
+      const t = (window as unknown as { __timer?: { clickAt?: number; doneAt?: number } }).__timer;
+      return t?.clickAt !== undefined && t.doneAt !== undefined ? t.doneAt - t.clickAt : null;
+    });
+  }
+
+  /** A real mouse click at the centre of an element, with no actionability wait: what a quick second click does. */
+  async function quickClick(page: Page, target: Locator): Promise<void> {
+    const box = await target.boundingBox();
+    if (!box) throw new Error("nothing to click");
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   }
 
   test("owner walks the inbox; a viewer only reads it", async ({ page, baseURL, browser }) => {
@@ -217,52 +261,25 @@ test.describe("AGO-37: approvals inbox (local stack)", () => {
 
     // AC2: approve card A and measure, in the page, from the click to the verdict showing on the card. Round 2: the
     // decided card stays in place as a receipt (so the next card never moves under the cursor) until dismissed.
-    await page.evaluate((cardSelector) => {
-      const w = window as unknown as { __clickAt?: number; __goneAt?: number };
-      w.__clickAt = undefined;
-      w.__goneAt = undefined;
-      document.addEventListener(
-        "click",
-        (e) => {
-          const target = e.target as HTMLElement | null;
-          if (target?.closest("button")?.textContent === "Approve" && w.__clickAt === undefined) {
-            w.__clickAt = performance.now();
-          }
-        },
-        true,
-      );
-      const list = document.querySelector("[data-testid=approvals-list]");
-      const watcher = new MutationObserver(() => {
-        const verdicts = [...document.querySelectorAll(cardSelector)].map(
-          (el) => el.querySelector("[data-testid=approval-result]")?.textContent ?? "",
-        );
-        if (
-          w.__clickAt !== undefined &&
-          w.__goneAt === undefined &&
-          verdicts.some((t) => t.includes("Approved"))
-        ) {
-          w.__goneAt = performance.now();
-        }
-      });
-      if (list) watcher.observe(list, { childList: true, subtree: true, characterData: true });
-    }, "[data-testid=approval-card]");
     await shot(page, "08-ac2-before-approve");
+    await armLatencyTimer(page, "Approve");
     await cardA.getByRole("button", { name: "Approve" }).click();
     await expect(cardA.getByTestId("approval-result")).toHaveText("Approved", {
       timeout: BUDGET_MS * 2,
     });
-    const latencyMs = await page.evaluate(() => {
-      const w = window as unknown as { __clickAt?: number; __goneAt?: number };
-      return w.__clickAt !== undefined && w.__goneAt !== undefined
-        ? w.__goneAt - w.__clickAt
-        : null;
-    });
+    const latencyMs = await readLatencyMs(page);
     await shot(page, "09-ac2-after-approve");
     console.log(
       `AGO-37 approve latency (click to verdict on the card, in the page): ${String(latencyMs)} ms`,
     );
-    // Round 2: while the list settles, no other card can be decided (every decide button is held).
-    await expect(cardB.getByRole("button", { name: "Reject" })).toBeDisabled();
+    // Round 2: right after a decision a quick second click on the next card must not decide it (every decide button
+    // is held). A real mouse click at the next card's Approve, as fast as a hand could move.
+    await expect(cardB.getByRole("button", { name: "Approve" })).toBeDisabled();
+    await quickClick(page, cardB.getByRole("button", { name: "Approve" }));
+    await page.waitForTimeout(400);
+    await expect(cardB.getByTestId("approval-result")).toHaveCount(0);
+    expect((await svcRow("approvals", idB))?.status).toBe("pending");
+    await shot(page, "09b-ac2-quick-second-click-blocked");
     expect(latencyMs).not.toBeNull();
     expect(latencyMs ?? Infinity).toBeLessThan(BUDGET_MS);
     expect((await svcRow("approvals", idA))?.status).toBe("approved");
@@ -271,14 +288,18 @@ test.describe("AGO-37: approvals inbox (local stack)", () => {
     // AC2: reject card B (its button re-enables once the hold ends); the verdict shows and it is stored as denied.
     await cardA.getByRole("button", { name: "Dismiss" }).click();
     await expect(cards.filter({ hasText: nameA })).toHaveCount(0);
-    const rejectStart = Date.now();
+    await expect(cardB.getByRole("button", { name: "Reject" })).toBeEnabled();
+    await armLatencyTimer(page, "Reject");
     await cardB.getByRole("button", { name: "Reject" }).click();
     await expect(cardB.getByTestId("approval-result")).toHaveText("Rejected", {
       timeout: BUDGET_MS * 2,
     });
+    const rejectMs = await readLatencyMs(page);
     console.log(
-      `AGO-37 reject latency (click to verdict, from the test): ${String(Date.now() - rejectStart)} ms`,
+      `AGO-37 reject latency (click to verdict on the card, in the page): ${String(rejectMs)} ms`,
     );
+    expect(rejectMs).not.toBeNull();
+    expect(rejectMs ?? Infinity).toBeLessThan(BUDGET_MS);
     await cardB.getByRole("button", { name: "Dismiss" }).click();
     await expect(cards.filter({ hasText: nameB })).toHaveCount(0);
     expect((await svcRow("approvals", idB))?.status).toBe("denied");
@@ -308,5 +329,107 @@ test.describe("AGO-37: approvals inbox (local stack)", () => {
       timeout: BUDGET_MS * 2,
     });
     await shot(page, "13-empty-state");
+  });
+
+  test("a member approves one and rejects another; a quick second click decides nothing", async ({
+    page,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("baseURL is not configured");
+    const owner = await createUser("inbox-owner-m");
+    const member = await createUser("inbox-member");
+    const workspaceId = await onboard(owner, "Inbox Member Co");
+    await addMember(workspaceId, member, "member");
+
+    const nameA = uniq("Analyst");
+    const nameB = uniq("Writer");
+    const nameC = uniq("Planner");
+    const idA = await seedPending(owner, workspaceId, {
+      agentName: nameA,
+      action: "email.send",
+      waitedMinutes: 30,
+      hash: hex64(),
+    });
+    const idB = await seedPending(owner, workspaceId, {
+      agentName: nameB,
+      action: "calendar.invite",
+      waitedMinutes: 20,
+      hash: hex64(),
+    });
+    const idC = await seedPending(owner, workspaceId, {
+      agentName: nameC,
+      action: "file.delete",
+      waitedMinutes: 10,
+      hash: hex64(),
+    });
+
+    await signInWithSessionCookie(page.context(), baseURL, member);
+    await page.goto("/app");
+    await expect(page.getByTestId("workspace-role")).toHaveText("member");
+    await page.getByRole("link", { name: "Approvals" }).click();
+    const cards = page.getByTestId("approval-card");
+    await expect(cards).toHaveCount(3);
+    const cardA = cards.filter({ hasText: nameA });
+    const cardB = cards.filter({ hasText: nameB });
+    const cardC = cards.filter({ hasText: nameC });
+    await expect(page.getByTestId("approval-view-only")).toHaveCount(0);
+    await expect(cardA.getByTestId("approval-details-note")).toBeVisible();
+    await shot(page, "m01-member-list");
+
+    // Approve A: the verdict shows inside the budget and the stored row is approved.
+    await armLatencyTimer(page, "Approve");
+    await cardA.getByRole("button", { name: "Approve" }).click();
+    await expect(cardA.getByTestId("approval-result")).toHaveText("Approved", {
+      timeout: BUDGET_MS * 2,
+    });
+    const approveMs = await readLatencyMs(page);
+    console.log(`AGO-37 member approve latency (in the page): ${String(approveMs)} ms`);
+    expect(approveMs ?? Infinity).toBeLessThan(BUDGET_MS);
+    await shot(page, "m02-member-approved-receipt");
+
+    // A quick second click on the next card's Approve decides nothing.
+    await quickClick(page, cardB.getByRole("button", { name: "Approve" }));
+    await page.waitForTimeout(400);
+    await expect(cardB.getByTestId("approval-result")).toHaveCount(0);
+    expect((await svcRow("approvals", idB))?.status).toBe("pending");
+    await shot(page, "m03-member-quick-second-click-blocked");
+    expect((await svcRow("approvals", idA))?.status).toBe("approved");
+    expect(typeof (await svcRow("approvals", idA))?.decided_by).toBe("string");
+
+    // Dismiss A, then reject B once its buttons are live again.
+    await cardA.getByRole("button", { name: "Dismiss" }).click();
+    await expect(cards.filter({ hasText: nameA })).toHaveCount(0);
+    await expect(cardB.getByRole("button", { name: "Reject" })).toBeEnabled();
+    await armLatencyTimer(page, "Reject");
+    await cardB.getByRole("button", { name: "Reject" }).click();
+    await expect(cardB.getByTestId("approval-result")).toHaveText("Rejected", {
+      timeout: BUDGET_MS * 2,
+    });
+    const rejectMs = await readLatencyMs(page);
+    console.log(`AGO-37 member reject latency (in the page): ${String(rejectMs)} ms`);
+    expect(rejectMs ?? Infinity).toBeLessThan(BUDGET_MS);
+    await shot(page, "m04-member-rejected-receipt");
+    expect((await svcRow("approvals", idB))?.status).toBe("denied");
+    expect(typeof (await svcRow("approvals", idB))?.decided_by).toBe("string");
+    expect((await svcRow("approvals", idC))?.status).toBe("pending");
+
+    // Dismiss B; C is untouched and still pending.
+    await cardB.getByRole("button", { name: "Dismiss" }).click();
+    await expect(cards).toHaveCount(1);
+    await expect(cardC).toBeVisible();
+    await shot(page, "m05-member-one-left");
+
+    // Round 2: a refresh that does not come back in time says so and keeps the list; it clears once reads work again.
+    // (A 500 or an aborted RSC request makes Next hard-reload the page, so the stall is what is injected here.)
+    await page.route(/_rsc=/, async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 6_000));
+      await route.continue().catch(() => undefined);
+    });
+    await expect(page.getByTestId("approvals-refresh-failed")).toBeVisible({ timeout: 10_000 });
+    await expect(cardC).toBeVisible();
+    await shot(page, "m06-refresh-failed-keeps-list");
+    await page.unroute(/_rsc=/);
+    await expect(page.getByTestId("approvals-refresh-failed")).toHaveCount(0, { timeout: 20_000 });
+    await expect(cardC).toBeVisible();
   });
 });
