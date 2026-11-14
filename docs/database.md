@@ -77,7 +77,8 @@ Every table has RLS and per-command policies for `authenticated` built on `priva
 | runs | viewer | member (starts `queued`) | - | - |
 | run_events | viewer | - | - | - |
 | approvals | viewer | - | member: decide only (pending, unexpired, as themselves) | - |
-| claims | viewer | - | - | - |
+| claims | viewer (every column except `claim_token`; AGO-160) | - | - | - |
+| claim_events | viewer (AGO-160) | - (the claim functions append) | - (blocked for every role) | - (blocked; only the workspace delete cascades) |
 | budgets_usage | viewer | owner (budget columns) | owner (budget columns) | - |
 | notes_index | viewer | member | member | member |
 | policies | viewer | owner (`created_by`/`updated_by` = caller) | owner (`rule`, `archived_at`, `updated_by` only) | - (archive instead) |
@@ -150,3 +151,14 @@ Each agent has one **identity** (`agent_identities`, a non-login principal creat
 - **Human-only routes.** A request that carries an agent credential (`Authorization: Bearer ago_agt_...`) is refused with 403 by the proxy, the capabilities route and the create-agent server action (`apps/web/src/lib/auth/human-only.ts`), even if it also carries a session cookie. The agent allow-list is empty today.
 - **Secret.** `AGENT_CREDENTIAL_SIGNING_SECRET`, see [environments.md](environments.md#agent-credential-signing-secret-ago-148).
 - **Rollback.** `supabase/rollbacks/20261107130001_ago_148_agent_identity_credentials.down.sql` (local data only; it drops the issuance log).
+
+## Task claims with expiry (AGO-160)
+
+One agent owns a task at a time and an unrenewed claim expires. Guide: [features/tasks.md](features/tasks.md).
+
+- **`claims` columns added.** `claim_token uuid not null default gen_random_uuid()` (the fence, rotated on every claim), `renewed_at timestamptz`, `release_reason text` (`released`, `completed` or `expired`). `expires_at` is now `NOT NULL` with a default of `now() + 5 minutes` (old rows were backfilled). New checks: `claims_expires_after_claimed`, `claims_release_reason_values`, `claims_release_reason_matches_release`. The partial unique index `claims_one_active_per_task_idx` (one active claim per task) is the atomic backstop.
+- **Token privacy.** Members lose the table-level `SELECT` on `claims` and keep a column-level grant that leaves out `claim_token`. `has_table_privilege` is false for `authenticated` now; the role-matrix tests use `has_any_column_privilege`.
+- **Functions** (`SECURITY DEFINER`, `search_path = ''`, `EXECUTE` for `service_role` only): `claim_task`, `renew_claim`, `release_claim`, `sweep_expired_claims`. Expiry is judged by `now()` in the database. Refusals return a reason (`agent_archived`, `workspace_mismatch`, `stale_token`, ...), never a silent false.
+- **`claim_events`.** Append-only audit table (`workspace_id`, `task_id`, `claim_id`, `agent_id`, `type`, `payload`, `created_at`). UPDATE, DELETE and TRUNCATE are revoked and blocked by a trigger for every role; the only removal is the cascade from a deleted workspace. No foreign keys on `task_id`, `claim_id` and `agent_id`, so the trail outlives them. RLS: members and viewers read their own workspace's rows; nobody writes through the API. The token is never in `payload`.
+- **Archived agents.** `claim_task` reads the agent with `FOR SHARE` and refuses an archived one (closes AGO-89 follow-up 2 for the claim path).
+- **Rollback.** `supabase/rollbacks/20261114010001_ago_160_task_claims.down.sql` (local data only; it drops `claim_events` and the new columns, and restores the AGO-107 table-level grant). Tests: `supabase/tests/task_claims.test.sql`.
