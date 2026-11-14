@@ -1,3 +1,4 @@
+import { isRunControlRoute } from "@ago/shared";
 import { NextResponse, type NextRequest } from "next/server";
 
 import {
@@ -52,7 +53,8 @@ export async function proxy(request: NextRequest) {
   const agentDenied = rejectAgentCredential(request);
   if (agentDenied) {
     // AGO-58: on an approval route the refusal also leaves an audit event (signature-checked, fixed shape).
-    if (isApprovalRoute(request.nextUrl.pathname)) {
+    // AGO-86: the same audit event for a run control route (pause, resume, stop).
+    if (isApprovalRoute(request.nextUrl.pathname) || isRunControlRoute(request.nextUrl.pathname)) {
       await recordAgentRouteRejection({
         headers: request.headers,
         pathname: request.nextUrl.pathname,
