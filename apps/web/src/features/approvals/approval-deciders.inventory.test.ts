@@ -84,4 +84,12 @@ describe("approval-deciding entry points in apps/web", () => {
     expect(proxy).toContain("isApprovalRoute(");
     expect(proxy).toContain("recordAgentRouteRejection(");
   });
+
+  it("only the server-only recorder reads SUPABASE_SERVICE_ROLE_KEY in apps/web", () => {
+    // The service key bypasses RLS. AGO-58 confines it to one server-only module making one narrow RPC call.
+    const readers = FILES.filter((f) => f.text.includes("SUPABASE_SERVICE_ROLE_KEY")).map(
+      (f) => f.path,
+    );
+    expect(readers).toEqual(["features/approvals/record-agent-rejection.ts"]);
+  });
 });

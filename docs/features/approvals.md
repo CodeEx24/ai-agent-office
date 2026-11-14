@@ -190,8 +190,10 @@ event list is not amended; the run row names the agent), through the narrow data
 the server-only recorder uses `SUPABASE_SERVICE_ROLE_KEY` for this one call, nowhere else in the web app; the decide
 route itself still uses the member's own session). The function checks the credential id belongs to the named
 workspace, agent and run, accepts only approval routes and five methods, and stays quiet past 20 events per run per
-minute (best-effort: parallel requests can slightly exceed the cap; a hard cap is a follow-up). The event never
-holds the token, a header, the body or the query. A forged or malformed token still gets the same 403; it has no
+minute (best-effort: parallel requests can slightly exceed the cap; a hard cap is a follow-up). The proxy awaits the
+RPC before it returns the 403, so the attempt is recorded before the refusal leaves the server; a failed write is logged
+and the 403 is unchanged. The inventory test in `approval-deciders.inventory.test.ts` fails if any other non-test file
+in `apps/web/src` mentions `SUPABASE_SERVICE_ROLE_KEY`. The event never holds the token, a header, the body or the query. A forged or malformed token still gets the same 403; it has no
 verifiable run, so it is logged (reason code and route only) and no event is written.
 
 **A Reviewer's APPROVE does not satisfy a Tier 3 gate.** The gate reads one thing: an `approved` approval row bound to
