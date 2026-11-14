@@ -150,6 +150,8 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
   pool.on("error", () => undefined);
   // Hardening gets a small pool of its own, so a stalled socket cannot take the claim pool down. keepAlive
   // and a query timeout make a dead socket fail instead of pinning a checked-out client (AGO-213).
+  // The idle-in-transaction timeout lets the server end an orphaned hardening session that still holds
+  // the advisory lock, so other workers are not blocked until TCP gives up (AGO-213 round 3).
   const hardeningPool = new pg.Pool({
     connectionString: options.connectionString,
     max: 2,
@@ -157,6 +159,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
     idleTimeoutMillis: 10_000,
     keepAlive: true,
     query_timeout: HARDENING_QUERY_TIMEOUT_MS,
+    options: "-c idle_in_transaction_session_timeout=15s",
   });
   hardeningPool.on("error", () => undefined);
   const runs = createPgRunStore(pool);

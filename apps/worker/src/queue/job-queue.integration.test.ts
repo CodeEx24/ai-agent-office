@@ -4,7 +4,7 @@
 import { randomUUID } from "node:crypto";
 
 import pg from "pg";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LOCAL_DATABASE_URL } from "../config.js";
 import { createLogger } from "../logger.js";
@@ -359,6 +359,29 @@ describe.skipIf(!live)("job queue (live database)", () => {
     // Idempotent: a second round finds nothing to revoke and still succeeds.
     await hardenPgbossFunctions(pool);
     expect(await grantsLeft()).toBe(0);
+  });
+
+  it("AGO-213: a hardening connection reports idle_in_transaction_session_timeout of 15s", async () => {
+    const poolSpy = vi.spyOn(pg, "Pool");
+    try {
+      await makeQueue(); // creates the queue's pools, including the hardening pool
+      const hardeningIndex = poolSpy.mock.calls.findIndex(([config]) => config?.keepAlive === true);
+      const hardening = poolSpy.mock.results[hardeningIndex]?.value as pg.Pool | undefined;
+      if (!hardening) throw new Error("hardening pool was not created");
+
+      const client = await hardening.connect();
+      try {
+        // SHOW names its result column after the parameter.
+        const { rows } = await client.query<{ idle_in_transaction_session_timeout: string }>(
+          "show idle_in_transaction_session_timeout",
+        );
+        expect(rows[0]?.idle_in_transaction_session_timeout).toBe("15s");
+      } finally {
+        client.release();
+      }
+    } finally {
+      poolSpy.mockRestore();
+    }
   });
 
   it("AGO-213: a pgboss function created after start() is revoked by the settle loop", async () => {

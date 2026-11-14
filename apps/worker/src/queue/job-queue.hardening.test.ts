@@ -3,6 +3,7 @@
 // step are replaced by test doubles.
 import { randomUUID } from "node:crypto";
 
+import pg from "pg";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createLogger } from "../logger.js";
@@ -103,6 +104,22 @@ describe("job queue and pgboss function hardening (AGO-213)", () => {
     expect(hardenPgbossFunctionsSettled).toHaveBeenCalledTimes(2);
     expect(boss.work).toHaveBeenCalledTimes(1);
     await queue.stop();
+  });
+
+  it("AGO-213: the hardening pool ends orphaned sessions with an idle-in-transaction timeout", async () => {
+    const poolSpy = vi.spyOn(pg, "Pool");
+    try {
+      const queue = createQueue();
+      const hardeningCall = poolSpy.mock.calls.find(([config]) => config?.keepAlive === true);
+
+      expect(hardeningCall?.[0]).toMatchObject({
+        connectionString: "postgres://unused@127.0.0.1:1/none",
+        options: "-c idle_in_transaction_session_timeout=15s",
+      });
+      await queue.stop();
+    } finally {
+      poolSpy.mockRestore();
+    }
   });
 
   it("starts the consumer once hardening succeeds (control for the fail-closed case)", async () => {
