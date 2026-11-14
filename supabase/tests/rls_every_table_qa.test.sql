@@ -77,8 +77,8 @@ select is(
 select is(
   (select count(*)::int from pg_class t where t.relnamespace = 'public'::regnamespace and t.relkind = 'r'
      and has_any_column_privilege('authenticated', t.oid, 'SELECT')),
-  20,
-  'authenticated can SELECT all 20 tables (membership RLS filters the rows)'
+  21,
+  'authenticated can SELECT all 21 tables (membership RLS filters the rows)'
 );
 select is(
   (select count(*)::int from pg_class t where t.relnamespace = 'public'::regnamespace and t.relkind = 'r'
@@ -109,8 +109,8 @@ select is(
   (select coalesce(array_agg(p.proname::text order by p.proname::text), '{}'::text[]) from pg_proc p
    where p.pronamespace = 'public'::regnamespace and has_function_privilege('authenticated', p.oid, 'EXECUTE')
      and not exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')),
-  array['archive_agent', 'create_agent', 'duplicate_agent', 'onboard_current_user', 'set_agent_run_limits', 'unarchive_agent', 'update_agent'],
-  'authenticated can execute exactly seven functions in public: create_agent (AGO-141), set_agent_run_limits (AGO-166) and update_agent, duplicate_agent, archive_agent, unarchive_agent (AGO-89), all owner-checked, and onboard_current_user'
+  array['archive_agent', 'create_agent', 'duplicate_agent', 'onboard_current_user', 'record_pack_export', 'set_agent_run_limits', 'unarchive_agent', 'update_agent'],
+  'authenticated can execute exactly eight functions in public: create_agent (AGO-141), set_agent_run_limits (AGO-166), update_agent, duplicate_agent, archive_agent, unarchive_agent (AGO-89), all owner-checked, record_pack_export (AGO-192, member-checked) and onboard_current_user'
 );
 select is(
   (select coalesce(array_agg(p.proname::text order by p.proname::text), '{}'::text[]) from pg_proc p

@@ -246,12 +246,29 @@ function refinePack(pack: PackBody, ctx: z.RefinementCtx): void {
   }
 }
 
+export const PACK_CHECKSUM_ALGORITHM = "sha256";
+
+/**
+ * Integrity checksum of the pack content (AGO-192). Optional so every v1 pack written before export existed
+ * stays valid. What is hashed: the UTF-8 bytes of the canonical JSON (object keys sorted, no whitespace, no
+ * trailing newline) of this same pack with the `checksum` field removed. `exportedAt` is part of those bytes.
+ * It detects accidental change and tampering with a pack that kept its checksum; it is not a signature (AGO-199).
+ */
+export const packChecksumSchema = z.strictObject({
+  algorithm: z.literal(PACK_CHECKSUM_ALGORITHM),
+  /** Lowercase hex SHA-256 digest. */
+  value: z.string().regex(/^[0-9a-f]{64}$/, "Expected a lowercase SHA-256 hex digest."),
+});
+export type PackChecksum = z.infer<typeof packChecksumSchema>;
+
 export const agentPackSchema = z
   .strictObject({
     /** Lets editors find the JSON Schema. Optional and ignored. */
     $schema: z.string().max(300).optional(),
     /** Required. Older versions are upgraded by `migrateAgentPack` before this schema is applied. */
     packVersion: z.literal(PACK_VERSION),
+    /** Optional integrity checksum written by export; see `packChecksumSchema` for exactly what it covers. */
+    checksum: packChecksumSchema.optional(),
     metadata: packMetadataSchema,
     agents: z.array(packAgentSchema).max(MAX_PACK_AGENTS),
     skills: z.array(packSkillSchema).max(MAX_PACK_SKILLS),
