@@ -1,6 +1,7 @@
 import pg from "pg";
 import { PgBoss } from "pg-boss";
 
+import { createApprovalExpirySweeper, createPgApprovalStore } from "../approvals/index.js";
 import { createPgRunEventStore, createRunEventEmitter } from "../events/index.js";
 import { withContext, type Logger } from "../logger.js";
 import { hardenPgbossFunctions } from "./pgboss-hardening.js";
@@ -12,6 +13,7 @@ import {
   runQueueNames,
   type RunRetryPolicy,
 } from "./run-job.js";
+import { createRunControl } from "./run-control.js";
 import { createRunProcessor, type RunExecutor } from "./run-processor.js";
 import { createPgRunStore } from "./run-store.js";
 import { createPgCheckpointStore } from "../agent/checkpoint-store.js";
@@ -78,6 +80,8 @@ export interface JobQueueOptions {
    * set it, to give each suite its own queue on the shared database (AGO-202).
    */
   readonly queueName?: string;
+  /** Seconds-scale timer for the approval expiry sweep (AGO-21). Only tests set it. */
+  readonly approvalSweepIntervalMs?: number;
 }
 
 /** pg-boss default schema; created (and locked down) by the AGO-151 migration. */
@@ -128,6 +132,26 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
   const runs = createPgRunStore(pool);
   const events = createPgRunEventStore(pool);
   const checkpoints = createPgCheckpointStore(pool);
+  const approvals = createPgApprovalStore(pool);
+  // Wakes a run whose approval expired (AGO-21). It goes through the queue like a human's resume does.
+  const control = createRunControl({
+    runs,
+    checkpoints,
+    queue: { enqueueRun: (input) => self.enqueueRun(input) },
+    events,
+    logger,
+  });
+  // Expires pending approvals past `expires_at` into `rejected` and tells the run (timeout means deny).
+  const approvalSweeper = createApprovalExpirySweeper({
+    approvals,
+    events,
+    control,
+    logger,
+    intervalMs: options.approvalSweepIntervalMs,
+    onError: (error, context) => {
+      errorTracker.captureException(error, context);
+    },
+  });
 
   let state: QueueState = "starting";
   const isStopped = (): boolean => state === "stopped";
@@ -207,6 +231,8 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
     }
     boss = instance;
     state = "ready";
+    // Only a worker that runs agents can have runs waiting on an approval.
+    if (options.executor !== undefined) approvalSweeper.start();
     logger.info({ queue: runQueue, consumer: options.executor !== undefined }, "job queue started");
   }
 
@@ -244,7 +270,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
     };
   }
 
-  return {
+  const self: JobQueue = {
     start() {
       starting = startWithRetry();
       return starting;
@@ -315,6 +341,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
 
     async stop() {
       state = "stopped";
+      approvalSweeper.stop();
       if (retryTimer !== null) clearTimeout(retryTimer);
       retryTimer = null;
       await starting?.catch(() => undefined);
@@ -331,4 +358,5 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
       await pool.end().catch(() => undefined);
     },
   };
+  return self;
 }
