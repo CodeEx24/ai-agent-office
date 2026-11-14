@@ -182,4 +182,121 @@ describe.skipIf(!live)("Postgres approval store (live database)", { timeout: 30_
     for (const a of [x, y]) await store().create(a);
     expect(await store().expireDue(later(10_000), 1)).toHaveLength(1);
   });
+
+  describe("consume (AGO-47)", () => {
+    /** A row a human approved, the way the RLS-limited decide path will write it (status only). */
+    async function approvedRow(over: Partial<NewApproval> = {}): Promise<NewApproval> {
+      const a = input(over);
+      await store().create(a);
+      await pool.query("update public.approvals set status = 'approved' where id = $1", [
+        a.approvalId,
+      ]);
+      return a;
+    }
+    const ref = (a: NewApproval) => ({
+      workspaceId: a.workspaceId,
+      runId: a.runId,
+      approvalId: a.approvalId,
+    });
+    const consumedAt = async (id: string): Promise<Date | null> =>
+      (
+        await pool.query<{ consumed_at: Date | null }>(
+          "select consumed_at from public.approvals where id = $1",
+          [id],
+        )
+      ).rows[0]?.consumed_at ?? null;
+
+    it("consumes an approved, unused, unexpired row with the matching hash, once", async () => {
+      const a = await approvedRow();
+
+      const first = await store().consume(ref(a), HASH, later(1_000));
+      expect(first).toMatchObject({
+        approvalId: a.approvalId,
+        status: "approved",
+        payloadHash: HASH,
+      });
+      expect(first?.consumedAt?.getTime()).toBe(later(1_000).getTime());
+
+      expect(await store().consume(ref(a), HASH, later(2_000))).toBeNull();
+      // The first use stays the recorded one, and the status is untouched (the worker never rewrites a decision).
+      expect((await consumedAt(a.approvalId))?.getTime()).toBe(later(1_000).getTime());
+      expect(await status(a.approvalId)).toBe("approved");
+    });
+
+    it("refuses a different payload hash and leaves the row unused", async () => {
+      const a = await approvedRow();
+
+      expect(await store().consume(ref(a), "c".repeat(64), later(1_000))).toBeNull();
+      expect(await consumedAt(a.approvalId)).toBeNull();
+      // The right hash still works afterwards: a refusal spends nothing.
+      expect(await store().consume(ref(a), HASH, later(1_000))).not.toBeNull();
+    });
+
+    it("refuses at the limit: expires_at > now is required, so now == expires_at is expired", async () => {
+      const a = await approvedRow({ expiresAt: later(5_000) });
+
+      expect(await store().consume(ref(a), HASH, later(5_000))).toBeNull();
+      expect(await store().consume(ref(a), HASH, later(9_000))).toBeNull();
+      expect(await consumedAt(a.approvalId)).toBeNull();
+      expect(await store().consume(ref(a), HASH, later(4_999))).not.toBeNull();
+    });
+
+    it.each(["pending", "denied", "rejected"])("refuses a %s row", async (state) => {
+      const a = input();
+      await store().create(a);
+      await pool.query("update public.approvals set status = $2 where id = $1", [
+        a.approvalId,
+        state,
+      ]);
+
+      expect(await store().consume(ref(a), HASH, later(1_000))).toBeNull();
+      expect(await consumedAt(a.approvalId)).toBeNull();
+    });
+
+    it("is scoped by workspace and by run", async () => {
+      const a = await approvedRow();
+
+      expect(
+        await store().consume({ ...ref(a), workspaceId: OTHER_WS }, HASH, later(1)),
+      ).toBeNull();
+      expect(await store().consume({ ...ref(a), runId: otherRunId }, HASH, later(1))).toBeNull();
+      expect(await store().consume({ ...ref(a), runId: randomUUID() }, HASH, later(1))).toBeNull();
+      expect(await consumedAt(a.approvalId)).toBeNull();
+    });
+
+    it("two concurrent consumes of one row give exactly one winner", async () => {
+      const a = await approvedRow();
+      // The pool has 4 connections, so these really run at the same time on separate connections.
+      const results = await Promise.all(
+        Array.from({ length: 8 }, () => store().consume(ref(a), HASH, later(1_000))),
+      );
+
+      expect(results.filter((row) => row !== null)).toHaveLength(1);
+      expect(await consumedAt(a.approvalId)).not.toBeNull();
+    });
+
+    it("races across many rows without ever granting one row twice", async () => {
+      const rows = await Promise.all(Array.from({ length: 5 }, () => approvedRow()));
+      const results = await Promise.all(
+        rows.flatMap((a) =>
+          Array.from({ length: 4 }, () => store().consume(ref(a), HASH, later(1_000))),
+        ),
+      );
+
+      expect(results.filter((row) => row !== null)).toHaveLength(rows.length);
+      for (const a of rows) {
+        expect(results.filter((row) => row?.approvalId === a.approvalId)).toHaveLength(1);
+      }
+    });
+
+    it("a consumed row is never moved by the expiry paths", async () => {
+      const a = await approvedRow({ expiresAt: later(1_000) });
+      await store().consume(ref(a), HASH, later(500));
+
+      expect(
+        await store().expire({ workspaceId: WS, approvalId: a.approvalId }, later(9_000)),
+      ).toBeNull();
+      expect(await status(a.approvalId)).toBe("approved");
+    });
+  });
 });

@@ -348,16 +348,9 @@ describe("AGO-21 AC2: an expired approval becomes rejected and the agent is told
 });
 
 describe("AGO-21: the tool runs in no path that is not an approval it honours", () => {
-  it("fails closed on an approved row until AGO-47 binds approvals to the payload hash", async () => {
-    const world = await pauseForApproval();
-    world.approvals.setStatus(world.approvalId, "approved");
-    const b = resume(world);
-
-    await b.loop.execute(b.ctx);
-
-    expect(world.risky.run).not.toHaveBeenCalled();
-    expect(failedCodes(b.rows)).toEqual(["approval_not_granted"]);
-  });
+  // Removed (AGO-47): "fails closed on an approved row until AGO-47 binds approvals to the payload hash". An approved
+  // row now runs the call it is bound to, once. That behaviour and every refusal path are tested in
+  // agent-loop.approvals.grant.test.ts.
 
   it("closes a denied approval as denied", async () => {
     const world = await pauseForApproval();
