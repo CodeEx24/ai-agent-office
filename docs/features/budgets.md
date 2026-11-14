@@ -14,6 +14,27 @@ Three limits keep an agent from spending more than a person agreed to. Each one 
 
 An agent can never raise or change any of these. The wizard and the owner-only functions are the only way to set them.
 
+## Screens
+
+Agent wizard (`AgentWizard.tsx`), limits step: "Daily budget" (US dollars, existing) and the optional "Max tokens per run" (1,000 to 5,000,000; empty keeps the worker default). If the agent is created but the token limit fails to save, the wizard says so and tells the owner not to create the agent again. The saved token limit is not shown anywhere yet (follow-up). A stopped run shows its `budget.exceeded` event in the run history.
+
+## Data flow
+
+```mermaid
+flowchart LR
+  Wizard[AgentWizard.tsx] --> RPC[set_agent_run_limits]
+  Loop[agent-loop.ts] -->|reserve| Guard[createBudgetGuard]
+  Guard --> Store[createPgBudgetStore]
+  Store --> Ledger[(budgets_usage)]
+  Guard -->|refused| Loop
+  Loop --> Stop[budget.exceeded + run.stopped]
+  Guard -->|allowed| Loop
+  Loop --> Model[provider.complete]
+  Model -->|usage| Settle[guard.settle]
+  Settle --> Store
+  Stop --> Events[(run_events)]
+```
+
 ## How a call is checked
 
 1. **Before the call.** The worker estimates the *worst case* cost of the call: the prompt (estimated at 3 characters per token, so it is over- rather than under-counted) plus the **whole output allowance** (`maxOutputTokens`). It holds that amount against the agent's daily row and the workspace's monthly row in one atomic step. If either does not fit, nothing is held, the model is **not called**, and the run stops.
@@ -41,7 +62,7 @@ Plain-language texts for every code are in `BUDGET_STOP_MESSAGES` (`packages/sha
 
 ## Numbers
 
-- **Platform monthly cap: 100,000 cents ($1,000.00)**, the constant `WORKSPACE_MONTHLY_BUDGET_CAP_CENTS` in `packages/shared`. A workspace with no monthly budget uses the cap. An owner may only **lower** it; a stored value above the cap is clamped to it.
+- **Platform monthly cap: 100,000 cents ($1,000.00)**, the constant `WORKSPACE_MONTHLY_BUDGET_CAP_CENTS` in `packages/shared`. A workspace with no monthly budget uses the cap. An owner may only **lower** it; a stored value above the cap is clamped to it **when it is read** (`effectiveMonthlyBudgetCents`, and `least(...)` in the store's SQL), not rejected when it is saved. This is accepted by the owner (2026-11-14): it fails safe, nothing can spend above the cap. A database CHECK on the column is a follow-up.
 - **Daily budget:** an agent with no stored budget gets the wizard default of 500 cents ($5.00). The platform ceiling for one agent is 5,000 cents ($50.00).
 - **Periods** are UTC days and UTC months.
 - **Money is whole cents, rounded up** per call, so the ledger can over-count by up to 1 cent per call and never under-counts.
@@ -63,6 +84,17 @@ No migration. The existing `public.budgets_usage` table is the ledger: one row p
 
 The reserve is one conditional upsert per row (`insert ... on conflict do update ... where used + amount <= limit`), both rows in one transaction, so two runs cannot both take the last cents.
 
+## Main functions and files
+
+| Function / component | File | Role |
+|---|---|---|
+| `createAgentLoop` (reserve block, `stopForBudget`) | `apps/worker/src/agent/agent-loop.ts` | Reserves before each call, settles after, appends stop events |
+| `createBudgetGuard` | `apps/worker/src/budget/budget-guard.ts` | `reserve`, `settle`, `release`, `chargeReserved`; denies on missing price or ledger error |
+| `createPgBudgetStore` | `apps/worker/src/budget/budget-store.ts` | Atomic conditional upsert of the day and month rows |
+| `worstCaseCostCents`, `costCents`, `MODEL_PRICES` | `packages/shared/src/budget/budget.ts` | Price maths and the placeholder price table |
+| `effectiveDailyBudgetCents`, `effectiveMonthlyBudgetCents` | `packages/shared/src/budget/budget.ts` | The limit that applies, with the cap clamp |
+| `parseMaxTokens`, `agentMaxTokensSchema` | `packages/shared/src/agents/` | Wizard field validation |
+
 ## Boundaries
 
 - The agent loop (`apps/worker/src/agent/agent-loop.ts`) calls the guard; the guard (`apps/worker/src/budget/`) decides; the loop writes the events.
@@ -73,5 +105,13 @@ The reserve is one conditional upsert per row (`insert ... on conflict do update
 
 - The estimate uses a rough 3-characters-per-token rule, so a very large prompt can be refused slightly early. That is the safe side.
 - Prices are static and manual until a pricing source exists.
+- **Unknown-outcome charge rule.** When a call fails without an HTTP status from the provider, it is charged at the full held amount and `call_outcome_unknown_charged` is recorded. Any cost above the hold is not recorded on that path.
 - A call that the worker abandons mid-flight (a crash or an abort) keeps its reservation, so the ledger over-counts rather than under-counts.
 - There is no screen yet to set the workspace monthly budget or to browse usage; owners set it in the database for now (follow-up).
+
+## How to extend it
+
+- **A new model:** add it to `AGENT_MODELS` and to `MODEL_PRICES` (a test fails otherwise). Replace the placeholder prices with the real list.
+- **A new stop reason:** add it to `BUDGET_STOP_REASONS` and `BUDGET_STOP_MESSAGES` in `budget.ts`, then emit it from the loop or guard.
+- **A new limit scope:** add a `BudgetScope`, a ledger row, and a check in `reserve` in `budget-store.ts`.
+- **Workspace monthly budget screen:** write `cost_budget_cents` on the workspace row through an owner-only function; the cap clamp still applies.

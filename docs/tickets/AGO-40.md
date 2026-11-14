@@ -57,6 +57,8 @@ the workspace cap are never accepted and an agent can never raise its own budget
 - **Ask first:** a migration (schema slot is held by AGO-89), edits to `agent-loop.ts` beyond the one hook, new dependencies.
 - **Never:** let an agent set or raise a budget; clamp an over-cap budget instead of rejecting it; make a real model call
   in a test; edit approvals code (AGO-47).
+  - **Owner decision 2026-11-14 (via orchestrator, standing recommended-option rule):** read-time clamp accepted; DB CHECK
+    on the workspace monthly cap is a follow-up.
 
 ## API changes
 None public. New shared types/schemas: price table, `budget.exceeded` event, wizard field.
@@ -112,6 +114,10 @@ None changes behaviour the owner decided; each is a detail the record left open.
 - **Max tokens per run is optional in the AGO-89 edit draft (`AgentDraftText.maxTokens?`).** The edit form does not show
   the field, so an edit leaves the stored override alone (`run_limits` has no column grant for owners). This keeps the
   AGO-89 tests unchanged. Showing the field on the edit form is a follow-up.
+- **Owner decision 2026-11-14 (via orchestrator, standing recommended-option rule):** the read-time clamp of an over-cap
+  workspace monthly budget to the 100,000-cent cap is accepted, instead of the rejection at save that the record's
+  Boundaries and Overview specify. It fails safe: nothing can spend above the cap. A database CHECK on the workspace
+  monthly cap is a follow-up.
 - **Duplicate does not copy the run token limit.** `duplicate_agent` runs as the caller and `run_limits` is not copied
   (AGO-166 migration comment), so a copy starts with the worker default. The owner must set the limit again.
 
@@ -121,6 +127,8 @@ budget. Replace the static price table with a verified source.
 
 ## Outcome
 (pending: closed at merge)
+
+Feature guide: [docs/features/budgets.md](../features/budgets.md)
 
 Follow-ups found in review, each for the owner to ticket (none created by this ticket):
 
@@ -133,3 +141,9 @@ Follow-ups found in review, each for the owner to ticket (none created by this t
   amount is booked as spent and any excess is not recorded. Hardening: divide by 1 and add a fixed per-request overhead,
   which makes reservations larger and needs the owner's view on the trade-off.
 - **`MODEL_PRICES` are placeholders** and need an owner review against the real price list.
+- **Database CHECK on the workspace monthly cap** in a later migration (the read-time clamp is accepted for now; see
+  Deviations). Needs the schema slot.
+- **Verify whether a provider 5xx after a billed request can be released.** The reviewer-security round 2 question: the
+  current code releases the hold only for a provider error with a status, so a 5xx may under-count. The conservative
+  option releases only on 4xx/429. Needs a provider-behaviour check before changing it.
+- **A screen for the workspace monthly budget.** Today an owner can only set `cost_budget_cents` through the database.
