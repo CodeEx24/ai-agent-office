@@ -110,7 +110,9 @@ describe("invariant 1: the tool runs in no path that is not an approval it honou
     expect(world.risky.run).not.toHaveBeenCalled();
   });
 
-  it.each(["approved", "consumed", "APPROVED", "", "something_new"])(
+  // "approved" is no longer here: since AGO-47 an approved row runs the call it is bound to (and only that call).
+  // Its refusal paths are in agent-loop.approvals.grant.test.ts.
+  it.each(["consumed", "APPROVED", "", "something_new"])(
     "does not run a resumed call whose approval status is %j",
     async (status) => {
       const world = await pause();
@@ -124,7 +126,7 @@ describe("invariant 1: the tool runs in no path that is not an approval it honou
     },
   );
 
-  it("does not run an approved row that is also past its expiry (approved is not honoured before AGO-47)", async () => {
+  it("does not run an approved row that is also past its expiry, and says it expired (AGO-47)", async () => {
     const world = await pause();
     world.approvals.setStatus(idOf(0), "approved");
     world.clock.now = T0 + TTL_MS * 100;
@@ -133,13 +135,20 @@ describe("invariant 1: the tool runs in no path that is not an approval it honou
     await b.loop.execute(b.ctx);
 
     expect(world.risky.run).not.toHaveBeenCalled();
-    expect(failedCodes(b.rows)).toEqual(["approval_not_granted"]);
+    expect(failedCodes(b.rows)).toEqual(["approval_expired"]);
+    // A human's decision is never rewritten by the worker, and an expired grant is never consumed.
     expect(world.approvals.peek(idOf(0))?.status).toBe("approved");
+    expect(world.approvals.peek(idOf(0))?.consumedAt).toBeNull();
   });
 
-  it.each(["rejected", "denied", "approved"])(
-    "treats a %s row bound to another payload as not granted, never as its own status",
-    async (status) => {
+  it.each([
+    ["rejected", "approval_not_granted"],
+    ["denied", "approval_not_granted"],
+    // An approved row for another payload is a changed payload, and is reported as such (AGO-47).
+    ["approved", "approval_payload_mismatch"],
+  ])(
+    "treats a %s row bound to another payload as refused (%s), never as its own status",
+    async (status, expectedCode) => {
       const world = await pause();
       const mismatched = createMemoryApprovalStore();
       await mismatched.create({
@@ -157,7 +166,7 @@ describe("invariant 1: the tool runs in no path that is not an approval it honou
       await b.loop.execute(b.ctx);
 
       expect(world.risky.run).not.toHaveBeenCalled();
-      expect(failedCodes(b.rows)).toEqual(["approval_not_granted"]);
+      expect(failedCodes(b.rows)).toEqual([expectedCode]);
     },
   );
 
@@ -465,6 +474,7 @@ describe("invariant 4: a retry meets the same row, and a conflicting row is neve
         "action",
         "agentId",
         "approvalId",
+        "consumedAt",
         "expiresAt",
         "payloadHash",
         "runId",

@@ -127,16 +127,48 @@ isOneToOne: false
       referencedColumns: ["workspace_id","id"]
     }
                   ]
-                },"agents": {
+                },"agent_versions": {
                   Row: {
-                    "archived_at": string | null,"created_at": string,"daily_budget_cents": number | null,"department_id": string | null,"description": string,"id": string,"mode": string,"model": string,"name": string,"prompt": string,"role": string,"run_limits": Json | null,"status": string,"updated_at": string,"workspace_id": string
+                    "agent_id": string,"change_kind": string,"changed_by": string | null,"changed_fields": (string)[],"created_at": string,"daily_budget_cents": number | null,"id": string,"model": string,"name": string,"prompt": string,"role": string,"thinking_effort": string,"version": number,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "archived_at"?: string | null,"created_at"?: string,"daily_budget_cents"?: number | null,"department_id"?: string | null,"description"?: string,"id"?: string,"mode"?: string,"model"?: string,"name": string,"prompt"?: string,"role"?: string,"run_limits"?: Json | null,"status"?: string,"updated_at"?: string,"workspace_id": string
+                    "agent_id": string,"change_kind": string,"changed_by"?: string | null,"changed_fields"?: (string)[],"created_at"?: string,"daily_budget_cents"?: number | null,"id"?: string,"model"?: string,"name": string,"prompt"?: string,"role"?: string,"thinking_effort"?: string,"version": number,"workspace_id": string
                   }
                   Update: {
-                    "archived_at"?: string | null,"created_at"?: string,"daily_budget_cents"?: number | null,"department_id"?: string | null,"description"?: string,"id"?: string,"mode"?: string,"model"?: string,"name"?: string,"prompt"?: string,"role"?: string,"run_limits"?: Json | null,"status"?: string,"updated_at"?: string,"workspace_id"?: string
+                    "agent_id"?: string,"change_kind"?: string,"changed_by"?: string | null,"changed_fields"?: (string)[],"created_at"?: string,"daily_budget_cents"?: number | null,"id"?: string,"model"?: string,"name"?: string,"prompt"?: string,"role"?: string,"thinking_effort"?: string,"version"?: number,"workspace_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "agent_versions_workspace_id_agent_id_fkey"
+      columns: ["workspace_id","agent_id"]
+isOneToOne: false
+      referencedRelation: "agents"
+      referencedColumns: ["workspace_id","id"]
+    },{
+      foreignKeyName: "agent_versions_workspace_id_changed_by_fkey"
+      columns: ["workspace_id","changed_by"]
+isOneToOne: false
+      referencedRelation: "members"
+      referencedColumns: ["workspace_id","id"]
+    },{
+      foreignKeyName: "agent_versions_workspace_id_fkey"
+      columns: ["workspace_id"]
+isOneToOne: false
+      referencedRelation: "workspaces"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"agents": {
+                  Row: {
+                    "archived_at": string | null,"created_at": string,"daily_budget_cents": number | null,"department_id": string | null,"description": string,"id": string,"mode": string,"model": string,"name": string,"prompt": string,"role": string,"run_limits": Json | null,"status": string,"thinking_effort": string,"updated_at": string,"version": number,"workspace_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "archived_at"?: string | null,"created_at"?: string,"daily_budget_cents"?: number | null,"department_id"?: string | null,"description"?: string,"id"?: string,"mode"?: string,"model"?: string,"name": string,"prompt"?: string,"role"?: string,"run_limits"?: Json | null,"status"?: string,"thinking_effort"?: string,"updated_at"?: string,"version"?: number,"workspace_id": string
+                  }
+                  Update: {
+                    "archived_at"?: string | null,"created_at"?: string,"daily_budget_cents"?: number | null,"department_id"?: string | null,"description"?: string,"id"?: string,"mode"?: string,"model"?: string,"name"?: string,"prompt"?: string,"role"?: string,"run_limits"?: Json | null,"status"?: string,"thinking_effort"?: string,"updated_at"?: string,"version"?: number,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -231,16 +263,36 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
-                },"claims": {
+                },"claim_events": {
                   Row: {
-                    "agent_id": string,"claimed_at": string,"created_at": string,"expires_at": string | null,"id": string,"released_at": string | null,"run_id": string | null,"task_id": string,"updated_at": string,"workspace_id": string
+                    "agent_id": string,"claim_id": string,"created_at": string,"id": string,"payload": NonNullable<Json>,"task_id": string,"type": string,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "agent_id": string,"claimed_at"?: string,"created_at"?: string,"expires_at"?: string | null,"id"?: string,"released_at"?: string | null,"run_id"?: string | null,"task_id": string,"updated_at"?: string,"workspace_id": string
+                    "agent_id": string,"claim_id": string,"created_at"?: string,"id"?: string,"payload"?: NonNullable<Json>,"task_id": string,"type": string,"workspace_id": string
                   }
                   Update: {
-                    "agent_id"?: string,"claimed_at"?: string,"created_at"?: string,"expires_at"?: string | null,"id"?: string,"released_at"?: string | null,"run_id"?: string | null,"task_id"?: string,"updated_at"?: string,"workspace_id"?: string
+                    "agent_id"?: string,"claim_id"?: string,"created_at"?: string,"id"?: string,"payload"?: NonNullable<Json>,"task_id"?: string,"type"?: string,"workspace_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "claim_events_workspace_id_fkey"
+      columns: ["workspace_id"]
+isOneToOne: false
+      referencedRelation: "workspaces"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"claims": {
+                  Row: {
+                    "agent_id": string,"claim_token": string,"claimed_at": string,"created_at": string,"expires_at": string,"id": string,"release_reason": string | null,"released_at": string | null,"renewed_at": string | null,"run_id": string | null,"task_id": string,"updated_at": string,"workspace_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "agent_id": string,"claim_token"?: string,"claimed_at"?: string,"created_at"?: string,"expires_at"?: string,"id"?: string,"release_reason"?: string | null,"released_at"?: string | null,"renewed_at"?: string | null,"run_id"?: string | null,"task_id": string,"updated_at"?: string,"workspace_id": string
+                  }
+                  Update: {
+                    "agent_id"?: string,"claim_token"?: string,"claimed_at"?: string,"created_at"?: string,"expires_at"?: string,"id"?: string,"release_reason"?: string | null,"released_at"?: string | null,"renewed_at"?: string | null,"run_id"?: string | null,"task_id"?: string,"updated_at"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -303,6 +355,32 @@ isOneToOne: false
                   Relationships: [
                     {
       foreignKeyName: "notes_index_workspace_id_fkey"
+      columns: ["workspace_id"]
+isOneToOne: false
+      referencedRelation: "workspaces"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"pack_events": {
+                  Row: {
+                    "agent_ids": (string)[],"agent_names": (string)[],"checksum": string,"created_at": string,"exported_by": string,"id": string,"kind": string,"skill_count": number,"workspace_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "agent_ids": (string)[],"agent_names": (string)[],"checksum": string,"created_at"?: string,"exported_by": string,"id"?: string,"kind": string,"skill_count": number,"workspace_id": string
+                  }
+                  Update: {
+                    "agent_ids"?: (string)[],"agent_names"?: (string)[],"checksum"?: string,"created_at"?: string,"exported_by"?: string,"id"?: string,"kind"?: string,"skill_count"?: number,"workspace_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "pack_events_workspace_id_exported_by_fkey"
+      columns: ["workspace_id","exported_by"]
+isOneToOne: false
+      referencedRelation: "members"
+      referencedColumns: ["workspace_id","id"]
+    },{
+      foreignKeyName: "pack_events_workspace_id_fkey"
       columns: ["workspace_id"]
 isOneToOne: false
       referencedRelation: "workspaces"
@@ -503,14 +581,50 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            "create_agent":
+            "archive_agent":
+{ Args: { "p_agent_id": string,"p_workspace_id": string }; Returns: undefined
+                           },
+"claim_task":
+{ Args: { "p_agent_id": string,"p_run_id"?: string,"p_task_id": string,"p_ttl_seconds"?: number,"p_workspace_id": string }; Returns: {
+              "claim_id": string,"claim_token": string,"expires_at": string,"holder_agent_id": string,"outcome": string,"reason": string
+            }[]
+                           },
+"create_agent":
 { Args: { "p_capabilities": Json,"p_daily_budget_cents": number,"p_model": string,"p_name": string,"p_prompt": string,"p_role": string,"p_skill_ids": (string)[],"p_workspace_id": string }; Returns: string
+                           },
+"duplicate_agent":
+{ Args: { "p_agent_id": string,"p_name": string,"p_workspace_id": string }; Returns: string
                            },
 "onboard_current_user":
 { Args: { "p_workspace_name": string }; Returns: string
                            },
+"record_agent_approval_rejection":
+{ Args: { "p_agent_id": string,"p_jti": string,"p_method": string,"p_route": string,"p_run_id": string,"p_workspace_id": string }; Returns: undefined
+                           },
+"record_pack_export":
+{ Args: { "p_agent_ids": (string)[],"p_checksum": string,"p_skill_count": number,"p_workspace_id": string }; Returns: string
+                           },
+"release_claim":
+{ Args: { "p_claim_id": string,"p_claim_token": string,"p_reason"?: string,"p_workspace_id": string }; Returns: {
+              "outcome": string,"reason": string
+            }[]
+                           },
+"renew_claim":
+{ Args: { "p_claim_id": string,"p_claim_token": string,"p_ttl_seconds"?: number,"p_workspace_id": string }; Returns: {
+              "expires_at": string,"outcome": string,"reason": string
+            }[]
+                           },
 "set_agent_run_limits":
 { Args: { "p_agent_id": string,"p_limits": Json,"p_workspace_id": string }; Returns: undefined
+                           },
+"sweep_expired_claims":
+{ Args: { "p_workspace_id"?: string }; Returns: number
+                           },
+"unarchive_agent":
+{ Args: { "p_agent_id": string,"p_workspace_id": string }; Returns: undefined
+                           },
+"update_agent":
+{ Args: { "p_agent_id": string,"p_daily_budget_cents": number,"p_expected_version": number,"p_model": string,"p_name": string,"p_prompt": string,"p_role": string,"p_thinking_effort": string,"p_workspace_id": string }; Returns: number
                            }
           }
           Enums: {

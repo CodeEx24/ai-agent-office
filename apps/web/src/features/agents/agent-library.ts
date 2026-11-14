@@ -6,6 +6,7 @@ import {
   lintTrifecta,
   resolveCapabilityGrants,
   type AgentField,
+  type AgentVersion,
   type Capability,
   type CreateAgentInput,
   type Skill,
@@ -15,6 +16,7 @@ import { createSupabaseServerClient } from "../../lib/supabase/server";
 import { listCapabilities } from "../capabilities/capability-catalog";
 import { listSkills } from "../skills/skill-library";
 import { requireWorkspaceRole } from "../workspaces/workspace-access";
+import type { EditableAgent } from "./AgentEditForm";
 
 export type AgentLibraryErrorCode = "name_taken" | "invalid" | "not_found" | "forbidden" | "failed";
 
@@ -50,16 +52,19 @@ export interface AgentCreator {
   createAgent(input: CreateAgentInput): Promise<{ id: string }>;
 }
 
-/** Active agents, by name. Members and viewers may read. */
-export async function listAgents(workspaceId: string): Promise<AgentSummary[]> {
+async function listAgentsByState(
+  workspaceId: string,
+  isArchived: boolean,
+): Promise<AgentSummary[]> {
   const access = await requireWorkspaceRole(workspaceId, "viewer");
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
+  const query = supabase
     .from("agents")
     .select("id, name, role, model, mode, daily_budget_cents")
-    .eq("workspace_id", access.workspaceId)
-    .is("archived_at", null)
-    .order("name", { ascending: true });
+    .eq("workspace_id", access.workspaceId);
+  const { data, error } = await (
+    isArchived ? query.not("archived_at", "is", null) : query.is("archived_at", null)
+  ).order("name", { ascending: true });
   if (error) throw new AgentLibraryError("failed");
   return data.map((row) => ({
     id: row.id,
@@ -69,6 +74,84 @@ export async function listAgents(workspaceId: string): Promise<AgentSummary[]> {
     mode: row.mode,
     dailyBudgetCents: row.daily_budget_cents,
   }));
+}
+
+/** Active agents, by name. Members and viewers may read. */
+export async function listAgents(workspaceId: string): Promise<AgentSummary[]> {
+  return listAgentsByState(workspaceId, false);
+}
+
+/** Archived agents (AGO-89), by name. They cannot receive tasks; an owner can unarchive them. */
+export async function listArchivedAgents(workspaceId: string): Promise<AgentSummary[]> {
+  return listAgentsByState(workspaceId, true);
+}
+
+/** One agent's editable settings and its version history, newest first (AGO-89). Members and viewers may read. */
+export async function getAgentDetail(
+  workspaceId: string,
+  agentId: string,
+): Promise<{ agent: EditableAgent; versions: AgentVersion[] }> {
+  const access = await requireWorkspaceRole(workspaceId, "viewer");
+  const supabase = await createSupabaseServerClient();
+  const [agentResult, versionsResult, membersResult] = await Promise.all([
+    supabase
+      .from("agents")
+      .select(
+        "id, name, role, model, thinking_effort, prompt, daily_budget_cents, version, archived_at",
+      )
+      .eq("workspace_id", access.workspaceId)
+      .eq("id", agentId)
+      .maybeSingle(),
+    supabase
+      .from("agent_versions")
+      .select(
+        "version, change_kind, changed_fields, name, role, model, thinking_effort, prompt, daily_budget_cents, changed_by, created_at",
+      )
+      .eq("workspace_id", access.workspaceId)
+      .eq("agent_id", agentId)
+      .order("version", { ascending: false }),
+    supabase.from("members").select("id, user_id, role").eq("workspace_id", access.workspaceId),
+  ]);
+  if (agentResult.error || versionsResult.error || membersResult.error) {
+    throw new AgentLibraryError("failed");
+  }
+  const row = agentResult.data;
+  if (!row) throw new AgentLibraryError("not_found");
+
+  // Members carry no display name yet: say "You" for the viewer, otherwise the role of the person.
+  const memberLabel = new Map(
+    membersResult.data.map((member) => [
+      member.id,
+      member.user_id === access.userId ? "You" : `A workspace ${member.role}`,
+    ]),
+  );
+  const versions = versionsResult.data.map((version) => ({
+    version: version.version,
+    changeKind: version.change_kind as AgentVersion["changeKind"],
+    changedFields: version.changed_fields as AgentVersion["changedFields"],
+    name: version.name,
+    role: version.role,
+    model: version.model,
+    thinkingEffort: version.thinking_effort,
+    prompt: version.prompt,
+    dailyBudgetCents: version.daily_budget_cents,
+    changedByName: version.changed_by ? (memberLabel.get(version.changed_by) ?? null) : null,
+    createdAt: version.created_at,
+  }));
+  return {
+    agent: {
+      id: row.id,
+      name: row.name,
+      role: row.role,
+      model: row.model,
+      thinkingEffort: row.thinking_effort,
+      prompt: row.prompt,
+      dailyBudgetCents: row.daily_budget_cents,
+      version: row.version,
+      isArchived: row.archived_at !== null,
+    },
+    versions,
+  };
 }
 
 /** Skills and capabilities for the wizard. Owners only: it is part of the create flow. */

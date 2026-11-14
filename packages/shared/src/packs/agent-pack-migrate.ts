@@ -1,4 +1,11 @@
-import { agentPackSchema, PACK_VERSION, type AgentPack } from "./agent-pack-schemas.js";
+import type { z } from "zod";
+
+import {
+  agentPackSchema,
+  findSecretShape,
+  PACK_VERSION,
+  type AgentPack,
+} from "./agent-pack-schemas.js";
 
 /**
  * Pack versions and the single entry point that reads a pack (AGO-191). Export writes `PACK_VERSION`;
@@ -76,9 +83,34 @@ export function migrateAgentPack(
   return { ok: true, pack, fromVersion: version };
 }
 
-/** Dotted path of a Zod issue (`agents.0.name`). */
+/** Shown instead of a path segment (a field name) that looks like a secret. */
+const REDACTED_SEGMENT = "(secret-looking name)";
+
+/** Dotted path of a Zod issue (`agents.0.name`). A secret-shaped field name is never written into a path. */
 export function formatPackPath(path: readonly PropertyKey[]): string {
-  return path.map((segment) => String(segment)).join(".");
+  return path
+    .map((segment) => {
+      const text = String(segment);
+      return typeof segment === "string" && findSecretShape(text) ? REDACTED_SEGMENT : text;
+    })
+    .join(".");
+}
+
+/**
+ * The one place a Zod issue becomes a pack issue, shared by the API, the CLI and export. An unrecognized field
+ * is reported as the parent path plus a count and never by name: pack text is untrusted and a field name can be
+ * a pasted secret. Other messages are Zod's own, which never carry the offending value.
+ */
+export function formatPackIssue(issue: z.core.$ZodIssue): PackIssue {
+  const path = formatPackPath(issue.path);
+  if (issue.code === "unrecognized_keys") {
+    const count = issue.keys.length;
+    return {
+      path,
+      message: `${String(count)} unrecognized field${count === 1 ? "" : "s"}.`,
+    };
+  }
+  return { path, message: issue.message };
 }
 
 /** Migrate, then validate. Unknown fields, wrong types and secret-looking values come back with their path. */
@@ -92,10 +124,7 @@ export function parseAgentPack(
   if (!parsed.success) {
     return {
       ok: false,
-      issues: parsed.error.issues.map((issue) => ({
-        path: formatPackPath(issue.path),
-        message: issue.message,
-      })),
+      issues: parsed.error.issues.map(formatPackIssue),
     };
   }
   return { ok: true, pack: parsed.data, fromVersion: migrated.fromVersion };

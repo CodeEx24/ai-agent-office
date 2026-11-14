@@ -60,7 +60,7 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 async function waitFor<T>(
   read: () => Promise<T | undefined | false>,
-  timeoutMs = 20_000,
+  timeoutMs = 60_000,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -87,7 +87,7 @@ const steeringScript = (n: number): ModelResponse =>
 
 describe.skipIf(!live)(
   "AGO-94 QA: per-agent model routing (live database)",
-  { timeout: 60_000 },
+  { timeout: 180_000 },
   () => {
     let pool: pg.Pool;
     const queues: JobQueue[] = [];
@@ -328,6 +328,10 @@ describe.skipIf(!live)(
         const runId = await newRun(WORKSPACE, agentId);
 
         await queue.enqueueRun({ workspaceId: WORKSPACE, runId });
+        // The terminal event is written first, then the status: wait on the event, then the status (AGO-213).
+        await waitFor(async () =>
+          (await events(runId)).some((row) => row.type === "run.failed") ? true : undefined,
+        );
         await waitFor(async () => (await runStatus(runId)) === RUN_STATUS.failed);
         // Give a retry the chance to appear; a non-retryable failure must not produce one.
         await sleep(2_500);

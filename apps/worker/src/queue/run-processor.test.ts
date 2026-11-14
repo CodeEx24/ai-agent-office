@@ -47,6 +47,7 @@ function fakeRunStore(initial: string = RUN_STATUS.queued) {
       if (isPaused) state.status = RUN_STATUS.queued;
       return Promise.resolve(isPaused);
     },
+    wakeRunAfterExpiry: () => Promise.resolve(false),
     revertResume: () => {
       if (state.status === RUN_STATUS.queued) state.status = RUN_STATUS.paused;
       return Promise.resolve();
@@ -173,6 +174,34 @@ describe("run processor", () => {
       workspace_id: WORKSPACE,
       agent_id: AGENT,
     });
+  });
+
+  it("appends run.failed before the run turns failed, so a reader of the status never misses it (AGO-213)", async () => {
+    const execute = vi.fn(() => Promise.reject(new Error("tool exploded")));
+    const { runs, events, process } = setup({ execute });
+    const statusWhenEventWritten: Record<string, string> = {};
+    const insert = events.store.insert.bind(events.store);
+    events.store.insert = (row) => {
+      statusWhenEventWritten[row.type] = runs.state.status;
+      return insert(row);
+    };
+
+    await expect(process(job({ retryCount: 2 }))).rejects.toThrow("tool exploded");
+
+    expect(statusWhenEventWritten["run.failed"]).toBe(RUN_STATUS.running);
+    expect(runs.state.status).toBe(RUN_STATUS.failed);
+  });
+
+  it("still marks the run failed when the run.failed event cannot be written (AGO-213)", async () => {
+    const execute = vi.fn(() => Promise.reject(new Error("tool exploded")));
+    const { runs, events, process } = setup({ execute });
+    const insert = events.store.insert.bind(events.store);
+    events.store.insert = (row) =>
+      row.type === "run.failed" ? Promise.reject(new Error("db down")) : insert(row);
+
+    await expect(process(job({ retryCount: 2 }))).rejects.toThrow("tool exploded");
+
+    expect(runs.state.status).toBe(RUN_STATUS.failed);
   });
 
   it("scrubs secrets out of the stored failure message", async () => {

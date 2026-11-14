@@ -1,5 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import {
+  isApprovalRoute,
+  recordAgentRouteRejection,
+} from "./features/approvals/record-agent-rejection";
 import { isProtectedPath, signInPathFor } from "./features/auth/routes";
 import { getSentryDsn, getSupabaseUrl, shouldTrustProxyHeaders } from "./lib/env";
 import {
@@ -47,6 +51,14 @@ export async function proxy(request: NextRequest) {
   // AGO-148: an agent credential is never a human session. Refused before any session or limiter work.
   const agentDenied = rejectAgentCredential(request);
   if (agentDenied) {
+    // AGO-58: on an approval route the refusal also leaves an audit event (signature-checked, fixed shape).
+    if (isApprovalRoute(request.nextUrl.pathname)) {
+      await recordAgentRouteRejection({
+        headers: request.headers,
+        pathname: request.nextUrl.pathname,
+        method: request.method,
+      });
+    }
     const denied = new NextResponse(agentDenied.body, {
       status: agentDenied.status,
       headers: agentDenied.headers,

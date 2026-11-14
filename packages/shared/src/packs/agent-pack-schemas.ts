@@ -151,6 +151,21 @@ function* walkStrings(
   }
 }
 
+/** Every object key in the value, with the path of the object that holds it (the key itself is not in the path). */
+function* walkKeys(
+  value: unknown,
+  path: PathSegment[] = [],
+): Generator<{ path: PathSegment[]; key: string }> {
+  if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) yield* walkKeys(item, [...path, index]);
+  } else if (typeof value === "object" && value !== null) {
+    for (const [key, item] of Object.entries(value)) {
+      yield { path, key };
+      yield* walkKeys(item, [...path, key]);
+    }
+  }
+}
+
 /** A name for an issue message. A secret-shaped name is never echoed: pack text is untrusted and issues get logged. */
 function quoteName(name: string): string {
   return findSecretShape(name) ? "(a value that looks like a secret)" : `"${name}"`;
@@ -231,6 +246,15 @@ function refinePack(pack: PackBody, ctx: z.RefinementCtx): void {
     }
   }
 
+  // Field names are untrusted text too: report where, never the name.
+  for (const { path, key } of walkKeys(pack)) {
+    if (key.length > MAX_SCANNED_TEXT_LENGTH) continue;
+    const label = findSecretShape(key);
+    if (label) {
+      addIssue(ctx, path, `A field name looks like a ${label}. A pack never holds secret values.`);
+    }
+  }
+
   for (const { path, text } of walkStrings(pack)) {
     // A string past the largest field limit already has a length issue, so the pack is rejected
     // anyway: do not spend scan time on it.
@@ -246,12 +270,29 @@ function refinePack(pack: PackBody, ctx: z.RefinementCtx): void {
   }
 }
 
+export const PACK_CHECKSUM_ALGORITHM = "sha256";
+
+/**
+ * Integrity checksum of the pack content (AGO-192). Optional so every v1 pack written before export existed
+ * stays valid. What is hashed: the UTF-8 bytes of the canonical JSON (object keys sorted, no whitespace, no
+ * trailing newline) of this same pack with the `checksum` field removed. `exportedAt` is part of those bytes.
+ * It detects accidental change and tampering with a pack that kept its checksum; it is not a signature (AGO-199).
+ */
+export const packChecksumSchema = z.strictObject({
+  algorithm: z.literal(PACK_CHECKSUM_ALGORITHM),
+  /** Lowercase hex SHA-256 digest. */
+  value: z.string().regex(/^[0-9a-f]{64}$/, "Expected a lowercase SHA-256 hex digest."),
+});
+export type PackChecksum = z.infer<typeof packChecksumSchema>;
+
 export const agentPackSchema = z
   .strictObject({
     /** Lets editors find the JSON Schema. Optional and ignored. */
     $schema: z.string().max(300).optional(),
     /** Required. Older versions are upgraded by `migrateAgentPack` before this schema is applied. */
     packVersion: z.literal(PACK_VERSION),
+    /** Optional integrity checksum written by export; see `packChecksumSchema` for exactly what it covers. */
+    checksum: packChecksumSchema.optional(),
     metadata: packMetadataSchema,
     agents: z.array(packAgentSchema).max(MAX_PACK_AGENTS),
     skills: z.array(packSkillSchema).max(MAX_PACK_SKILLS),

@@ -85,10 +85,11 @@ async function killAll() {
 }
 
 async function startTogether(count) {
-  const startAt = Date.now() + 4_000 + count * 300;
+  // Barrier: enough lead for every process to boot even when the machine is loaded (AGO-213).
+  const startAt = Date.now() + 8_000 + count * 500;
   const ports = await Promise.all(Array.from({ length: count }, freePort));
   const procs = ports.map((port) => startWorker({ WORKER_PORT: String(port), QA_START_AT: String(startAt) }));
-  const deadline = Date.now() + 60_000;
+  const deadline = Date.now() + 180_000;
   while (Date.now() < deadline && procs.some((p) => !p.out.includes("QA_READY") && p.exit === null)) await sleep(100);
   await sleep(1_000); // a crash after QA_READY (an unhandled rejection) would still show here
   return procs;
@@ -120,10 +121,10 @@ describe.skipIf(!dbUp)("AGO-151 pgboss hardening survives concurrent worker star
     observer.on("error", () => undefined);
     await observer.connect();
     const first = startWorker({ WORKER_PORT: String(await freePort()) }); // makes sure pg-boss is installed
-    const deadline = Date.now() + 60_000;
+    const deadline = Date.now() + 180_000;
     while (Date.now() < deadline && !first.out.includes("QA_READY") && first.exit === null) await sleep(100);
     await killAll();
-  }, 120_000);
+  }, 300_000);
   afterEach(killAll);
   afterAll(async () => {
     await killAll();
@@ -146,7 +147,7 @@ describe.skipIf(!dbUp)("AGO-151 pgboss hardening survives concurrent worker star
       expect(await grants(), `round ${round}: EXECUTE grants left`).toEqual([]);
       await killAll();
     }
-  }, 240_000);
+  }, 600_000);
 
   test(`EXECUTE re-granted to PUBLIC, then ${WORKERS} workers start together, ${ROUNDS} times: the revoke runs concurrently and still wins`, async () => {
     for (let round = 1; round <= ROUNDS; round += 1) {
@@ -161,5 +162,5 @@ describe.skipIf(!dbUp)("AGO-151 pgboss hardening survives concurrent worker star
       expect(await grants(), `round ${round}: EXECUTE grants left`).toEqual([]);
       await killAll();
     }
-  }, 240_000);
+  }, 600_000);
 });

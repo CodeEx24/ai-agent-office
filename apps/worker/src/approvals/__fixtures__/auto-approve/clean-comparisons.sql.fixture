@@ -1,0 +1,24 @@
+-- CLEAN: every comparison form against approved, plus a real assignment of another value. Must report nothing.
+create or replace function public.guard_comparisons() returns trigger
+language plpgsql as $$
+begin
+  if new.status = 'approved' and old.expires_at <= now() then
+    raise exception 'expired';
+  elsif new.status = 'approved' then
+    return new;
+  end if;
+  new.status = 'rejected';
+  return new;
+end;
+$$;
+
+create trigger approvals_guard before update on public.approvals
+  for each row when (new.status = 'approved') execute function public.guard_comparisons();
+
+select case when status = 'approved' then 'granted' else 'waiting' end from public.approvals;
+
+update public.approvals
+   set status = case when status = 'approved' then 'rejected' else status end
+ where status = 'approved' and expires_at <= now();
+
+select id from public.approvals where status = 'approved';

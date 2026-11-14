@@ -324,7 +324,8 @@ describe.skipIf(!live)("AGO-21 approval invariants (live database)", { timeout: 
 
     expect(approved.risky.run).not.toHaveBeenCalled();
     expect(denied.risky.run).not.toHaveBeenCalled();
-    expect(failedCodes(a.rows)).toEqual(["approval_not_granted"]);
+    // AGO-47: the approved row is past its limit here (LATE), so the refusal names the expiry, not "not granted".
+    expect(failedCodes(a.rows)).toEqual(["approval_expired"]);
     expect(failedCodes(d.rows)).toEqual(["approval_denied"]);
     expect(await statusOf(idOf(approved.runId))).toBe("approved");
     expect(await statusOf(idOf(denied.runId))).toBe("denied");

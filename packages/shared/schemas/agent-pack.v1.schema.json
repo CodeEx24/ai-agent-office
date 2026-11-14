@@ -10,6 +10,21 @@
       "type": "number",
       "const": 1
     },
+    "checksum": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "sha256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": ["algorithm", "value"],
+      "additionalProperties": false
+    },
     "metadata": {
       "type": "object",
       "properties": {

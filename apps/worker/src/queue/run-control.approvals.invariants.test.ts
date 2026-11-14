@@ -25,11 +25,17 @@ async function setup() {
   const state = { status: "paused" };
   const checkpoints = createMemoryCheckpointStore();
   await checkpoints.save(REF, awaitingApprovalState({}));
-  const runs: Pick<RunStore, "resumeRun" | "revertResume"> = {
+  const runs: Pick<RunStore, "resumeRun" | "wakeRunAfterExpiry" | "revertResume"> = {
     resumeRun: () => {
       const isPaused = state.status === "paused";
       if (isPaused) state.status = "queued";
       return Promise.resolve(isPaused);
+    },
+    // One synchronous step, like the conditional SQL update (AGO-58).
+    wakeRunAfterExpiry: () => {
+      const canWake = state.status === "paused" && !checkpoints.isPauseRequestedNow(REF);
+      if (canWake) state.status = "queued";
+      return Promise.resolve(canWake);
     },
     revertResume: () => {
       state.status = "paused";

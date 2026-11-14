@@ -2,7 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { AGENT_TEMPLATE_IDS, createAgentSchema } from "@ago/shared";
+import {
+  AGENT_TEMPLATE_IDS,
+  agentRefSchema,
+  createAgentSchema,
+  duplicateAgentSchema,
+  updateAgentSchema,
+} from "@ago/shared";
 import { z } from "zod";
 
 import { AgentCredentialRejectedError, requireHumanRequest } from "../../lib/auth/human-only";
@@ -16,6 +22,15 @@ import {
   type AgentWizardState,
 } from "./create-agent";
 import { createAgentFromTemplateWith } from "./create-from-template";
+import { agentEditor } from "./agent-editor";
+import {
+  AGENT_CREDENTIAL_EDIT_ERROR,
+  archiveAgentWith,
+  duplicateAgentWith,
+  unarchiveAgentWith,
+  updateAgentWith,
+  type AgentEditState,
+} from "./edit-agent";
 
 const createFromTemplateSchema = z.strictObject({
   workspaceId: z.uuid(),
@@ -84,4 +99,90 @@ export async function createAgentFromTemplateAction(
   if (!result.createdId) return result;
   revalidatePath("/app/agents");
   redirect("/app/agents");
+}
+
+/** AGO-89: changing an agent is a human decision; an agent credential can never call these actions. */
+async function rejectAgentCredentialForEdit(): Promise<AgentEditState | null> {
+  try {
+    await requireHumanRequest();
+    return null;
+  } catch (error) {
+    if (error instanceof AgentCredentialRejectedError) {
+      return { error: AGENT_CREDENTIAL_EDIT_ERROR };
+    }
+    throw error;
+  }
+}
+
+function revalidateAgents(agentId: string): void {
+  revalidatePath("/app/agents");
+  revalidatePath(`/app/agents/${agentId}`);
+}
+
+/**
+ * Saves the edit form (AGO-89). Owners only, enforced again by `agentEditor` and the `update_agent` function.
+ * The version the form was loaded with is sent back; an edit made on an older version is refused, not merged.
+ * Every save writes a version row (the audit trail) in the same transaction.
+ */
+export async function updateAgentAction(
+  _prev: AgentEditState,
+  formData: FormData,
+): Promise<AgentEditState> {
+  const rejected = await rejectAgentCredentialForEdit();
+  if (rejected) return rejected;
+
+  const parsed = parseInput(updateAgentSchema, formDataToRecord(formData), GENERIC_ERROR);
+  if (!parsed.success) return invalidInputState(parsed.issues);
+
+  const result = await updateAgentWith(agentEditor, parsed.data);
+  if (result.done) revalidateAgents(parsed.data.agentId);
+  return result;
+}
+
+/** Duplicates an agent under a new name; the copy starts in Strict mode. Lands on the copy's page. */
+export async function duplicateAgentAction(
+  _prev: AgentEditState,
+  formData: FormData,
+): Promise<AgentEditState> {
+  const rejected = await rejectAgentCredentialForEdit();
+  if (rejected) return rejected;
+
+  const parsed = parseInput(duplicateAgentSchema, formDataToRecord(formData), GENERIC_ERROR);
+  if (!parsed.success) return invalidInputState(parsed.issues);
+
+  const result = await duplicateAgentWith(agentEditor, parsed.data);
+  if (!result.createdId) return result;
+  revalidatePath("/app/agents");
+  redirect(`/app/agents/${result.createdId}`);
+}
+
+/** Archives an agent: it keeps its history but can no longer receive tasks. The owner can unarchive it. */
+export async function archiveAgentAction(
+  _prev: AgentEditState,
+  formData: FormData,
+): Promise<AgentEditState> {
+  const rejected = await rejectAgentCredentialForEdit();
+  if (rejected) return rejected;
+
+  const parsed = parseInput(agentRefSchema, formDataToRecord(formData), GENERIC_ERROR);
+  if (!parsed.success) return invalidInputState(parsed.issues);
+
+  const result = await archiveAgentWith(agentEditor, parsed.data);
+  if (result.done) revalidateAgents(parsed.data.agentId);
+  return result;
+}
+
+export async function unarchiveAgentAction(
+  _prev: AgentEditState,
+  formData: FormData,
+): Promise<AgentEditState> {
+  const rejected = await rejectAgentCredentialForEdit();
+  if (rejected) return rejected;
+
+  const parsed = parseInput(agentRefSchema, formDataToRecord(formData), GENERIC_ERROR);
+  if (!parsed.success) return invalidInputState(parsed.issues);
+
+  const result = await unarchiveAgentWith(agentEditor, parsed.data);
+  if (result.done) revalidateAgents(parsed.data.agentId);
+  return result;
 }

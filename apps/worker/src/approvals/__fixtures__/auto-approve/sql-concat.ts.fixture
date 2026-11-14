@@ -1,0 +1,6 @@
+// PLANTED VIOLATIONS: an UPDATE built with + from a variable bound to 'approved', and one built from literals.
+const GRANTED = "approved";
+
+export const bound = "update public.approvals set status = '" + GRANTED + "' where id = $1";
+
+export const literal = "update public.approvals set status = " + "'approved'" + " where id = $1";

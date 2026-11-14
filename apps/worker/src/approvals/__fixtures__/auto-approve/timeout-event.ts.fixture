@@ -1,0 +1,7 @@
+// PLANTED VIOLATION: a decision event that says the timeout approved, and a timeout handler that runs the call.
+export const event = { type: "approval.decided", payload: { outcome: "approved", decided_by: "timeout" } };
+
+export async function handleApprovalTimeout(run: () => Promise<void>) {
+  await run();
+  return { approved: true };
+}

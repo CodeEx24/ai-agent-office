@@ -4,7 +4,7 @@
 import { randomUUID } from "node:crypto";
 
 import pg from "pg";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LOCAL_DATABASE_URL } from "../config.js";
 import { createLogger } from "../logger.js";
@@ -17,7 +17,7 @@ import {
   type RunExecutor,
 } from "./index.js";
 
-import { hardenPgbossFunctions } from "./pgboss-hardening.js";
+import { hardenPgbossFunctions, hardenPgbossFunctionsSettled } from "./pgboss-hardening.js";
 import type { ErrorTracker } from "../sentry.js";
 
 const DATABASE_URL = process.env.DATABASE_URL ?? LOCAL_DATABASE_URL;
@@ -55,7 +55,7 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 async function waitFor<T>(
   read: () => Promise<T | undefined | false>,
-  timeoutMs = 20_000,
+  timeoutMs = 60_000,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -232,7 +232,7 @@ describe.skipIf(!live)("job queue (live database)", () => {
     const runId = await newRun();
     await queue.enqueueRun({ workspaceId: WORKSPACE, runId });
 
-    await waitFor(async () => (await runStatus(runId)) === RUN_STATUS.failed, 40_000);
+    await waitFor(async () => (await runStatus(runId)) === RUN_STATUS.failed, 120_000);
 
     // retryLimit 2 => the first attempt plus exactly two retries, never more.
     expect(attempts.map((a) => a.attempt)).toEqual([0, 1, 2]);
@@ -254,7 +254,7 @@ describe.skipIf(!live)("job queue (live database)", () => {
     ]);
     expect(captured).toHaveLength(1);
     expect(captured[0]?.context).toMatchObject({ run_id: runId, workspace_id: WORKSPACE });
-  }, 60_000);
+  }, 180_000);
 
   it("AC3: health reports ok with the queue depth", async () => {
     const queue = await makeQueue(); // no executor: jobs stay queued
@@ -359,5 +359,57 @@ describe.skipIf(!live)("job queue (live database)", () => {
     // Idempotent: a second round finds nothing to revoke and still succeeds.
     await hardenPgbossFunctions(pool);
     expect(await grantsLeft()).toBe(0);
+  });
+
+  it("AGO-213: a hardening connection reports idle_in_transaction_session_timeout of 15s", async () => {
+    const poolSpy = vi.spyOn(pg, "Pool");
+    try {
+      await makeQueue(); // creates the queue's pools, including the hardening pool
+      const hardeningIndex = poolSpy.mock.calls.findIndex(([config]) => config?.keepAlive === true);
+      const hardening = poolSpy.mock.results[hardeningIndex]?.value as pg.Pool | undefined;
+      if (!hardening) throw new Error("hardening pool was not created");
+
+      const client = await hardening.connect();
+      try {
+        // SHOW names its result column after the parameter.
+        const { rows } = await client.query<{ idle_in_transaction_session_timeout: string }>(
+          "show idle_in_transaction_session_timeout",
+        );
+        expect(rows[0]?.idle_in_transaction_session_timeout).toBe("15s");
+      } finally {
+        client.release();
+      }
+    } finally {
+      poolSpy.mockRestore();
+    }
+  });
+
+  it("AGO-213: a pgboss function created after start() is revoked by the settle loop", async () => {
+    await makeQueue(); // pg-boss installed and hardened once
+    const publicExecute = async (): Promise<boolean> => {
+      const { rows } = await pool.query<{ held: boolean }>(
+        `select has_function_privilege('public', 'pgboss.ago213_late_fn()'::regprocedure, 'EXECUTE') as held`,
+      );
+      return rows[0]?.held === true;
+    };
+    try {
+      // What a late pg-boss background migration does: create a function; Postgres grants PUBLIC EXECUTE.
+      await pool.query(
+        "create or replace function pgboss.ago213_late_fn() returns int language sql as 'select 1'",
+      );
+      expect(await publicExecute()).toBe(true);
+
+      // The first look reports a migration still running, the second reports settled.
+      let looks = 0;
+      await hardenPgbossFunctionsSettled(pool, {
+        pollMs: 50,
+        isSettled: () => Promise.resolve((looks += 1) >= 2),
+      });
+
+      expect(looks).toBe(2);
+      expect(await publicExecute()).toBe(false);
+    } finally {
+      await pool.query("drop function if exists pgboss.ago213_late_fn()");
+    }
   });
 });

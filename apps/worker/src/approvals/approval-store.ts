@@ -28,6 +28,8 @@ export interface StoredApproval {
   readonly status: string;
   readonly payloadHash: string;
   readonly expiresAt: Date;
+  /** Set once, by `consume`: the approval was used and can never grant again. Null: not used yet. */
+  readonly consumedAt: Date | null;
 }
 
 /** An approval the runtime just moved from `pending` to `rejected`. Returned once, to the one caller that moved it. */
@@ -55,6 +57,18 @@ export interface ApprovalStore {
   ): Promise<ExpiredApproval | null>;
   /** The same move for every pending approval past `expires_at`, oldest first, at most `limit`. */
   expireDue(now: Date, limit: number): Promise<readonly ExpiredApproval[]>;
+  /**
+   * Use an approval (AGO-47), once. One conditional update: it moves only a row of this workspace and run that
+   * is `approved`, not consumed, not past `expires_at`, and whose stored `payloadHash` equals the hash the caller
+   * computed from the exact call about to run. Returns the row it consumed, or null when any condition fails
+   * (null never says which one: `get` and `describeApprovalRefusal` explain it afterwards). Of two callers
+   * racing for one row exactly one gets it. The caller runs the tool only when it got the row.
+   */
+  consume(
+    ref: { workspaceId: string; runId: string; approvalId: string },
+    payloadHash: string,
+    now: Date,
+  ): Promise<StoredApproval | null>;
 }
 
 /** The row for this approval id belongs to a different run or payload. Fail closed. */
@@ -72,6 +86,7 @@ interface ApprovalRow {
   status: string;
   payload_hash: string;
   expires_at: Date;
+  consumed_at: Date | null;
 }
 
 interface ExpiredRow {
@@ -88,6 +103,7 @@ const toStored = (row: ApprovalRow): StoredApproval => ({
   status: row.status,
   payloadHash: row.payload_hash,
   expiresAt: row.expires_at,
+  consumedAt: row.consumed_at,
 });
 
 const toExpired = (row: ExpiredRow): ExpiredApproval => ({
@@ -97,7 +113,8 @@ const toExpired = (row: ExpiredRow): ExpiredApproval => ({
   payloadHash: row.payload_hash,
 });
 
-const SELECT_ONE = `select id, workspace_id, run_id, status, payload_hash, expires_at
+const ROW_COLUMNS = "id, workspace_id, run_id, status, payload_hash, expires_at, consumed_at";
+const SELECT_ONE = `select ${ROW_COLUMNS}
                       from public.approvals where workspace_id = $1 and id = $2`;
 
 export function createPgApprovalStore(pool: pg.Pool): ApprovalStore {
@@ -166,6 +183,20 @@ export function createPgApprovalStore(pool: pg.Pool): ApprovalStore {
         [APPROVAL_STATUS.rejected, APPROVAL_STATUS.pending, now, limit],
       );
       return result.rows.map(toExpired);
+    },
+
+    async consume(ref, payloadHash, now) {
+      // The whole grant is this one statement. The row lock a concurrent update takes makes the loser re-check
+      // `consumed_at is null` after the winner commits, so it matches nothing. Nothing is read first.
+      const result = await pool.query<ApprovalRow>(
+        `update public.approvals set consumed_at = $5
+          where workspace_id = $1 and id = $2 and run_id = $3
+            and status = $6 and consumed_at is null and expires_at > $5 and payload_hash = $4
+          returning ${ROW_COLUMNS}`,
+        [ref.workspaceId, ref.approvalId, ref.runId, payloadHash, now, APPROVAL_STATUS.approved],
+      );
+      const row = result.rows[0];
+      return row === undefined ? null : toStored(row);
     },
   };
 }

@@ -1,0 +1,8 @@
+// PLANTED VIOLATION: SQL strings in TypeScript that set an approval to approved.
+export async function a(client: { query(sql: string, params?: unknown[]): Promise<unknown> }) {
+  await client.query("update public.approvals set status = 'approved' where status = 'pending' and expires_at <= now()");
+}
+
+export async function b(client: { query(sql: string, params?: unknown[]): Promise<unknown> }, id: string) {
+  await client.query("update public.approvals set status = $1, decided_at = now() where id = $2", ["approved", id]);
+}
