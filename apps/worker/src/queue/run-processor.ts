@@ -6,7 +6,9 @@ import {
 import { scrubString, withContext, type Logger } from "../logger.js";
 import { runJobSchema, type RunJobPayload } from "./run-job.js";
 import { RUN_STATUS, type RunStore } from "./run-store.js";
+import { finalizeStop } from "./run-stop.js";
 
+import type { ApprovalStore } from "../approvals/approval-store.js";
 import type { CheckpointStore } from "../agent/checkpoint-store.js";
 import type { ErrorTracker } from "../sentry.js";
 
@@ -32,7 +34,9 @@ export interface RunExecutionContext {
  * `loop_detected` (AGO-166): the loop already emitted `run.loop_detected` after the same tool call repeated with
  * the same result, so the run is marked failed with no `run.completed`, like a limit.
  */
-export type RunEnd = "completed" | "limit_reached" | "paused" | "loop_detected";
+export type RunEnd = "completed" | "limit_reached" | "paused" | "loop_detected" | "stopped";
+// `stopped` (AGO-86): a person's stop request was seen before a tool call. The loop wrote no terminal event: the
+// processor finalizes it (`finalizeStop`): pending approvals closed, `run.stopped`, status `stopped`, checkpoint dropped.
 
 /** Why a run paused: a policy needs an approval, or a human asked for the pause (AGO-30). */
 export type PauseReason = "approval_required" | "user_pause";
@@ -77,7 +81,9 @@ export interface RunProcessorDeps {
   readonly logger: Logger;
   readonly errorTracker: ErrorTracker;
   /** Where the loop saved the run's state (AGO-30). Dropped when the run ends for good; omitted: nothing to drop. */
-  readonly checkpoints?: Pick<CheckpointStore, "clear">;
+  readonly checkpoints?: Pick<CheckpointStore, "clear" | "finishStopTail">;
+  /** AGO-86: where a stop closes the run's pending approvals. Omitted: there is nothing to close. */
+  readonly approvals?: Pick<ApprovalStore, "rejectPendingForRun">;
   /** Retries allowed after the first attempt: the attempt with `retryCount` of this is the last. */
   readonly retryLimit: number;
   /** Matches the job's expiry; a `running` run older than this has lost its worker. */
@@ -195,6 +201,22 @@ export function createRunProcessor(deps: RunProcessorDeps) {
           { job_id: job.id, attempt, steps: outcome.steps },
           "run stopped: loop detected",
         );
+        return "executed";
+      }
+      if (end === "stopped") {
+        await finalizeStop(
+          {
+            runs,
+            events,
+            logger: jobLogger,
+            ...(deps.approvals === undefined ? {} : { approvals: deps.approvals }),
+            ...(deps.checkpoints === undefined ? {} : { checkpoints: deps.checkpoints }),
+          },
+          ref,
+          ["running"],
+          emitter,
+        );
+        jobLogger.info({ job_id: job.id, attempt, steps: outcome.steps }, "run stopped by a human");
         return "executed";
       }
       if (end === "paused") {

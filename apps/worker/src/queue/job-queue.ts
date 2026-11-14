@@ -5,6 +5,7 @@ import { createApprovalExpirySweeper, createPgApprovalStore } from "../approvals
 import { createPgRunEventStore, createRunEventEmitter } from "../events/index.js";
 import { withContext, type Logger } from "../logger.js";
 import { hardenPgbossFunctions } from "./pgboss-hardening.js";
+import { createControlSweeper } from "./run-control-sweep.js";
 import {
   DEFAULT_RUN_RETRY_POLICY,
   idempotencyKeySchema,
@@ -153,6 +154,19 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
     },
   });
 
+  // AGO-86: applies a person's stop or resume request to runs that have no loop running (queued or paused).
+  const controlSweeper = createControlSweeper({
+    runs,
+    approvals,
+    checkpoints,
+    events,
+    control,
+    logger,
+    onError: (error, context) => {
+      errorTracker.captureException(error, context);
+    },
+  });
+
   let state: QueueState = "starting";
   const isStopped = (): boolean => state === "stopped";
   let boss: PgBoss | null = null;
@@ -205,6 +219,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
           logger,
           errorTracker,
           checkpoints,
+          approvals,
           retryLimit: policy.retryLimit,
           staleAfterSeconds: policy.expireInSeconds,
         });
@@ -232,7 +247,10 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
     boss = instance;
     state = "ready";
     // Only a worker that runs agents can have runs waiting on an approval.
-    if (options.executor !== undefined) approvalSweeper.start();
+    if (options.executor !== undefined) {
+      approvalSweeper.start();
+      controlSweeper.start();
+    }
     logger.info({ queue: runQueue, consumer: options.executor !== undefined }, "job queue started");
   }
 
@@ -342,6 +360,7 @@ export function createJobQueue(options: JobQueueOptions): JobQueue {
     async stop() {
       state = "stopped";
       approvalSweeper.stop();
+      controlSweeper.stop();
       if (retryTimer !== null) clearTimeout(retryTimer);
       retryTimer = null;
       await starting?.catch(() => undefined);

@@ -7,7 +7,12 @@ export const RUN_STATUS = {
   paused: "paused",
   succeeded: "succeeded",
   failed: "failed",
+  /** AGO-86: a person stopped the run. Final: no transition leaves it. */
+  stopped: "stopped",
 } as const;
+
+/** The states a stop can move a run out of. */
+export type StoppableStatus = "queued" | "running" | "paused";
 
 export interface RunRef {
   readonly workspaceId: string;
@@ -55,6 +60,13 @@ export interface RunStore {
   wakeRunAfterExpiry(ref: RunRef): Promise<boolean>;
   /** `queued` -> `paused`: undo `resumeRun` when the job could not be enqueued. */
   revertResume(ref: RunRef): Promise<void>;
+  /**
+   * AGO-86: move the run from one of `from` to `stopped` (sets `finished_at`). ONE conditional update, so of two
+   * callers only one moves it; True only for that caller. `stopped` is final: every other transition above is
+   * conditional on a different status, so none can leave it. A running run is stopped by its own loop, never by
+   * the sweep, so no tool call is cut short.
+   */
+  markStopped(ref: RunRef, from: readonly StoppableStatus[]): Promise<boolean>;
 }
 
 interface RunRow {
@@ -115,10 +127,24 @@ export function createPgRunStore(pool: pg.Pool): RunStore {
     },
 
     async resumeRun({ workspaceId, runId }) {
+      // AGO-86: a run a person asked to stop is never resumed, even though its stop has not been finalized yet.
       const result = await pool.query(
-        `update public.runs set status = $3
-          where workspace_id = $1 and id = $2 and status = $4`,
+        `update public.runs r set status = $3
+          where r.workspace_id = $1 and r.id = $2 and r.status = $4
+            and not exists (
+              select 1 from private.run_checkpoints c
+               where c.workspace_id = r.workspace_id and c.run_id = r.id
+                 and c.stop_requested_at is not null)`,
         [workspaceId, runId, RUN_STATUS.queued, RUN_STATUS.paused],
+      );
+      return result.rowCount === 1;
+    },
+
+    async markStopped({ workspaceId, runId }, from) {
+      const result = await pool.query(
+        `update public.runs set status = $3, finished_at = now()
+          where workspace_id = $1 and id = $2 and status = any($4::text[])`,
+        [workspaceId, runId, RUN_STATUS.stopped, [...from]],
       );
       return result.rowCount === 1;
     },
@@ -132,7 +158,7 @@ export function createPgRunStore(pool: pg.Pool): RunStore {
             and not exists (
               select 1 from private.run_checkpoints c
                where c.workspace_id = r.workspace_id and c.run_id = r.id
-                 and c.pause_requested_at is not null)`,
+                 and (c.pause_requested_at is not null or c.stop_requested_at is not null))`,
         [workspaceId, runId, RUN_STATUS.queued, RUN_STATUS.paused],
       );
       return result.rowCount === 1;

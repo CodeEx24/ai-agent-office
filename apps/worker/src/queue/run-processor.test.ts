@@ -48,6 +48,11 @@ function fakeRunStore(initial: string = RUN_STATUS.queued) {
       return Promise.resolve(isPaused);
     },
     wakeRunAfterExpiry: () => Promise.resolve(false),
+    markStopped: (_ref, from) => {
+      const canStop = (from as readonly string[]).includes(state.status);
+      if (canStop) state.status = RUN_STATUS.stopped;
+      return Promise.resolve(canStop);
+    },
     revertResume: () => {
       if (state.status === RUN_STATUS.queued) state.status = RUN_STATUS.paused;
       return Promise.resolve();
@@ -219,6 +224,27 @@ describe("run processor", () => {
       reason: "approval_required",
     });
     expect(runs.state.status).toBe(RUN_STATUS.paused);
+  });
+
+  it("finalizes a human stop: run.stopped, status stopped, no run.completed or run.failed (AGO-86)", async () => {
+    const execute = vi.fn(() => Promise.resolve({ steps: 1, end: "stopped" as const }));
+    const { runs, events, process } = setup({ execute });
+
+    await expect(process(job())).resolves.toBe("executed");
+
+    expect(eventTypes(events.rows)).toEqual(["run.started", "run.stopped"]);
+    expect(events.rows[1]?.payload).toMatchObject({ stopped_by: "human" });
+    expect(runs.state.status).toBe(RUN_STATUS.stopped);
+  });
+
+  it("does not run a stopped run again when its job is redelivered (AGO-86)", async () => {
+    const execute = vi.fn(() => Promise.resolve({ steps: 1, end: "completed" as const }));
+    const { events, process } = setup({ execute }, RUN_STATUS.stopped);
+
+    await process(job());
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(eventTypes(events.rows)).toEqual([]);
   });
 
   it("fails a non-retryable error at once, with its reason, and spends no retries (AGO-167)", async () => {
