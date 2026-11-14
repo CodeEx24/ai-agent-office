@@ -857,6 +857,50 @@ describe.skipIf(!isLive)("AGO-193 acceptance (live: real route, real RLS, real d
     });
   });
 
+  describe("secret-shaped field names in the 422 body", () => {
+    it("reports location and a count at every nesting spot, never the name", async () => {
+      const key = piece("AK", "IA", "V".repeat(16));
+      const jar = await sessionJar(world.owner);
+      const spots: [string, string, string][] = [
+        ["root", pack({ [key]: 1 }), "unrecognized field"],
+        [
+          "metadata",
+          pack({
+            metadata: { name: "T", exportedAt: "2026-11-13T00:00:00Z", appVersion: "1", [key]: {} },
+          }),
+          "metadata",
+        ],
+        ["agents[0]", pack({ agents: [agent({ [key]: { inner: [key] } })] }), "agents.0"],
+        [
+          "capabilities[1]",
+          pack({
+            agents: [
+              agent({
+                capabilities: [
+                  { name: "vault.read", scope: "workspace" },
+                  { name: "web.search", scope: "external", [key]: "x" },
+                ],
+              }),
+            ],
+          }),
+          "agents.0.capabilities.1",
+        ],
+        [
+          "skills[0]",
+          pack({ skills: [{ name: "S", version: 1, body: "b", [key]: 1 }] }),
+          "skills.0",
+        ],
+        ["notes[0]", pack({ notes: [{ title: "T", body: "b", [key]: 1 }] }), "notes.0"],
+      ];
+      for (const [label, body, expected] of spots) {
+        const response = await preview(jar, world.wsA, body);
+        expect(response.status, label).toBe(422);
+        expect(response.text, label).not.toContain(key);
+        expect(response.text, label).toContain(expected);
+      }
+    });
+  });
+
   describe("access: who may preview, and what a refusal reveals", () => {
     const refusedBodies = new Set<string>();
 

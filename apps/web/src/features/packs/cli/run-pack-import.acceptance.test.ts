@@ -296,6 +296,59 @@ describe("untrusted text and secrets never reach the terminal", () => {
     expect([...run.out, ...run.err].join("\n")).not.toContain(secretValue);
   });
 
+  it.each([
+    ["the pack root", (key: string) => packOf({ [key]: 1 })],
+    [
+      "metadata",
+      (key: string) =>
+        packOf({
+          metadata: {
+            name: "T",
+            exportedAt: "2026-11-13T00:00:00Z",
+            appVersion: "1",
+            [key]: { a: 1 },
+          },
+        }),
+    ],
+    ["agents[0]", (key: string) => packOf({ agents: [agent({ [key]: [1, { b: 2 }] })] })],
+    [
+      "agents[0].capabilities[1]",
+      (key: string) =>
+        packOf({
+          agents: [
+            agent({
+              capabilities: [
+                { name: "vault.read", scope: "workspace" },
+                { name: "web.search", scope: "external", [key]: "x" },
+              ],
+            }),
+          ],
+        }),
+    ],
+    [
+      "skills[0]",
+      (key: string) => packOf({ skills: [{ name: "S", version: 1, body: "b", [key]: null }] }),
+    ],
+    ["notes[0]", (key: string) => packOf({ notes: [{ title: "T", body: "b", [key]: "x" }] })],
+  ])(
+    "prints a count and the location, never a secret-shaped field name, for %s (stdout and stderr)",
+    async (_label, build) => {
+      const key = ["AK", "IA", "N".repeat(16)].join("");
+      const run = setup(build(key));
+      expect(await runPackImport(ARGS, run.deps)).toBe(1);
+      expect(run.out.join("\n")).not.toContain(key);
+      expect(run.err.join("\n")).not.toContain(key);
+      expect(run.err.join("\n")).toContain("unrecognized field");
+    },
+  );
+
+  it("prints no secret-shaped field name in --json output either", async () => {
+    const key = ["gh", "p_", "J".repeat(36)].join("");
+    const run = setup(packOf({ agents: [agent({ [key]: 1 })] }));
+    await runPackImport([...ARGS, "--json"], run.deps);
+    expect([...run.out, ...run.err].join("\n")).not.toContain(key);
+  });
+
   it("rejects invalid JSON with a fixed message that holds none of the file's text", async () => {
     const run = setup("{ PLANTED-TEXT-4f2e not json");
     expect(await runPackImport(ARGS, run.deps)).toBe(1);
