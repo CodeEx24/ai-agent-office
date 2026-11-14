@@ -1,8 +1,28 @@
-import { describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
 
-import { hardenPgbossFunctionsSettled, isBamSettled } from "./pgboss-hardening.js";
+import pg from "pg";
+import { describe, expect, it, vi } from "vitest";
 
-import type pg from "pg";
+import {
+  hardenPgbossFunctions,
+  hardenPgbossFunctionsSettled,
+  isBamSettled,
+} from "./pgboss-hardening.js";
+
+/** A socket that connects and then never answers, as seen when the network path dies mid-query. */
+class StalledClient extends EventEmitter {
+  ended = false;
+  connect(callback: (error?: Error) => void): void {
+    process.nextTick(callback);
+  }
+  query(): Promise<never> {
+    return new Promise<never>(() => undefined);
+  }
+  end(callback?: () => void): void {
+    this.ended = true;
+    callback?.();
+  }
+}
 
 /** Fake pool: one flag says whether PUBLIC/API roles still hold EXECUTE on some pgboss function. */
 function fakePool(options: { revokeWorks?: boolean } = {}) {
@@ -145,5 +165,47 @@ describe("hardenPgbossFunctionsSettled with a stalled database (AGO-213)", () =>
     await hardenPgbossFunctionsSettled(pool, { pollMs: 1, isSettled: () => Promise.resolve(true) });
     expect(sql).toContain("set local lock_timeout = '5s'");
     expect(sql).toContain("set local statement_timeout = '5s'");
+  });
+});
+
+describe("pgboss hardening releases a stalled or broken client (AGO-213)", () => {
+  it("destroys the stalled client, so pool.end() resolves with a real pg-pool", async () => {
+    const pool = new pg.Pool({ Client: StalledClient as unknown as typeof pg.Client, max: 4 });
+    await expect(
+      hardenPgbossFunctionsSettled(pool, {
+        maxWaitMs: 150,
+        pollMs: 5,
+        isSettled: () => Promise.resolve(true),
+      }),
+    ).rejects.toThrow(/refusing to run unhardened/);
+    const ended = await Promise.race([
+      pool.end().then(() => "ended"),
+      new Promise<string>((resolve) =>
+        setTimeout(() => {
+          resolve("pending");
+        }, 1_000),
+      ),
+    ]);
+    expect(ended).toBe("ended");
+    expect(pool.totalCount).toBe(0);
+  });
+
+  it("releases the client with an error when ROLLBACK fails, never healthy", async () => {
+    const release = vi.fn();
+    const client = {
+      query: (text: string) => {
+        if (text.includes("has_grants")) return Promise.resolve({ rows: [{ has_grants: true }] });
+        if (text.startsWith("select pg_advisory_xact_lock")) {
+          return Promise.reject(new Error("lock failed"));
+        }
+        if (text === "rollback") return Promise.reject(new Error("connection lost"));
+        return Promise.resolve({ rows: [] });
+      },
+      release,
+    };
+    const pool = { connect: () => Promise.resolve(client as unknown as pg.PoolClient) };
+    await expect(hardenPgbossFunctions(pool)).rejects.toThrow(/rollback failed/);
+    expect(release).toHaveBeenCalledWith(expect.any(Error));
+    expect(release).not.toHaveBeenCalledWith();
   });
 });

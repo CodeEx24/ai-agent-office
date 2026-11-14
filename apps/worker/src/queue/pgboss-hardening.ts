@@ -42,9 +42,60 @@ async function hasExecuteGrants(client: Queryable): Promise<boolean> {
   return rows[0]?.has_grants === true;
 }
 
-async function hardenOnce(pool: HardeningPool): Promise<void> {
-  const client = await pool.connect();
+/** Upper bound on one attempt (connect, lock, probe, revoke). The caller's deadline can shorten it. */
+const ATTEMPT_BUDGET_MS = 10_000;
+
+/** The budget for one attempt: the attempt bound, or what is left before `deadline` (epoch ms). */
+function attemptBudget(deadline: number): number {
+  return Math.min(ATTEMPT_BUDGET_MS, Math.max(deadline - Date.now(), 0));
+}
+
+const toError = (error: unknown): Error =>
+  error instanceof Error ? error : new Error(String(error));
+
+/**
+ * Runs `work` on one pooled client within `budgetMs`. The client goes back to the pool only after a clean
+ * finish. On a failure or a timeout it is released with an error, so pg destroys the connection instead of
+ * pooling a half-used one. A client that arrives after the budget ended is released the same way.
+ */
+async function withPooledClient<T>(
+  pool: HardeningPool,
+  budgetMs: number,
+  work: (client: pg.PoolClient) => Promise<T>,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const budgetEnded = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`pgboss hardening step timed out after ${String(budgetMs)} ms`));
+    }, budgetMs);
+  });
+  const connecting = pool.connect();
+  let client: pg.PoolClient | undefined;
   try {
+    client = await Promise.race([connecting, budgetEnded]);
+    const result = await Promise.race([work(client), budgetEnded]);
+    client.release();
+    return result;
+  } catch (error) {
+    const failure = toError(error);
+    if (client === undefined) {
+      connecting.then(
+        (late) => {
+          late.release(failure);
+        },
+        () => undefined,
+      );
+    } else {
+      client.release(failure);
+    }
+    throw failure;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function hardenOnce(pool: HardeningPool, budgetMs: number): Promise<void> {
+  await withPooledClient(pool, budgetMs, async (client) => {
     // Fast path: nothing to revoke, no lock and no ACL writes.
     if (!(await hasExecuteGrants(client))) return;
     await client.query("begin");
@@ -56,12 +107,16 @@ async function hardenOnce(pool: HardeningPool): Promise<void> {
       if (await hasExecuteGrants(client)) await client.query(REVOKE_PGBOSS_FUNCTION_EXECUTE);
       await client.query("commit");
     } catch (error) {
-      await client.query("rollback").catch(() => undefined);
-      throw error;
+      // If ROLLBACK fails the connection state is unknown. Throwing releases the client with an error.
+      const rolledBack = await client.query("rollback").then(
+        () => true,
+        () => false,
+      );
+      throw rolledBack
+        ? error
+        : new Error("pgboss hardening rollback failed; connection discarded", { cause: error });
     }
-  } finally {
-    client.release();
-  }
+  });
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -82,13 +137,8 @@ export function isBamSettled(rows: readonly { status: string }[]): boolean {
   return !rows.some((row) => row.status === "pending" || row.status === "in_progress");
 }
 
-async function verifyNoGrants(pool: HardeningPool): Promise<boolean> {
-  const client = await pool.connect();
-  try {
-    return !(await hasExecuteGrants(client));
-  } finally {
-    client.release();
-  }
+async function verifyNoGrants(pool: HardeningPool, budgetMs: number): Promise<boolean> {
+  return withPooledClient(pool, budgetMs, async (client) => !(await hasExecuteGrants(client)));
 }
 
 // pg-boss keeps creating functions after start() returns (background migrations, other workers'
@@ -112,10 +162,14 @@ function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T>
   });
 }
 
-async function settleAttempt(pool: HardeningPool, options: SettleOptions): Promise<boolean> {
+async function settleAttempt(
+  pool: HardeningPool,
+  options: SettleOptions,
+  deadline: number,
+): Promise<boolean> {
   const wasSettled = await options.isSettled();
-  await hardenPgbossFunctions(pool);
-  return wasSettled && (await verifyNoGrants(pool));
+  await hardenPgbossFunctions(pool, deadline);
+  return wasSettled && (await verifyNoGrants(pool, attemptBudget(deadline)));
 }
 
 export async function hardenPgbossFunctionsSettled(
@@ -130,7 +184,13 @@ export async function hardenPgbossFunctionsSettled(
     try {
       // Each attempt is raced against the budget that is left, so a stalled connect or query ends it.
       const budgetMs = Math.max(deadline - Date.now(), 0);
-      if (await withTimeout(settleAttempt(pool, options), budgetMs, "pgboss hardening attempt")) {
+      if (
+        await withTimeout(
+          settleAttempt(pool, options, deadline),
+          budgetMs,
+          "pgboss hardening attempt",
+        )
+      ) {
         return;
       }
       lastError = undefined;
@@ -149,13 +209,16 @@ export async function hardenPgbossFunctionsSettled(
 
 // A failure is never swallowed: it is retried a few times with jitter and then thrown, so the queue
 // treats it as a startup error (and its own start retry runs) rather than running unhardened.
-export async function hardenPgbossFunctions(pool: HardeningPool): Promise<void> {
+export async function hardenPgbossFunctions(
+  pool: HardeningPool,
+  deadline = Number.POSITIVE_INFINITY,
+): Promise<void> {
   for (let attempt = 1; ; attempt += 1) {
     try {
-      await hardenOnce(pool);
+      await hardenOnce(pool, attemptBudget(deadline));
       return;
     } catch (error) {
-      if (attempt >= MAX_ATTEMPTS) throw error;
+      if (attempt >= MAX_ATTEMPTS || Date.now() >= deadline) throw error;
       await sleep(BASE_DELAY_MS * attempt * (0.5 + Math.random()));
     }
   }
