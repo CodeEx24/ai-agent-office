@@ -34,6 +34,10 @@
       "types": "./dist/skills/skill-schemas.d.ts",
       "default": "./dist/skills/skill-schemas.js"
     },
+    "./credential-token": {
+      "types": "./dist/identity/credential-token.d.ts",
+      "default": "./dist/identity/credential-token.js"
+    },
     "./redaction": {
       "types": "./dist/redaction/index.d.ts",
       "default": "./dist/redaction/index.js"
@@ -41,6 +45,10 @@
     "./pack-export": {
       "types": "./dist/packs/agent-pack-export.d.ts",
       "default": "./dist/packs/agent-pack-export.js"
+    },
+    "./pack-import-preview": {
+      "types": "./dist/packs/agent-pack-import-preview.d.ts",
+      "default": "./dist/packs/agent-pack-import-preview.js"
     },
     "./agent-pack.schema.json": "./schemas/agent-pack.v1.schema.json"
   },

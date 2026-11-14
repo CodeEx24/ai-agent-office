@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createMemoryCheckpointStore } from "../agent/checkpoint-store.test-helpers.js";
+import {
+  createMemoryCheckpointStore,
+  type MemoryCheckpointStore,
+} from "../agent/checkpoint-store.test-helpers.js";
 import {
   approvalIdOf,
   awaitingApprovalState,
@@ -19,7 +22,7 @@ const AGENT = "33333333-3333-4333-8333-333333333333";
 const REF = { workspaceId: WS, runId: RUN };
 const HUMAN: HumanActor = { kind: "human", userId: "44444444-4444-4444-8444-444444444444" };
 
-function fakeRunStore(initial: string) {
+function fakeRunStore(initial: string, checkpoints?: MemoryCheckpointStore) {
   const state = { status: initial };
   const store: RunStore = {
     findQueuedRun: () =>
@@ -42,6 +45,13 @@ function fakeRunStore(initial: string) {
       const isPaused = state.status === RUN_STATUS.paused;
       if (isPaused) state.status = RUN_STATUS.queued;
       return Promise.resolve(isPaused);
+    },
+    // Like the SQL: status and pause flag are read and the move made in one synchronous step.
+    wakeRunAfterExpiry: () => {
+      const canWake =
+        state.status === RUN_STATUS.paused && checkpoints?.isPauseRequestedNow(REF) !== true;
+      if (canWake) state.status = RUN_STATUS.queued;
+      return Promise.resolve(canWake);
     },
     revertResume: () => {
       if (state.status === RUN_STATUS.queued) state.status = RUN_STATUS.paused;
@@ -66,9 +76,9 @@ function setup(
   initial: string,
   enqueue = vi.fn(() => Promise.resolve({ enqueued: true, jobId: "j" })),
 ) {
-  const runs = fakeRunStore(initial);
-  const events = fakeEvents();
   const checkpoints = createMemoryCheckpointStore();
+  const runs = fakeRunStore(initial, checkpoints);
+  const events = fakeEvents();
   const control = createRunControl({
     runs: runs.store,
     checkpoints,
@@ -119,6 +129,57 @@ describe("run control: wake after an approval expired (AGO-21)", () => {
     await expect(control.resumeRun(REF, HUMAN)).resolves.toBe("resumed");
     expect(await checkpoints.isPauseRequested(REF)).toBe(false);
     expect(events.rows[0]?.payload).toMatchObject({ resumed_by: "human" });
+  });
+
+  // AGO-58 (must-fix from AGO-21): the pause flag is checked INSIDE the one conditional update that moves the run.
+  it("does not override a human pause that lands after the checkpoint was read (the old check-then-move window)", async () => {
+    const { runs, events, checkpoints, control, enqueue } = setup(RUN_STATUS.paused);
+    await checkpoints.save(REF, awaitingApprovalState({}));
+    // The human's pause arrives right after the wake loaded the checkpoint, before it moves the run.
+    const load = checkpoints.load.bind(checkpoints);
+    vi.spyOn(checkpoints, "load").mockImplementation(async (ref) => {
+      const loaded = await load(ref);
+      await checkpoints.requestPause(ref);
+      return loaded;
+    });
+
+    await expect(control.resumeAfterApprovalExpiry(EXPIRED)).resolves.toBe("human_paused");
+
+    expect(runs.state.status).toBe(RUN_STATUS.paused);
+    expect(events.rows).toHaveLength(0);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(await checkpoints.isPauseRequested(REF)).toBe(true);
+  });
+
+  it("two concurrent wakes: exactly one transition, one event, one job", async () => {
+    const { runs, events, checkpoints, control, enqueue } = setup(RUN_STATUS.paused);
+    await checkpoints.save(REF, awaitingApprovalState({}));
+
+    const results = await Promise.all([
+      control.resumeAfterApprovalExpiry(EXPIRED),
+      control.resumeAfterApprovalExpiry(EXPIRED),
+    ]);
+
+    expect([...results].sort()).toEqual(["not_paused", "resumed"]);
+    expect(runs.state.status).toBe(RUN_STATUS.queued);
+    expect(events.rows).toHaveLength(1);
+    expect(enqueue).toHaveBeenCalledOnce();
+  });
+
+  it("two concurrent wakes against a human pause: neither moves the run", async () => {
+    const { runs, events, checkpoints, control, enqueue } = setup(RUN_STATUS.paused);
+    await checkpoints.save(REF, awaitingApprovalState({}));
+    await checkpoints.requestPause(REF);
+
+    const results = await Promise.all([
+      control.resumeAfterApprovalExpiry(EXPIRED),
+      control.resumeAfterApprovalExpiry(EXPIRED),
+    ]);
+
+    expect(results).toEqual(["human_paused", "human_paused"]);
+    expect(runs.state.status).toBe(RUN_STATUS.paused);
+    expect(events.rows).toHaveLength(0);
+    expect(enqueue).not.toHaveBeenCalled();
   });
 
   it("does not wake a run that is waiting on a different approval", async () => {

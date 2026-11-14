@@ -47,6 +47,7 @@ function fakeRunStore(initial: string = RUN_STATUS.queued) {
       if (isPaused) state.status = RUN_STATUS.queued;
       return Promise.resolve(isPaused);
     },
+    wakeRunAfterExpiry: () => Promise.resolve(false),
     revertResume: () => {
       if (state.status === RUN_STATUS.queued) state.status = RUN_STATUS.paused;
       return Promise.resolve();

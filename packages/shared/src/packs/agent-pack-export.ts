@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { AGENT_DAILY_BUDGET_DEFAULT_CENTS } from "../agents/agent-limits.js";
 import type { CapabilityScope } from "../capabilities/capability-schemas.js";
+import { formatPackIssue } from "./agent-pack-migrate.js";
 import { canonicalJson } from "./canonical-json.js";
 import {
   PACK_CHECKSUM_ALGORITHM,
@@ -145,7 +146,10 @@ export function buildAgentPack(source: PackSource, options: BuildAgentPackOption
     // Paths and messages only: a message never echoes a value, and a value never leaves this function.
     throw new PackExportError(
       "invalid_pack",
-      checked.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`),
+      checked.error.issues.map((issue) => {
+        const formatted = formatPackIssue(issue);
+        return `${formatted.path}: ${formatted.message}`;
+      }),
     );
   }
 

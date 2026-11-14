@@ -29,5 +29,6 @@ export * from "./credentials/broker-schemas.js";
 export * from "./self-modification/self-modification-schemas.js";
 export * from "./packs/index.js";
 export * from "./approvals/approval-status.js";
+export * from "./approvals/approval-decision.js";
 export * from "./budget/budget.js";
 export * from "./claims/index.js";

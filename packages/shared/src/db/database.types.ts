@@ -598,6 +598,9 @@ isOneToOne: false
 "onboard_current_user":
 { Args: { "p_workspace_name": string }; Returns: string
                            },
+"record_agent_approval_rejection":
+{ Args: { "p_agent_id": string,"p_jti": string,"p_method": string,"p_route": string,"p_run_id": string,"p_workspace_id": string }; Returns: undefined
+                           },
 "record_pack_export":
 { Args: { "p_agent_ids": (string)[],"p_checksum": string,"p_skill_count": number,"p_workspace_id": string }; Returns: string
                            },
