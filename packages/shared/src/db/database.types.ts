@@ -263,16 +263,36 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
-                },"claims": {
+                },"claim_events": {
                   Row: {
-                    "agent_id": string,"claimed_at": string,"created_at": string,"expires_at": string | null,"id": string,"released_at": string | null,"run_id": string | null,"task_id": string,"updated_at": string,"workspace_id": string
+                    "agent_id": string,"claim_id": string,"created_at": string,"id": string,"payload": NonNullable<Json>,"task_id": string,"type": string,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "agent_id": string,"claimed_at"?: string,"created_at"?: string,"expires_at"?: string | null,"id"?: string,"released_at"?: string | null,"run_id"?: string | null,"task_id": string,"updated_at"?: string,"workspace_id": string
+                    "agent_id": string,"claim_id": string,"created_at"?: string,"id"?: string,"payload"?: NonNullable<Json>,"task_id": string,"type": string,"workspace_id": string
                   }
                   Update: {
-                    "agent_id"?: string,"claimed_at"?: string,"created_at"?: string,"expires_at"?: string | null,"id"?: string,"released_at"?: string | null,"run_id"?: string | null,"task_id"?: string,"updated_at"?: string,"workspace_id"?: string
+                    "agent_id"?: string,"claim_id"?: string,"created_at"?: string,"id"?: string,"payload"?: NonNullable<Json>,"task_id"?: string,"type"?: string,"workspace_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "claim_events_workspace_id_fkey"
+      columns: ["workspace_id"]
+isOneToOne: false
+      referencedRelation: "workspaces"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"claims": {
+                  Row: {
+                    "agent_id": string,"claim_token": string,"claimed_at": string,"created_at": string,"expires_at": string,"id": string,"release_reason": string | null,"released_at": string | null,"renewed_at": string | null,"run_id": string | null,"task_id": string,"updated_at": string,"workspace_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "agent_id": string,"claim_token"?: string,"claimed_at"?: string,"created_at"?: string,"expires_at"?: string,"id"?: string,"release_reason"?: string | null,"released_at"?: string | null,"renewed_at"?: string | null,"run_id"?: string | null,"task_id": string,"updated_at"?: string,"workspace_id": string
+                  }
+                  Update: {
+                    "agent_id"?: string,"claim_token"?: string,"claimed_at"?: string,"created_at"?: string,"expires_at"?: string,"id"?: string,"release_reason"?: string | null,"released_at"?: string | null,"renewed_at"?: string | null,"run_id"?: string | null,"task_id"?: string,"updated_at"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -538,6 +558,11 @@ isOneToOne: false
             "archive_agent":
 { Args: { "p_agent_id": string,"p_workspace_id": string }; Returns: undefined
                            },
+"claim_task":
+{ Args: { "p_agent_id": string,"p_run_id"?: string,"p_task_id": string,"p_ttl_seconds"?: number,"p_workspace_id": string }; Returns: {
+              "claim_id": string,"claim_token": string,"expires_at": string,"holder_agent_id": string,"outcome": string,"reason": string
+            }[]
+                           },
 "create_agent":
 { Args: { "p_capabilities": Json,"p_daily_budget_cents": number,"p_model": string,"p_name": string,"p_prompt": string,"p_role": string,"p_skill_ids": (string)[],"p_workspace_id": string }; Returns: string
                            },
@@ -547,8 +572,21 @@ isOneToOne: false
 "onboard_current_user":
 { Args: { "p_workspace_name": string }; Returns: string
                            },
+"release_claim":
+{ Args: { "p_claim_id": string,"p_claim_token": string,"p_reason"?: string,"p_workspace_id": string }; Returns: {
+              "outcome": string,"reason": string
+            }[]
+                           },
+"renew_claim":
+{ Args: { "p_claim_id": string,"p_claim_token": string,"p_ttl_seconds"?: number,"p_workspace_id": string }; Returns: {
+              "expires_at": string,"outcome": string,"reason": string
+            }[]
+                           },
 "set_agent_run_limits":
 { Args: { "p_agent_id": string,"p_limits": Json,"p_workspace_id": string }; Returns: undefined
+                           },
+"sweep_expired_claims":
+{ Args: { "p_workspace_id"?: string }; Returns: number
                            },
 "unarchive_agent":
 { Args: { "p_agent_id": string,"p_workspace_id": string }; Returns: undefined
