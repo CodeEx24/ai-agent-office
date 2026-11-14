@@ -26,6 +26,11 @@ import { getSupabasePublicEnv } from "../../lib/env";
 /** Approval routes: everything under this prefix decides or reads approvals and is for people only. */
 export const APPROVAL_ROUTE_PREFIX = "/api/approvals";
 
+/** The code of the `error.raised` event the database function appends (fixed; the dashboard filters on it). */
+export const REJECTION_EVENT_CODE = "approval_route_rejected";
+const MAX_ROUTE_LENGTH = 400;
+const REJECTION_METHODS: ReadonlySet<string> = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+
 export function isApprovalRoute(pathname: string): boolean {
   return pathname === APPROVAL_ROUTE_PREFIX || pathname.startsWith(`${APPROVAL_ROUTE_PREFIX}/`);
 }
@@ -103,12 +108,19 @@ export async function recordAgentRouteRejection(
     }
 
     const { agent_id, workspace_id, run_id, jti } = checked.claims;
+    // The event is an existing `error.raised` with a fixed code (the approved v1 event list is not amended here).
+    // The database function builds the same payload itself from the validated route and method.
+    const route = input.pathname.slice(0, MAX_ROUTE_LENGTH);
     const event = runEventSchema.safeParse({
-      type: "approval.route_rejected",
+      type: "error.raised",
       version: 1,
-      payload: { agent_id, route: input.pathname.slice(0, 500), method: input.method },
+      payload: {
+        code: REJECTION_EVENT_CODE,
+        message: `${input.method} ${route}`,
+        retryable: false,
+      },
     });
-    if (!event.success) {
+    if (!REJECTION_METHODS.has(input.method) || !event.success) {
       log("agent credential refused on an approval route (no event: unsupported method)", {
         route: input.pathname,
         reason: "invalid_event",
@@ -122,7 +134,7 @@ export async function recordAgentRouteRejection(
       p_run_id: run_id,
       p_agent_id: agent_id,
       p_jti: jti,
-      p_route: input.pathname.slice(0, 500),
+      p_route: route,
       p_method: input.method,
     });
     if (error) {

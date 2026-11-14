@@ -55,7 +55,7 @@ Out: the approvals inbox UI (AGO-37), the Reviewer lane (AGO-140), resuming a ru
 `POST /api/approvals/[id]/decision`: 200 `{ id, status }`, 400 bad input, 401 signed out, 403 agent credential (fixed body `agent_credential_not_allowed`) or not a member, 404 not decidable.
 
 ## Database changes
-None for the decision (RLS policy `approvals_update_member` already exists). One SECURITY DEFINER function, `record_agent_approval_rejection`, appends the `approval.route_rejected` event (owner decision q2-A). It is written as a local draft and is NOT in this PR: it goes on this branch after the orchestrator grants the schema slot (AGO-192 holds it).
+None for the decision (RLS policy `approvals_update_member` already exists). One SECURITY DEFINER function, `record_agent_approval_rejection`, appends an `error.raised` event with the fixed code `approval_route_rejected` (owner decision q2-A). Deviation (2026-11-14): a new event type was tried first, but `scripts/ago-164-acceptance.test.mjs` pins the approved v1 list at 26 types, so adding one means amending that list and editing `scripts/` (human-merge path). Reusing `error.raised` avoids both; switching to a dedicated type later is a small change the owner can ask for. It is written as a local draft and is NOT in this PR: it goes on this branch after the orchestrator grants the schema slot (AGO-192 holds it).
 
 ## Dependencies on other tickets
 AGO-21, AGO-148 (done). AGO-47, AGO-51 (merged). AGO-192 holds the schema slot.

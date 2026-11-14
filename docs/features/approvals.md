@@ -183,7 +183,8 @@ hash stays what the runtime stored, so the decision still unlocks only the exact
 path (`/api/approvals…`) it also calls `recordAgentRouteRejection`, and the route repeats the guard and the record as a
 second layer. The recorder verifies the token's signature in the web layer first (`@ago/shared/credential-token`, the
 same code the worker uses); only a genuinely signed credential names a real run, so only then is one event
-`approval.route_rejected` `{ agent_id, route, method }` appended, through the narrow database function
+`error.raised` with the fixed code `approval_route_rejected` and the message `<METHOD> <route>` appended (the approved v1
+event list is not amended; the run row names the agent), through the narrow database function
 `record_agent_approval_rejection` (the web app holds no service role and `run_events` is runtime-only). The event never
 holds the token, a header, the body or the query. A forged or malformed token still gets the same 403; it has no
 verifiable run, so it is logged (reason code and route only) and no event is written.

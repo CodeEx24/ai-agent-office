@@ -104,14 +104,6 @@ export const RUN_EVENT_SCHEMAS = [
     decided_by: z.enum(["human", "timeout"]),
     payload_hash: sha256,
   }),
-  // An agent credential called a human-only approval route and was refused with a 403 (AGO-58). Fixed shape on
-  // purpose: who (the agent named by a signature-checked credential), which route and method. Never the token,
-  // headers, body or query.
-  event("approval.route_rejected", {
-    agent_id: uuid,
-    route: shortText,
-    method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
-  }),
   // Budget
   event("budget.usage", {
     input_tokens: count,

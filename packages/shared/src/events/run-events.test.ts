@@ -57,11 +57,6 @@ const VALID: Record<string, Record<string, unknown>> = {
     decided_by: "human",
     payload_hash: HASH,
   },
-  "approval.route_rejected": {
-    agent_id: UUID,
-    route: "/api/approvals/a1/decision",
-    method: "POST",
-  },
   "budget.usage": { input_tokens: 10, output_tokens: 5 },
   "budget.exceeded": { scope: "run", limit: 100, used: 120 },
   "handoff.created": { handoff_id: "h1", to_agent_id: UUID, reason: "needs reviewer" },
