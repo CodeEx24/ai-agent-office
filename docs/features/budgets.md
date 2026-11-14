@@ -35,6 +35,7 @@ Every refusal and stop appends one `budget.exceeded` run event with `scope`, `re
 | `model_not_priced` | `pricing` | The model has no entry in the price table. |
 | `budget_check_failed` | `ledger` | The ledger could not answer, so the call was refused. |
 | `call_cost_overran_reservation` | `ledger` | A call cost more than was held for it. |
+| `call_outcome_unknown_charged` | `ledger` | A call ended without a clear answer from the provider (a dropped connection after the request was sent, a malformed answer, an abort), so it may have been billed. Its full held amount was counted as spent. A call the provider rejected with an HTTP error status is released instead and records no event. |
 
 Plain-language texts for every code are in `BUDGET_STOP_MESSAGES` (`packages/shared/src/budget/budget.ts`).
 

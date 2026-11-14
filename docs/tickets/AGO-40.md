@@ -120,4 +120,16 @@ Dashboard (AGO-56), alerts and forecast (AGO-177), run view budget display (AGO-
 budget. Replace the static price table with a verified source.
 
 ## Outcome
-(pending)
+(pending: closed at merge)
+
+Follow-ups found in review, each for the owner to ticket (none created by this ticket):
+
+- **Show and edit "Max tokens per run" after save needs its own ticket.** Today the stored value is not shown anywhere
+  (edit form, agent list, Duplicate), and an owner cannot change it from the app. Until then the `limits_not_saved`
+  message does not promise an edit path (round 3 copy fix, reviewer-ux round 2).
+- **The pre-call cost estimate is an estimate, not a proven upper bound** (reviewer-security round 2, nit). It sizes
+  the request in UTF-8 bytes and divides by 3; a token can be one byte, and the provider adds overhead. Overshoot is
+  bounded to one call per run and is recorded as `call_cost_overran_reservation`. On the unknown-outcome path the held
+  amount is booked as spent and any excess is not recorded. Hardening: divide by 1 and add a fixed per-request overhead,
+  which makes reservations larger and needs the owner's view on the trade-off.
+- **`MODEL_PRICES` are placeholders** and need an owner review against the real price list.

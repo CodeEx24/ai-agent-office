@@ -23,7 +23,7 @@ export type AgentLibraryErrorCode =
 
 /** Shown when the agent exists but the optional token limit could not be saved (AGO-40). Safe to show. */
 export const LIMITS_NOT_SAVED_MESSAGE =
-  "The agent was created, but its max tokens per run limit was not saved, so the default applies. You can set the limit later. Do not create the agent again.";
+  "The agent was created, but its max tokens per run limit was not saved, so the default applies. Do not create the agent again.";
 
 /** Thrown when an agent cannot be created. Carries a code, the field it belongs to, and a safe message. */
 export class AgentLibraryError extends Error {

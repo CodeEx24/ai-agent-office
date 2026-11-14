@@ -125,7 +125,10 @@ describe("agentCreator.createAgent", () => {
     expect(error).toMatchObject({ code: "limits_not_saved", field: "maxTokens" });
     expect((error as Error).message).toMatch(/agent was created/i);
     expect((error as Error).message).toMatch(/not saved/i);
-    expect((error as Error).message).toMatch(/set the limit later/i);
+    expect((error as Error).message).toMatch(/default applies/i);
+    expect((error as Error).message).toMatch(/do not create the agent again/i);
+    // No edit path exists for this limit yet, so the copy must not promise one.
+    expect((error as Error).message).not.toMatch(/later|you can (set|change)/i);
   });
 
   it("refuses an automatic tier 3 capability before the database is called (tampered request)", async () => {

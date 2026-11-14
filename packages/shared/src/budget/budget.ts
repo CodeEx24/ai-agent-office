@@ -56,9 +56,10 @@ export function costCents(model: string, usage: TokenUsage): number | null {
 }
 
 /**
- * Units per token assumed when sizing a prompt before the call. Low on purpose: it over-estimates. The unit is UTF-8
- * BYTES (a token is never shorter than one byte, so bytes are a real upper bound; UTF-16 characters are not for
- * CJK text or emoji).
+ * Units per token assumed when sizing a prompt before the call. The unit is UTF-8 BYTES, which tracks the real token
+ * count far better than UTF-16 characters for CJK text and emoji. This is an ESTIMATE, not a proven upper bound: a
+ * token can be as short as one byte (so the strict bound is bytes / 1), and the provider adds its own overhead. A call
+ * that costs more than was held is settled at its real cost and recorded as `call_cost_overran_reservation`.
  */
 export const ESTIMATE_CHARS_PER_TOKEN = 3;
 
