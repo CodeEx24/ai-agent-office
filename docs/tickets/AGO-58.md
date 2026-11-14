@@ -1,10 +1,10 @@
 # AGO-58 - US-045 Make approval routes human-only
 
 - Ticket: https://stratyge.atlassian.net/browse/AGO-58 (Story, Epic EP-16, wave 2, WS-E, sprint 10)
-- PRs: https://github.com/CodeEx24/ai-agent-office/pull/68 (draft)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/68
 - Blocked by: AGO-21 (approval request flow, done), AGO-148 (agent identity and credentials, done). Builds on AGO-47 (payload hash) and AGO-51 (static check).
 - Related: unblocks AGO-140 (Reviewer lane), AGO-129 (red-team suite), AGO-163 (note-edit proposals). Must-fix carried over from AGO-21 (Jira comment 15493).
-- Type: Feature - Risk: **high** (human-in-the-loop invariant, auth) - Status: In review
+- Type: Feature - Risk: **high** (human-in-the-loop invariant, auth) - Status: Merged
 
 ## Overview
 "As the product owner, I want: make approval routes human-only. Reject agent tokens on approval routes and treat Reviewer verdicts as advisory only."
@@ -78,5 +78,10 @@ AGO-21, AGO-148 (done). AGO-47, AGO-51 (merged). AGO-192 holds the schema slot.
 - A Jira comment on AGO-21 that the timeout-wake race is fixed here.
 
 ## Outcome
+- Delivered: every approval-deciding route rejects agent tokens with 403 and records an `error.raised` event (code `approval_route_rejected`) through a service-role-only SECURITY DEFINER function (migration 20261114130001, reversible; rollback evidence above). A Reviewer verdict is advisory only: a Tier 3 approval stays pending until a human decision bound to the payload hash.
+- Review rounds: r1 code CHANGES (DB-backed test for the atomic wakeRunAfterExpiry), r2 invariants CHANGES (regenerate database types), r3 APPROVE.
+- Deviation: no new event type, because scripts/ago-164 pins the v1 event list; it reuses `error.raised`.
+- Known limitations: a forged or malformed token gets 403 with a log line but no event; the rejection-event flood cap is best-effort under parallel requests; the event needs `SUPABASE_SERVICE_ROLE_KEY` on the web server (server-only), otherwise 403 still holds with no event.
+- Follow-ups: hard flood cap; event for forged tokens; AGO-51 scanner gaps (scripts/ edits).
 - Feature guide: [docs/features/approvals.md](../features/approvals.md) (section "Human-only decisions (AGO-58)").
 - Deviation from the Design section: the shipped event payload does not carry `agent_id`. The run row names the agent, and the database function cross-checks agent against run through `agent_credentials`.
