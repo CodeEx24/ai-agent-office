@@ -24,6 +24,7 @@
     "db:migration:new": "supabase migration new",
     "db:seed": "node scripts/db-seed.mjs",
     "db:types": "node scripts/db-types.mjs",
+    "pack:export": "pnpm --filter @ago/shared build && pnpm --filter @ago/web pack:export",
     "prepare": "simple-git-hooks"
   },
   "devDependencies": {
