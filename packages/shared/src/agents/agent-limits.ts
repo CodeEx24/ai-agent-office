@@ -159,8 +159,8 @@ export interface AgentDraftText {
   model: string;
   prompt: string;
   dailyBudget: string;
-  /** Optional; "" means no override. */
-  maxTokens: string;
+  /** Optional (AGO-40); "" or absent means no override. Absent keeps the AGO-89 edit form valid. */
+  maxTokens?: string;
 }
 
 /** Zod-free field checks for the client. Returns a message per invalid field; empty means valid. */
@@ -184,7 +184,7 @@ export function checkAgentDraft(draft: AgentDraftText): AgentFieldErrors {
   const budget = parseDailyBudget(draft.dailyBudget);
   if (!budget.ok) errors.dailyBudget = budget.message;
 
-  const maxTokens = parseMaxTokens(draft.maxTokens);
+  const maxTokens = parseMaxTokens(draft.maxTokens ?? "");
   if (!maxTokens.ok) errors.maxTokens = maxTokens.message;
   return errors;
 }

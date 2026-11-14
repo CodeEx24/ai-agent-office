@@ -109,6 +109,11 @@ None changes behaviour the owner decided; each is a detail the record left open.
   `MODEL_PRICES` (flagged in `docs/features/budgets.md` and the PR).
 - **No UI to set the workspace monthly budget** (not in the AC): an owner-set `cost_budget_cents` on the workspace row is
   honoured and clamped to the 100,000-cent cap, but there is no screen for it yet.
+- **Max tokens per run is optional in the AGO-89 edit draft (`AgentDraftText.maxTokens?`).** The edit form does not show
+  the field, so an edit leaves the stored override alone (`run_limits` has no column grant for owners). This keeps the
+  AGO-89 tests unchanged. Showing the field on the edit form is a follow-up.
+- **Duplicate does not copy the run token limit.** `duplicate_agent` runs as the caller and `run_limits` is not copied
+  (AGO-166 migration comment), so a copy starts with the worker default. The owner must set the limit again.
 
 ## Follow-up tasks
 Dashboard (AGO-56), alerts and forecast (AGO-177), run view budget display (AGO-153). A screen for the workspace monthly
