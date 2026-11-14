@@ -97,3 +97,53 @@ describe("hardenPgbossFunctionsSettled", () => {
     expect((error as Error).cause).toBeInstanceOf(Error);
   });
 });
+
+describe("hardenPgbossFunctionsSettled with a stalled database (AGO-213)", () => {
+  const MAX_WAIT_MS = 150;
+  const MARGIN_MS = 300;
+
+  it("throws within maxWaitMs when connect never resolves", async () => {
+    const pool = { connect: () => new Promise<pg.PoolClient>(() => undefined) };
+    const started = Date.now();
+    await expect(
+      hardenPgbossFunctionsSettled(pool, {
+        maxWaitMs: MAX_WAIT_MS,
+        pollMs: 5,
+        isSettled: () => Promise.resolve(true),
+      }),
+    ).rejects.toThrow(/refusing to run unhardened/);
+    expect(Date.now() - started).toBeLessThan(MAX_WAIT_MS + MARGIN_MS);
+  });
+
+  it("throws within maxWaitMs when a query never resolves", async () => {
+    const client = { query: () => new Promise(() => undefined), release: () => undefined };
+    const pool = { connect: () => Promise.resolve(client as unknown as pg.PoolClient) };
+    const started = Date.now();
+    await expect(
+      hardenPgbossFunctionsSettled(pool, {
+        maxWaitMs: MAX_WAIT_MS,
+        pollMs: 5,
+        isSettled: () => Promise.resolve(true),
+      }),
+    ).rejects.toThrow(/refusing to run unhardened/);
+    expect(Date.now() - started).toBeLessThan(MAX_WAIT_MS + MARGIN_MS);
+  });
+
+  it("bounds the hardening transaction with a lock and a statement timeout", async () => {
+    const sql: string[] = [];
+    let grants = true;
+    const client = {
+      query: (text: string) => {
+        sql.push(text);
+        if (text.includes("has_grants")) return Promise.resolve({ rows: [{ has_grants: grants }] });
+        if (text.startsWith("revoke execute")) grants = false;
+        return Promise.resolve({ rows: [] });
+      },
+      release: () => undefined,
+    };
+    const pool = { connect: () => Promise.resolve(client as unknown as pg.PoolClient) };
+    await hardenPgbossFunctionsSettled(pool, { pollMs: 1, isSettled: () => Promise.resolve(true) });
+    expect(sql).toContain("set local lock_timeout = '5s'");
+    expect(sql).toContain("set local statement_timeout = '5s'");
+  });
+});

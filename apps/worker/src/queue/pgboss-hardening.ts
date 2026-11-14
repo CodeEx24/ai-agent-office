@@ -27,6 +27,10 @@ export const PGBOSS_EXECUTE_GRANTS_SQL = `
 
 const MAX_ATTEMPTS = 5;
 const BASE_DELAY_MS = 50;
+// Bounds each statement and lock wait inside the hardening transaction, so a stalled lock or query
+// ends the transaction (and frees its client) instead of hanging the start.
+const ATTEMPT_LOCK_TIMEOUT = "5s";
+const ATTEMPT_STATEMENT_TIMEOUT = "5s";
 
 type Queryable = Pick<pg.PoolClient, "query">;
 interface HardeningPool {
@@ -45,6 +49,8 @@ async function hardenOnce(pool: HardeningPool): Promise<void> {
     if (!(await hasExecuteGrants(client))) return;
     await client.query("begin");
     try {
+      await client.query(`set local lock_timeout = '${ATTEMPT_LOCK_TIMEOUT}'`);
+      await client.query(`set local statement_timeout = '${ATTEMPT_STATEMENT_TIMEOUT}'`);
       await client.query("select pg_advisory_xact_lock($1)", [PGBOSS_HARDENING_LOCK_KEY]);
       // A concurrent worker may have finished the revoke while this one waited for the lock.
       if (await hasExecuteGrants(client)) await client.query(REVOKE_PGBOSS_FUNCTION_EXECUTE);
@@ -91,6 +97,25 @@ async function verifyNoGrants(pool: HardeningPool): Promise<boolean> {
 // EXECUTE. It waits at most maxWaitMs and then throws (fail closed): the caller must treat that as a
 // startup error and never run unhardened. Residual risk: a function created after this returns keeps
 // its default grant until the next start (the schema has no USAGE for the API roles meanwhile).
+/** Rejects with a timeout error when `work` has not settled within `ms`. A hung await cannot outlive it. */
+function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${String(ms)} ms`));
+    }, ms);
+  });
+  return Promise.race([work, timeout]).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
+async function settleAttempt(pool: HardeningPool, options: SettleOptions): Promise<boolean> {
+  const wasSettled = await options.isSettled();
+  await hardenPgbossFunctions(pool);
+  return wasSettled && (await verifyNoGrants(pool));
+}
+
 export async function hardenPgbossFunctionsSettled(
   pool: HardeningPool,
   options: SettleOptions,
@@ -101,9 +126,11 @@ export async function hardenPgbossFunctionsSettled(
   let lastError: unknown;
   for (;;) {
     try {
-      const wasSettled = await options.isSettled();
-      await hardenPgbossFunctions(pool);
-      if (wasSettled && (await verifyNoGrants(pool))) return;
+      // Each attempt is raced against the budget that is left, so a stalled connect or query ends it.
+      const budgetMs = Math.max(deadline - Date.now(), 0);
+      if (await withTimeout(settleAttempt(pool, options), budgetMs, "pgboss hardening attempt")) {
+        return;
+      }
       lastError = undefined;
     } catch (error) {
       lastError = error;
