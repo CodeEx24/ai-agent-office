@@ -1,0 +1,10 @@
+-- PLANTED VIOLATION: the status is built with || in a plpgsql variable, then written from that variable.
+create or replace function public.approve_on_expiry() returns void
+language plpgsql as $$
+declare
+  v_status text;
+begin
+  v_status := 'appro' || 'ved';
+  update public.approvals set status = v_status where status = 'pending' and expires_at <= now();
+end;
+$$;

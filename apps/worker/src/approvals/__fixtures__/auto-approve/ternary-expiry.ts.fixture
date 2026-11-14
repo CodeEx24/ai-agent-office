@@ -1,0 +1,9 @@
+// PLANTED VIOLATION: an expiry check that resolves to allow. No status write is needed to be wrong.
+export function resolveAtDeadline(approval: { expiresAt: Date }, now: number) {
+  const isExpired = approval.expiresAt.getTime() <= now;
+  return isExpired ? { decision: "allow" } : { decision: "wait" };
+}
+
+export function onTimeout(timedOut: boolean) {
+  return timedOut ? "proceed" : "deny";
+}
