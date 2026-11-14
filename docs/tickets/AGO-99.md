@@ -1,7 +1,7 @@
 # AGO-99 - US-050 Start new agents in Strict with human promotion
 
 - Ticket: https://stratyge.atlassian.net/browse/AGO-99 (Story, Epic EP-16, wave 2, WS-E, sprint 11)
-- PRs: (pending)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/73
 - Blocked by: AGO-43 (autonomy dial, Done), AGO-89 (edit, duplicate, archive, Done). Related: AGO-58 (human-only guard), AGO-194 (pack import, builds on the default), AGO-192 (pack_events, precedent for a non-run audit table)
 - Risk: **high** (autonomy, the human-only invariant, a migration)
 
