@@ -66,6 +66,9 @@ The static check is a tripwire, not a proof. It follows values inside one file: 
 - name shadowing: variables and aliases are bound per file, not per function or block, and the last declaration wins, so a name reused in another function can bind to the wrong value (a false positive or a miss)
 - flow-insensitive reassignment: one value per name per file. A variable bound to approved and later reassigned to a safe value still counts (a false positive), and a variable reassigned to approved through an expression the scanner cannot evaluate (`v := f()`) is missed
 - INSERT with `$n` bound to approved: only a literal `'approved'` in an INSERT is caught
+- plpgsql declaration forms the variable binder does not read (a plain `v := 'approved'` assignment is still caught): `v constant text := 'approved'`, `v text not null := 'approved'`, `v t.col%type := 'approved'`, and a schema-qualified type `v public.status_t := 'approved'`. Only `name [type] := value` and `name [type] default value`, with a one-word type and optional `(n)`, bind
+- files outside the scanned roots. The scan covers `apps/`, `packages/` and `supabase/migrations/` only, and only `.ts`, `.tsx` and `.sql`. These are never read: `supabase/seed.sql`, `supabase/tests/*.sql`, `supabase/rollbacks/*.sql`, and `.js`, `.mjs` and `.cjs` files under `apps/` and `packages/`
+- folders and files skipped on purpose: any folder named `e2e` (Playwright code that plays the human decider against a local database, `apps/web/e2e`), `__fixtures__`, `node_modules`, `dist`, `.next`, `.turbo`, `coverage`, plus `*.test.ts(x)`, `*.spec.ts(x)` and `*.d.ts` files. Code placed in one of these is not checked
 
 The runtime guarantee (the RLS policy "an expired approval can no longer be approved", the worker's conditional `expire` and `consume`) stays the real enforcement.
 
@@ -77,4 +80,5 @@ The runtime guarantee (the RLS policy "an expired approval can no longer be appr
 - Fix the timeout wake race (accepted gap in AGO-21) in or before AGO-58.
 
 ## Outcome
-(pending)
+Feature guide: [docs/features/approvals.md](../features/approvals.md) (section "Timeout means deny (AGO-51)").
+PR: https://github.com/CodeEx24/ai-agent-office/pull/66

@@ -154,8 +154,8 @@ check, which keeps the exception visible in review; the list is empty until that
 (it follows constants, pure aliases, concatenations and ternaries within one file, not a status built across files); the
 runtime enforcement remains the conditional `expire` and `consume` SQL, the RLS policy and the loop's refusal codes.
 
-**Known limitations.** The check does not follow these shapes. Review is the backstop for them, so a reviewer checks any
-new code that builds a status:
+**Known limitations.**
+The static check is a tripwire, not a proof. It follows values inside one file: constants, pure aliases (`const s = APPROVAL_STATUS`, an import alias), `+` and template concatenation, ternaries, SQL `||` joins and plpgsql variables. It does not follow these shapes, so review is the backstop for them:
 - computed keys: `{ ["status"]: "approved" }`, `{ [k]: "approved" }`, `row["sta" + "tus"] = ...`
 - object and array indirection: `const S = { ok: "approved" }; S.ok`, `["approved"][0]`
 - cross-file indirection: a constant, helper or return value defined in another module
@@ -165,6 +165,9 @@ new code that builds a status:
 - name shadowing: variables and aliases are bound per file, not per function or block, and the last declaration wins, so a name reused in another function can bind to the wrong value (a false positive or a miss)
 - flow-insensitive reassignment: one value per name per file. A variable bound to approved and later reassigned to a safe value still counts (a false positive), and a variable reassigned to approved through an expression the scanner cannot evaluate (`v := f()`) is missed
 - INSERT with `$n` bound to approved: only a literal `'approved'` in an INSERT is caught
+- plpgsql declaration forms the variable binder does not read (a plain `v := 'approved'` assignment is still caught): `v constant text := 'approved'`, `v text not null := 'approved'`, `v t.col%type := 'approved'`, and a schema-qualified type `v public.status_t := 'approved'`. Only `name [type] := value` and `name [type] default value`, with a one-word type and optional `(n)`, bind
+- files outside the scanned roots. The scan covers `apps/`, `packages/` and `supabase/migrations/` only, and only `.ts`, `.tsx` and `.sql`. These are never read: `supabase/seed.sql`, `supabase/tests/*.sql`, `supabase/rollbacks/*.sql`, and `.js`, `.mjs` and `.cjs` files under `apps/` and `packages/`
+- folders and files skipped on purpose: any folder named `e2e` (Playwright code that plays the human decider against a local database, `apps/web/e2e`), `__fixtures__`, `node_modules`, `dist`, `.next`, `.turbo`, `coverage`, plus `*.test.ts(x)`, `*.spec.ts(x)` and `*.d.ts` files. Code placed in one of these is not checked
 
 ## How to extend it
 - **Possible false positives.** The check is name-based, so a UI helper can match it. Examples: a React state setter such as `setStatus("approved")` (a filter or a local view state, not an approval), or a count object such as `stats.status.approved` assigned to a `status` property. Fix them in this order: rename the identifier so it no longer matches (for example `setStatusFilter`, or `approvedCount` instead of `status.approved`); or move the code out of the scanned roots. Do not add a file to `HUMAN_DECISION_FILES` to silence a false positive; that list is only for the human decide route (AGO-58), and review must see it.
