@@ -141,14 +141,6 @@ async function verifyNoGrants(pool: HardeningPool, budgetMs: number): Promise<bo
   return withPooledClient(pool, budgetMs, async (client) => !(await hasExecuteGrants(client)));
 }
 
-// pg-boss keeps creating functions after start() returns (background migrations, other workers'
-// installs). A single revoke can therefore lose the race. This revokes, then confirms: it is done only
-// when pg-boss was already settled BEFORE the revoke and a check AFTER it finds no PUBLIC/API-role
-// EXECUTE. It waits at most maxWaitMs and then throws (fail closed): the caller must treat that as a
-// startup error and never run unhardened. Residual risk: a function created after this returns keeps
-// its default grant until the next worker restart. A running worker never re-hardens, so the window
-// lasts as long as the worker runs. Only the schema-level revoke closes it (no USAGE for the API roles,
-// AGO-151), so nothing reaches the function in that window.
 /** Rejects with a timeout error when `work` has not settled within `ms`. A hung await cannot outlive it. */
 function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
@@ -172,6 +164,14 @@ async function settleAttempt(
   return wasSettled && (await verifyNoGrants(pool, attemptBudget(deadline)));
 }
 
+// pg-boss keeps creating functions after start() returns (background migrations, other workers'
+// installs). A single revoke can therefore lose the race. This revokes, then confirms: it is done only
+// when pg-boss was already settled BEFORE the revoke and a check AFTER it finds no PUBLIC/API-role
+// EXECUTE. It waits at most maxWaitMs and then throws (fail closed): the caller must treat that as a
+// startup error and never run unhardened. Residual risk: a function created after this returns keeps
+// its default grant until the next worker restart. A running worker never re-hardens, so the window
+// lasts as long as the worker runs. Only the schema-level revoke closes it (no USAGE for the API roles,
+// AGO-151), so nothing reaches the function in that window.
 export async function hardenPgbossFunctionsSettled(
   pool: HardeningPool,
   options: SettleOptions,
