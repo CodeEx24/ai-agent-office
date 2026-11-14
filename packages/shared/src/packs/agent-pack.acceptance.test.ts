@@ -99,12 +99,25 @@ describe("AC1: valid pack parses; unknown fields and wrong types are rejected wi
     expect(parseAgentPack({ ...validPack(), agents: [], skills: [] }).ok).toBe(true);
   });
 
-  it("rejects an unknown field at the pack root, naming the key", () => {
+  it("rejects an unknown field at the pack root, reporting a count and not the key", () => {
     const result = parseAgentPack({ ...validPack(), surprise: 1 });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.issues.map((i) => i.path)).toEqual([""]);
-      expect(result.issues[0]?.message).toContain("surprise");
+      expect(result.issues[0]?.message).toBe("1 unrecognized field.");
+      expect(result.issues[0]?.message).not.toContain("surprise");
+    }
+  });
+
+  it("reports a secret-shaped field name by location only, in messages and paths", () => {
+    const key = `ghp_${"U".repeat(36)}`;
+    const pack = validPack();
+    agent0(pack)[key] = { nested: "x" };
+    const result = parseAgentPack(pack);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(JSON.stringify(result.issues)).not.toContain(key);
+      expect(result.issues.some((i) => i.path === "agents.0")).toBe(true);
     }
   });
 
@@ -116,7 +129,7 @@ describe("AC1: valid pack parses; unknown fields and wrong types are rejected wi
     ["notes[]", "notes.0", (p) => (p.notes as Loose[])[0]!],
   ];
   it.each(nestedTargets)(
-    "rejects an unknown field inside %s with the path of the object and the key in the message",
+    "rejects an unknown field inside %s with the path of the object and a count, not the key",
     (_label, expectedPath, pick) => {
       const pack = validPack();
       pick(pack).mystery = "x";
@@ -124,7 +137,8 @@ describe("AC1: valid pack parses; unknown fields and wrong types are rejected wi
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.issues.map((i) => i.path)).toEqual([expectedPath]);
-        expect(result.issues[0]?.message).toContain("mystery");
+        expect(result.issues[0]?.message).toBe("1 unrecognized field.");
+        expect(result.issues[0]?.message).not.toContain("mystery");
       }
     },
   );
