@@ -2,7 +2,7 @@
 
 ## Links
 - Ticket: https://stratyge.atlassian.net/browse/AGO-47
-- PRs: (pending)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/63 (draft)
 - Related: AGO-21 (approval request flow, done, blocker); AGO-74 (`approvals` table), AGO-107 (RLS); unblocks AGO-54 (server-rendered approval cards); AGO-58 (human-only decide routes) and AGO-37 (inbox UI) are separate
 
 Status: In progress · Type: Feature · Risk: high (human-in-the-loop invariant: approvals bound to payload hash) · Wave 2
