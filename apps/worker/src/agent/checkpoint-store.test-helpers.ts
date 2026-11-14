@@ -21,6 +21,11 @@ export interface MemoryCheckpointStore extends CheckpointStore {
   peek(ref: CheckpointRef): RunCheckpointState | null;
   /** Make the next `save` calls fail. */
   failSaves(): void;
+  /**
+   * The pause flag read synchronously, so a fake run store can do "move only if not pause-requested" in one
+   * step like the real conditional update (`RunStore.wakeRunAfterExpiry`, AGO-58).
+   */
+  isPauseRequestedNow(ref: CheckpointRef): boolean;
 }
 
 const keyOf = ({ workspaceId, runId }: CheckpointRef): string => `${workspaceId}:${runId}`;
@@ -53,6 +58,9 @@ export function createMemoryCheckpointStore(
     },
     failSaves() {
       saveFails = true;
+    },
+    isPauseRequestedNow(ref) {
+      return rows.get(keyOf(ref))?.pauseRequested === true;
     },
     load(ref) {
       const raw = rows.get(keyOf(ref))?.raw;

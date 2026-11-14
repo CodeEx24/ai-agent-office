@@ -46,7 +46,10 @@ interface Finding {
 }
 
 /** Repo-relative POSIX paths of the human-only decide routes that may write `approved`. Empty until AGO-58. */
-const HUMAN_DECISION_FILES: readonly string[] = [];
+const HUMAN_DECISION_FILES: readonly string[] = [
+  // AGO-58: the one place a person's approve / deny is written (RLS, caller's own session, human-only route).
+  "apps/web/src/features/approvals/decide-approval.ts",
+];
 
 const EXPIRY_WORD = /(expir|timeout|timed_?out|ttl|deadline|sweep|lapse)/i;
 const ALLOW_WORDS: ReadonlySet<string> = new Set([

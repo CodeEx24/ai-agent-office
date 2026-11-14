@@ -32,7 +32,7 @@ export class HumanActorRequiredError extends Error {
 }
 
 export interface RunControlDeps {
-  readonly runs: Pick<RunStore, "resumeRun" | "revertResume">;
+  readonly runs: Pick<RunStore, "resumeRun" | "wakeRunAfterExpiry" | "revertResume">;
   readonly checkpoints: Pick<
     CheckpointStore,
     "requestPause" | "clearPause" | "load" | "isPauseRequested"
@@ -100,10 +100,27 @@ function isAwaitingApproval(
 }
 
 export function createRunControl(deps: RunControlDeps): RunControl {
-  async function resume(ref: RunRef, resumedBy: "human" | "timeout"): Promise<ResumeResult> {
-    // The conditional update is the guard: of two resumes racing, only one sees `paused`.
-    const moved = await deps.runs.resumeRun(ref);
-    if (!moved) return "not_paused";
+  // A human resume never answers `human_paused`; only the timeout wake can be refused for a human's pause.
+  async function resume(ref: RunRef, resumedBy: "human"): Promise<ResumeResult>;
+  async function resume(ref: RunRef, resumedBy: "timeout"): Promise<ExpiryWakeResult>;
+  async function resume(
+    ref: RunRef,
+    resumedBy: "human" | "timeout",
+  ): Promise<ResumeResult | "human_paused"> {
+    // The conditional update is the guard: of two resumes racing, only one sees `paused`. The expiry wake's update
+    // also requires "no human pause request" inside the same statement (AGO-58), so there is no window between a
+    // flag check and the move for a human's pause to slip into.
+    const moved =
+      resumedBy === "human"
+        ? await deps.runs.resumeRun(ref)
+        : await deps.runs.wakeRunAfterExpiry(ref);
+    if (!moved) {
+      // Only labels the refusal. The decision was already taken atomically above.
+      if (resumedBy === "timeout" && (await deps.checkpoints.isPauseRequested(ref))) {
+        return "human_paused";
+      }
+      return "not_paused";
+    }
 
     const logger = withContext(deps.logger, { run_id: ref.runId, workspace_id: ref.workspaceId });
     try {
@@ -147,8 +164,8 @@ export function createRunControl(deps: RunControlDeps): RunControl {
     async resumeAfterApprovalExpiry({ approvalId, ...ref }) {
       const { state } = await deps.checkpoints.load(ref);
       if (!isAwaitingApproval(state, ref.runId, approvalId)) return "not_waiting";
-      // A human asked for a pause: leave the run paused. Their resume closes the expired call.
-      if (await deps.checkpoints.isPauseRequested(ref)) return "human_paused";
+      // A human asked for a pause: the atomic wake refuses and the run stays paused. Their resume closes the
+      // expired call.
       return resume(ref, "timeout");
     },
   };
