@@ -1,5 +1,4 @@
--- AGO-58 (LOCAL DRAFT: do not push until the schema slot is granted; re-timestamp later than every migration then).
--- Appends one `error.raised` run event (code `approval_route_rejected`) when an agent credential calls a human-only
+-- AGO-58: appends one `error.raised` run event (code `approval_route_rejected`) when an agent credential calls a human-only
 -- approval route.
 --
 -- Why a function: `run_events` is runtime-only (append-only, no role may write it directly) and the web app holds no
@@ -53,7 +52,8 @@ begin
     raise exception 'record_agent_approval_rejection: unknown credential' using errcode = '42501';
   end if;
 
-  -- Flood bound: stay quiet past 20 per run per minute (the 403 itself is unaffected).
+  -- Flood bound: stay quiet past 20 per run per minute (the 403 itself is unaffected). Best-effort: the count and
+  -- the insert are not serialised, so parallel calls can slightly exceed 20 (follow-up if a hard cap is needed).
   if (
     select count(*)
     from public.run_events e

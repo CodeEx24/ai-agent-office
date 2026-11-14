@@ -7,6 +7,8 @@ import {
   type RejectionRecorderClient,
 } from "./record-agent-rejection";
 
+vi.mock("server-only", () => ({}));
+
 // Fake secret and token are built at runtime so no realistic-looking secret is committed.
 const SECRET = ["unit", "test", "signing", "key"].join("-").padEnd(40, "x");
 const IDS = {

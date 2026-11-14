@@ -49,8 +49,8 @@ export interface RunStore {
   /**
    * `paused` -> `queued` for the approval-expiry wake (AGO-21, race fixed in AGO-58): ONE conditional update that
    * moves the run only while it is still `paused` AND no human pause request is recorded. The pause flag is read
-   * inside the same statement, so a human pause that lands between a caller's check and this move cannot be
-   * overridden. True only for the one caller that moved it.
+   * inside the same statement, so the window for a human pause to be missed is narrowed to a single statement
+   * (it was several awaited calls). Under READ COMMITTED it is not zero. True only for the one caller that moved it.
    */
   wakeRunAfterExpiry(ref: RunRef): Promise<boolean>;
   /** `queued` -> `paused`: undo `resumeRun` when the job could not be enqueued. */

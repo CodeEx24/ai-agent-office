@@ -115,7 +115,8 @@ index 1.
 - ~~The timeout wake checked the pause flag, then moved the run a few database calls later.~~ **Fixed in AGO-58.** The
   wake is now one conditional update (`RunStore.wakeRunAfterExpiry`): the run moves `paused` → `queued` only if the
   human pause flag is not set, in the same statement. Two concurrent wakes make exactly one transition, and a human
-  re-pause that lands between the check and the move is never overridden (tests in `run-control.test.ts`).
+  re-pause window is narrowed to a single statement (it was several awaited calls; under READ COMMITTED it is not
+  zero). Tests: `run-control.test.ts` (fake store) and `run-store.wake.integration.test.ts` (the SQL, live database).
 - `approval.decided` is not retried. It can be missing if the sweep's update succeeds and the event write fails
   (logged and sent to the error tracker), and likewise in the resume-time check. The call is denied either way; only
   the audit event is lost.
@@ -189,7 +190,7 @@ event list is not amended; the run row names the agent), through the narrow data
 the server-only recorder uses `SUPABASE_SERVICE_ROLE_KEY` for this one call, nowhere else in the web app; the decide
 route itself still uses the member's own session). The function checks the credential id belongs to the named
 workspace, agent and run, accepts only approval routes and five methods, and stays quiet past 20 events per run per
-minute. The event never
+minute (best-effort: parallel requests can slightly exceed the cap; a hard cap is a follow-up). The event never
 holds the token, a header, the body or the query. A forged or malformed token still gets the same 403; it has no
 verifiable run, so it is logged (reason code and route only) and no event is written.
 

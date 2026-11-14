@@ -1,3 +1,5 @@
+import "server-only";
+
 import { createClient } from "@supabase/supabase-js";
 import {
   bearerTokenOf,
@@ -18,7 +20,10 @@ import { getSupabasePublicEnv } from "../../lib/env";
  *     log line: it names no real run, so there is nothing to attach an event to);
  *  2. the event has a fixed shape (agent, route, method). The token, headers, body and query never leave this file;
  *  3. the write goes through one narrow database function (`record_agent_approval_rejection`), not a table write:
- *     `run_events` is runtime-only and the web app holds no service role.
+ *     `run_events` is runtime-only; the function is executable by `service_role` only, so this module (server-only,
+ *     guarded by `import "server-only"`) is the one place in the web app that reads `SUPABASE_SERVICE_ROLE_KEY`.
+ *     The function's own 20-events-per-run-per-minute cap is best-effort: parallel requests can slightly exceed it
+ *     (follow-up, no migration in this ticket).
  *
  * It never throws and never changes the 403: a failure to record is reported to the caller and logged by code.
  */
