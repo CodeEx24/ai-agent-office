@@ -46,6 +46,13 @@ export interface RunStore {
   markPaused(ref: RunRef): Promise<void>;
   /** `paused` -> `queued` (AGO-30). True only for the one caller that moved it; a second resume gets false. */
   resumeRun(ref: RunRef): Promise<boolean>;
+  /**
+   * `paused` -> `queued` for the approval-expiry wake (AGO-21, race fixed in AGO-58): ONE conditional update that
+   * moves the run only while it is still `paused` AND no human pause request is recorded. The pause flag is read
+   * inside the same statement, so a human pause that lands between a caller's check and this move cannot be
+   * overridden. True only for the one caller that moved it.
+   */
+  wakeRunAfterExpiry(ref: RunRef): Promise<boolean>;
   /** `queued` -> `paused`: undo `resumeRun` when the job could not be enqueued. */
   revertResume(ref: RunRef): Promise<void>;
 }
@@ -111,6 +118,21 @@ export function createPgRunStore(pool: pg.Pool): RunStore {
       const result = await pool.query(
         `update public.runs set status = $3
           where workspace_id = $1 and id = $2 and status = $4`,
+        [workspaceId, runId, RUN_STATUS.queued, RUN_STATUS.paused],
+      );
+      return result.rowCount === 1;
+    },
+
+    async wakeRunAfterExpiry({ workspaceId, runId }) {
+      // The pause flag lives in private.run_checkpoints. A run with no checkpoint row has no pause request, but
+      // it also has no awaiting call, so the caller has already answered not_waiting for it.
+      const result = await pool.query(
+        `update public.runs r set status = $3
+          where r.workspace_id = $1 and r.id = $2 and r.status = $4
+            and not exists (
+              select 1 from private.run_checkpoints c
+               where c.workspace_id = r.workspace_id and c.run_id = r.id
+                 and c.pause_requested_at is not null)`,
         [workspaceId, runId, RUN_STATUS.queued, RUN_STATUS.paused],
       );
       return result.rowCount === 1;
