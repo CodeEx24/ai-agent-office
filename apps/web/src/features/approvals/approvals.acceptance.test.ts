@@ -5,7 +5,9 @@
 //
 // AC3 payload: the approvals table stores only the payload hash, so the card shows a fingerprint. That gap is an
 // owner-accepted deferral (decision q1 C), pinned here as a test of the CURRENT behaviour, not treated as a failure.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type ApprovalsPageComponent from "../../app/app/approvals/page";
 
 vi.mock("server-only", () => ({}));
 
@@ -407,6 +409,14 @@ describe("AC3: cards show payload, reason, recent steps and cost", () => {
 });
 
 describe("AC4 edge cases: access, failures, page", () => {
+  // The first import of the page module is cold (it pulls the whole page graph), and under a full-gate load it can
+  // take longer than the 5 s default test timeout. Import it once, in a hook with a generous timeout; the tests then
+  // only call the already-loaded page, with their assertions unchanged.
+  let ApprovalsPage: typeof ApprovalsPageComponent;
+  beforeAll(async () => {
+    ({ default: ApprovalsPage } = await import("../../app/app/approvals/page"));
+  }, 120_000);
+
   it("lets a member and an owner decide, but not a viewer", async () => {
     world.results.approvals = { data: [], error: null };
     world.role = "viewer";
@@ -445,21 +455,18 @@ describe("AC4 edge cases: access, failures, page", () => {
 
   it("page redirects a signed-out visitor to /app without reading approvals", async () => {
     world.user = null;
-    const { default: ApprovalsPage } = await import("../../app/app/approvals/page");
     await expect(ApprovalsPage()).rejects.toMatchObject({ to: "/app" });
     expect(world.calls).toHaveLength(0);
   });
 
   it("page redirects a user with no workspace to /app", async () => {
     world.activeWorkspace = null;
-    const { default: ApprovalsPage } = await import("../../app/app/approvals/page");
     await expect(ApprovalsPage()).rejects.toMatchObject({ to: "/app" });
   });
 
   it("page renders the inbox for the user's own workspace, with the server clock", async () => {
     world.results.approvals = { data: [], error: null };
     world.activeWorkspace = { id: WS, name: "WS" };
-    const { default: ApprovalsPage } = await import("../../app/app/approvals/page");
     const tree = await ApprovalsPage();
     const text = JSON.stringify(tree, (_k, v: unknown) => (typeof v === "function" ? "fn" : v));
     expect(text).toContain(WS);
