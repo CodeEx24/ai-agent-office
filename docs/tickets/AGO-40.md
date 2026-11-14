@@ -89,8 +89,30 @@ for the conditional upsert under the db lock. Wizard component test for the new 
 | q4 | Wizard scope | A - Daily budget plus optional "Max tokens per run" via `set_agent_run_limits()` | owner via orchestrator, 2026-11-14 |
 | q5 | Record accepted | A - accepted, with the added checks: every refusal and stop appends a `run_event` with a specific reason code a human can see | owner via orchestrator, 2026-11-14 |
 
+## Deviations from the accepted record (2026-11-14, found while building)
+None changes behaviour the owner decided; each is a detail the record left open.
+- **Overrun on a final answer completes the run.** The owner said a higher real cost "stops the run". When the model's
+  expensive call is its final answer, nothing more will be spent, so the run completes and the overrun event is still
+  appended. If the call still wanted tools, the run stops (`call_cost_overran_reservation`).
+- **A refusal after `step.started` also appends `step.completed` (outcome error)** so the run view shows a closed step,
+  then `budget.exceeded`, then `run.stopped {stopped_by: "budget"}`.
+- **A provider rejection releases the reservation; an abort or unknown failure keeps it.** The first cost nothing; the
+  second may have been billed, so the ledger over-counts rather than under-counts.
+- **A ledger that cannot record the real cost stops the run** (`budget_check_failed`): spend that is not counted is not limited.
+- **Cost is rounded UP to whole cents per call**, so the ledger can over-count by up to 1 cent per call.
+- **The run token stop keeps `run.limit_reached`** (existing assertions rely on it) and now appends `budget.exceeded`
+  (`run_token_limit_reached`) before it.
+- **`run-processor.ts` was not edited.** Its comment says the loop writes `run.limit_reached`; it still does for the token
+  limit. The money stop writes `run.stopped` itself and returns `end: "limit_reached"`, the same end the processor
+  already handles for the other limits (the run is marked failed).
+- **Prices are placeholders.** The table values are conservative, not a verified price list. The owner should review
+  `MODEL_PRICES` (flagged in `docs/features/budgets.md` and the PR).
+- **No UI to set the workspace monthly budget** (not in the AC): an owner-set `cost_budget_cents` on the workspace row is
+  honoured and clamped to the 100,000-cent cap, but there is no screen for it yet.
+
 ## Follow-up tasks
-Dashboard (AGO-56), alerts and forecast (AGO-177), run view budget display (AGO-153).
+Dashboard (AGO-56), alerts and forecast (AGO-177), run view budget display (AGO-153). A screen for the workspace monthly
+budget. Replace the static price table with a verified source.
 
 ## Outcome
 (pending)
