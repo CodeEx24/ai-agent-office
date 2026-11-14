@@ -10,8 +10,42 @@ for the exact call it was given for, once, and before it expires (AGO-47). The o
 `denied` is a person, through the human-only decide route (AGO-58, below).
 
 ## Screens
-None yet. The inbox UI is AGO-37; it will call `POST /api/approvals/[id]/decision`. Until it ships, a member can decide
-through that route directly, and every request nobody answers still ends in a timeout denial.
+**Approvals inbox (AGO-37), `/app/approvals`.** One list of every pending approval in the workspace, oldest request
+first. Each card shows the agent, how long it has waited and how long is left (timeout means deny), why it stopped
+(the policy reason code and tier), the tool, the run's recent steps and its cost so far. The call's details are not
+shown yet (only a hash is stored), and the card says so in plain words next to **Approve**; the hash appears only as a
+small "Reference". Members and owners get **Approve** and **Reject**; viewers see the inbox read-only, with a line that
+says they have view-only access.
+
+- **A decided card stays put.** After a decision the card stays in place as a receipt with its verdict (Dismiss removes
+  it), and every decide button on every card is held while the decision is in flight and for 1.5 s after
+  (`DECISION_LOCK_MS`), so the next card can never slide under the cursor and be decided by a second click.
+
+- **One decision path.** Both buttons post `{ workspace_id, decision }` to `POST /api/approvals/[id]/decision` (AGO-58)
+  and nowhere else. Agent credentials stay refused there. The inbox never writes the `approvals` table itself.
+- **Inert text.** Every card field is rendered as React text. Agent-derived strings are never inserted as HTML.
+- **Within 2 seconds.** The open inbox re-reads the server every second (`INBOX_REFRESH_MS`), and a decision made in
+  the inbox shows its result at once. The live test `inbox.integration.test.ts` measures decision to the next inbox
+  read and the stored state against the local stack (under the db lock). Realtime would need `approvals` in the realtime
+  publication, which is a migration; it is a follow-up (a reviewed deviation from the owner's Realtime choice, see the
+  ticket record). A read that has not come back is never doubled up (in-flight guard). If a read fails, the inbox keeps
+  the last good list, shows "Couldn't refresh the list, retrying…" and retries with backoff (up to 15 s); the page
+  returns a load-failed value for a failed read (`loadApprovalInbox`) so it does not fall to the error boundary and stop.
+- **Deferred.** The card shows no call details: the table stores only the payload hash. **Storing the payload must land
+  before any real Tier 3/4 tool with real side effects reaches real users** (security condition). Edit and Ask are shown
+  disabled with a reason (no backend yet). Waking the paused run after a decision stays with AGO-86.
+  Follow-ups: store the approval payload (migration plus worker), Edit, Ask, Realtime.
+
+Without the inbox a member can still decide through the route directly, and every request nobody answers still ends in
+a timeout denial.
+
+| function / component | file | role |
+|---|---|---|
+| `ApprovalsPage` | `apps/web/src/app/app/approvals/page.tsx` | thin route: workspace from the session, then the inbox |
+| `listPendingApprovals`, `loadApprovalInbox` | `apps/web/src/features/approvals/inbox-data.ts` | read-only: pending rows, agent names, run events, all under RLS; the second turns a failed read into a value |
+| `buildApprovalCards` | `apps/web/src/features/approvals/approval-card.ts` | pure: reason, recent steps and cost from validated run events |
+| `ApprovalInbox` | `apps/web/src/features/approvals/ApprovalInbox.tsx` | client: polling, the decide call, per-card result |
+| `ApprovalCard` | `apps/web/src/features/approvals/ApprovalCard.tsx` | presentational card |
 
 ## Data model
 One table, `public.approvals` (created in AGO-74, RLS in AGO-107). The approval flow itself adds no table or column. AGO-58 adds one database function, `public.record_agent_approval_rejection` (see "Human-only decisions"), which appends a run event and touches no approval row.
