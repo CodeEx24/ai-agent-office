@@ -35,6 +35,7 @@ import {
 import {
   CheckpointUnreadableError,
   noopCheckpointStore,
+  type CheckpointRef,
   type CheckpointStore,
 } from "./checkpoint-store.js";
 import { ModelProviderError, type ModelProvider, type ModelToolCall } from "./model-provider.js";
@@ -252,6 +253,16 @@ function abortable<T>(
   });
 }
 
+/** What a person has asked of the run (AGO-86). A stop wins over a pause. */
+async function readRunControl(
+  checkpoints: CheckpointStore,
+  ref: CheckpointRef,
+): Promise<"none" | "pause" | "stop"> {
+  const flags = await checkpoints.readControl(ref);
+  if (flags.stopRequested) return "stop";
+  return flags.pauseRequested ? "pause" : "none";
+}
+
 interface ToolRecord {
   readonly source: string;
   readonly content: string;
@@ -266,7 +277,12 @@ type ToolCallResult =
       readonly fingerprint: string;
       readonly toolName: string;
     }
-  | { readonly kind: "needs_approval"; readonly payloadHash: string };
+  | { readonly kind: "needs_approval"; readonly payloadHash: string }
+  /**
+   * AGO-86: a person asked for a pause or a stop, seen BEFORE the call did anything (no event, no policy hook, no
+   * tool). The call stays as it was in the checkpoint, so a resume runs it from the top, control flag checked again.
+   */
+  | { readonly kind: "interrupted"; readonly control: "pause" | "stop" };
 
 /** The result for a call that was closed without running (AGO-30): same shape as any other failed call. */
 function unrunResult(
@@ -363,6 +379,14 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
     grantedApprovalId?: string,
   ): Promise<ToolCallResult> {
     const { emitter } = ctx;
+    // AGO-86: the human control flag is read before ANYTHING else a call does, so a paused or stopped agent starts no
+    // further call: not the policy hook, not the approval consume, not the tool. Order: control flag, policy, tool.
+    // A stop wins over a pause. A read that fails throws: the attempt fails and is retried, never run through.
+    const control = await readRunControl(deps.checkpoints ?? noopCheckpointStore, {
+      workspaceId: ctx.workspaceId,
+      runId: ctx.runId,
+    });
+    if (control !== "none") return { kind: "interrupted", control };
     const callId = VALID_CALL_ID.test(call.id) ? call.id : `call_${String(step)}_${String(index)}`;
     const tool = deps.tools.get(call.name);
     // Only the catalog's own name for an offered tool is ever stored; anything else gets the placeholder.
@@ -728,6 +752,19 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
         };
       };
 
+      // AGO-86: a human asked for a stop. Final: the processor closes the run's approvals and marks it `stopped`.
+      const stopForStop = async (): Promise<RunOutcome> => {
+        await persist();
+        return { steps, end: "stopped", summary: "stopped at a human's request" };
+      };
+      const stopForControl = (control: "pause" | "stop"): Promise<RunOutcome> =>
+        control === "stop" ? stopForStop() : stopForPause();
+      /** The step-boundary check: a stop first, then a pause. Null when nobody asked for anything. */
+      const controlBoundary = async (): Promise<RunOutcome | null> => {
+        const control = await readRunControl(checkpoints, ref);
+        return control === "none" ? null : stopForControl(control);
+      };
+
       // One signal for the whole run: shutdown, or the wall-time limit. Every pending await (model call,
       // policy hook, tool) is raced against it, so nothing can hold the run past `maxWallMs`.
       const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(runLimits.maxWallMs)]);
@@ -851,7 +888,8 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
               return stopForLimit("time", runLimits.maxWallMs, now() - startedAt);
             if (tokens >= runLimits.maxTokens)
               return stopForLimit("tokens", runLimits.maxTokens, tokens);
-            if (await checkpoints.isPauseRequested(ref)) return stopForPause();
+            const boundary = await controlBoundary();
+            if (boundary !== null) return boundary;
 
             steps += 1;
             const step = steps;
@@ -977,7 +1015,8 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
             };
             await persist();
             // The model call has returned, so pausing here leaves no call open (AGO-30 AC2); nothing has run yet.
-            if (await checkpoints.isPauseRequested(ref)) return stopForPause();
+            const afterModel = await controlBoundary();
+            if (afterModel !== null) return afterModel;
           } else {
             offeredNames = await offerNow();
           }
@@ -1046,6 +1085,10 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
                   await persist();
                 },
               );
+            }
+            if (result.kind === "interrupted") {
+              // Nothing about the call changed: it is still `pending` (or `awaiting_approval`) in the checkpoint.
+              return stopForControl(result.control);
             }
             if (result.kind === "needs_approval") {
               call.status = "awaiting_approval";
