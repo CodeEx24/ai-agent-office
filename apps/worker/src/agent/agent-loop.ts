@@ -30,12 +30,13 @@ import {
   type CheckpointStore,
 } from "./checkpoint-store.js";
 import { ModelProviderError, type ModelProvider, type ModelToolCall } from "./model-provider.js";
+import type { BudgetGuard, Reservation } from "../budget/index.js";
 import type { ModelRouter } from "./model-routing.js";
 import type { PolicyDecision, PolicyHook } from "./policy-hook.js";
 import type { RunLimitsResolver } from "./run-limits.js";
 import type { ToolOffer } from "./tool-offer.js";
 import type { ToolRegistry } from "./tools.js";
-import type { CapabilityTier, RetrievedItem } from "@ago/shared";
+import type { BudgetScope, BudgetStopReason, CapabilityTier, RetrievedItem } from "@ago/shared";
 
 /**
  * The agent tool loop (AGO-167). One run is: build context -> ask the model -> for each tool call,
@@ -86,6 +87,15 @@ export const MAX_TOOL_CALLS_PER_STEP = 8;
 /** How long an approval request stays open before it counts as denied (timeout means deny). */
 export const DEFAULT_APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
 
+/** What a `budget.exceeded` event says: which budget, why, the limit, what was counted and the cost held back. */
+interface BudgetStopDetail {
+  readonly scope: BudgetScope;
+  readonly reason: BudgetStopReason;
+  readonly limit: number;
+  readonly used: number;
+  readonly estimate?: number;
+}
+
 const SUMMARY_MAX = 500;
 const MESSAGE_MAX = 2_000;
 const INPUT_PREVIEW_MAX = 2_000;
@@ -116,6 +126,12 @@ export interface AgentLoopDeps {
    * run pauses. Omitted: no row is made, and a resumed call is denied (nothing can ever approve it).
    */
   readonly approvals?: ApprovalStore;
+  /**
+   * The money budgets (AGO-40): checked before every model call, settled after it. A call that would pass the agent's
+   * daily or the workspace's monthly budget is not made and the run stops. Omitted: no money check (tests); production
+   * always wires it in `wire.ts`.
+   */
+  readonly budget?: BudgetGuard;
   readonly limits?: Partial<AgentLoopLimits>;
   /**
    * Per-agent step, token and wall-time limits (AGO-166), looked up at the start of each run. They replace the
@@ -663,6 +679,44 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
         return { steps, end: "limit_reached" };
       };
 
+      // The run's own token budget (AGO-40): the budget event first, so a human sees why, then the terminal event.
+      const stopForTokens = async (): Promise<RunOutcome> => {
+        await emitter.emit({
+          type: "budget.exceeded",
+          payload: {
+            scope: "run",
+            reason: "run_token_limit_reached",
+            limit: runLimits.maxTokens,
+            used: Math.max(0, Math.round(tokens)),
+          },
+        });
+        return stopForLimit("tokens", runLimits.maxTokens, tokens);
+      };
+
+      const emitBudgetExceeded = async (detail: BudgetStopDetail): Promise<void> => {
+        await emitter.emit({
+          type: "budget.exceeded",
+          payload: {
+            scope: detail.scope,
+            reason: detail.reason,
+            limit: detail.limit,
+            used: detail.used,
+            ...(detail.estimate === undefined ? {} : { estimate: detail.estimate }),
+          },
+        });
+      };
+
+      // A money budget stopped the run (AGO-40): the budget event with its reason, then the terminal `run.stopped`.
+      // The run ends as a limit does: failed, no result, nothing more spent.
+      const stopForBudget = async (detail: BudgetStopDetail): Promise<RunOutcome> => {
+        await emitBudgetExceeded(detail);
+        await emitter.emit({
+          type: "run.stopped",
+          payload: { stopped_by: "budget", reason: detail.reason },
+        });
+        return { steps, end: "limit_reached" };
+      };
+
       // A human asked for a pause. Reached only between awaits, never in the middle of one: the model call that
       // was in flight has already returned, so a paused run holds no open model call (AGO-30 AC2).
       const stopForPause = async (): Promise<RunOutcome> => {
@@ -812,8 +866,7 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
               return stopForLimit("steps", runLimits.maxSteps, steps);
             if (now() >= deadline)
               return stopForLimit("time", runLimits.maxWallMs, now() - startedAt);
-            if (tokens >= runLimits.maxTokens)
-              return stopForLimit("tokens", runLimits.maxTokens, tokens);
+            if (tokens >= runLimits.maxTokens) return stopForTokens();
             if (await checkpoints.isPauseRequested(ref)) return stopForPause();
 
             steps += 1;
@@ -861,6 +914,44 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
             offeredNames = await offerNow();
             const offeredTools = deps.tools.list().filter((tool) => offeredNames.has(tool.name));
 
+            // AGO-40: the money check, BEFORE the call. The guard holds the worst-case cost of this call against the
+            // agent's daily and the workspace's monthly budget; a refusal means the call is never made.
+            const budget = deps.budget;
+            const model = provider.model;
+            let reservation: Reservation | null = null;
+            if (budget !== undefined) {
+              const requestChars =
+                built.system.length +
+                built.messages.reduce((sum, message) => sum + message.content.length, 0) +
+                JSON.stringify(offeredTools).length;
+              const decision = await abortable(
+                callSafely(() =>
+                  budget.reserve({
+                    workspaceId: ctx.workspaceId,
+                    agentId: ctx.agentId,
+                    model,
+                    inputCharacters: requestChars,
+                    maxOutputTokens: runLimits.maxOutputTokens,
+                  }),
+                ),
+                signal,
+                () => interruption(ctx.signal),
+              );
+              if (!decision.allowed) {
+                await emitter.emit({ type: "step.completed", payload: { step, outcome: "error" } });
+                return stopForBudget({
+                  scope: decision.scope,
+                  reason: decision.reason,
+                  limit: decision.limit,
+                  used: decision.used,
+                  ...(decision.estimateCents === undefined
+                    ? {}
+                    : { estimate: decision.estimateCents }),
+                });
+              }
+              reservation = decision.reservation;
+            }
+
             let response;
             try {
               response = await abortable(
@@ -877,6 +968,15 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
                 () => interruption(ctx.signal),
               );
             } catch (error) {
+              // A call the provider rejected cost nothing: give the held cents back. An abort or an unknown failure
+              // may have been billed, so its reservation stays counted (the ledger over-counts, never under).
+              if (
+                budget !== undefined &&
+                reservation !== null &&
+                error instanceof ModelProviderError
+              ) {
+                await budget.release(reservation);
+              }
               if (signal.aborted) throw interruption(ctx.signal);
               if (error instanceof ModelProviderError && !error.isRetryable) {
                 // A rejected request or a bad credential fails the same way on every retry; do not replay the run.
@@ -886,13 +986,42 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
             }
 
             tokens += response.usage.inputTokens + response.usage.outputTokens;
+
+            // AGO-40: the real cost replaces the reservation. The same usage figures feed the ledger and the event
+            // below, so the totals match. A lower cost releases the difference; a higher one is an overrun.
+            let spentCents: number | undefined;
+            let overrun: BudgetStopDetail | null = null;
+            if (budget !== undefined && reservation !== null && model !== undefined) {
+              const settlement = await budget.settle(reservation, model, response.usage);
+              spentCents = settlement.costCents;
+              if (settlement.ledgerFailed) {
+                overrun = { scope: "ledger", reason: "budget_check_failed", limit: 0, used: 0 };
+              } else if (settlement.overran) {
+                overrun = {
+                  scope: "ledger",
+                  reason: "call_cost_overran_reservation",
+                  limit: reservation.cents,
+                  used: settlement.costCents,
+                };
+              }
+            }
             await emitter.emit({
               type: "budget.usage",
               payload: {
                 input_tokens: response.usage.inputTokens,
                 output_tokens: response.usage.outputTokens,
+                ...(spentCents === undefined ? {} : { cost_cents: spentCents }),
               },
             });
+            if (overrun !== null) {
+              if (response.toolCalls.length === 0) {
+                // The run is finishing with this answer, so nothing more is spent: record it and let it complete.
+                await emitBudgetExceeded(overrun);
+              } else {
+                await emitter.emit({ type: "step.completed", payload: { step, outcome: "error" } });
+                return stopForBudget(overrun);
+              }
+            }
 
             if (response.toolCalls.length === 0) {
               const text = scrubString(response.text).trim();
@@ -911,8 +1040,7 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
             }
 
             // Over budget with more tool work requested: stop before running anything else.
-            if (tokens >= runLimits.maxTokens)
-              return stopForLimit("tokens", runLimits.maxTokens, tokens);
+            if (tokens >= runLimits.maxTokens) return stopForTokens();
 
             const calls = response.toolCalls.slice(0, MAX_TOOL_CALLS_PER_STEP);
             if (calls.length < response.toolCalls.length) {

@@ -86,6 +86,7 @@ export function createClaudeProvider(options: ClaudeProviderOptions): ModelProvi
   const url = options.url ?? ANTHROPIC_MESSAGES_URL;
 
   return {
+    model,
     async complete(request: ModelRequest): Promise<ModelResponse> {
       let response: Response;
       try {
