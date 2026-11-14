@@ -25,7 +25,11 @@ export interface MemoryApprovalStore extends ApprovalStore {
 export function createMemoryApprovalStore(): MemoryApprovalStore {
   const rows = new Map<string, MemoryApproval>();
   const move = (row: MemoryApproval, now: Date): ExpiredApproval | null => {
-    if (row.status !== APPROVAL_STATUS.pending || row.expiresAt.getTime() > now.getTime()) {
+    if (
+      row.status !== APPROVAL_STATUS.pending ||
+      row.consumedAt !== null ||
+      row.expiresAt.getTime() > now.getTime()
+    ) {
       return null;
     }
     rows.set(row.approvalId, { ...row, status: APPROVAL_STATUS.rejected });
@@ -55,6 +59,7 @@ export function createMemoryApprovalStore(): MemoryApprovalStore {
           status: APPROVAL_STATUS.pending,
           payloadHash: input.payloadHash,
           expiresAt: input.expiresAt,
+          consumedAt: null,
         });
       }
       const stored = rows.get(input.approvalId);
@@ -74,6 +79,23 @@ export function createMemoryApprovalStore(): MemoryApprovalStore {
     expire(ref, now) {
       const row = rows.get(ref.approvalId);
       return Promise.resolve(row?.workspaceId !== ref.workspaceId ? null : move(row, now));
+    },
+    consume(ref, payloadHash, now) {
+      const row = rows.get(ref.approvalId);
+      // The same conditions as the SQL, evaluated and applied in one synchronous step (no await in between).
+      if (
+        row?.workspaceId !== ref.workspaceId ||
+        row.runId !== ref.runId ||
+        row.status !== APPROVAL_STATUS.approved ||
+        row.consumedAt !== null ||
+        row.expiresAt.getTime() <= now.getTime() ||
+        row.payloadHash !== payloadHash
+      ) {
+        return Promise.resolve(null);
+      }
+      const consumed = { ...row, consumedAt: now };
+      rows.set(row.approvalId, consumed);
+      return Promise.resolve(consumed);
     },
     expireDue(now, limit) {
       const moved: ExpiredApproval[] = [];
