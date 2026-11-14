@@ -1,7 +1,7 @@
 # AGO-51 - US-043 Guarantee timeout means deny
 
 - Ticket: https://stratyge.atlassian.net/browse/AGO-51 (Story, Epic EP-16, wave 2, WS-E, sprint 9)
-- PRs: (pending)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/66
 - Blocked by: AGO-21 (approval request flow, done). Unblocks AGO-162 (Phase 1 gate). Builds on AGO-47 (merged, e694493).
 - Risk: **high** (human-in-the-loop invariant: timeout means deny)
 - Status: In progress (record accepted by the owner via the orchestrator, 2026-11-14)
