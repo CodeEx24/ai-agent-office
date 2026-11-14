@@ -1,7 +1,7 @@
 # AGO-37 - Approvals inbox and card UI
 
 - Ticket: https://stratyge.atlassian.net/browse/AGO-37 (US-039, Epic EP-06, Wave 2)
-- PRs: (pending)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/70 (draft)
 - Related: AGO-21 (request flow), AGO-47 (payload-hash binding), AGO-58 (human-only decide route), AGO-54 (later: consequence-first server rendering), AGO-86 (pause/resume/stop, parallel), AGO-40 (budgets, not merged)
 - Type: Feature · Risk: high (human decision UI on approvals) · Status: spec awaiting acceptance
 
