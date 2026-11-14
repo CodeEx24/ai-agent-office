@@ -271,7 +271,7 @@ describe.skipIf(!live)("agent loop against the live budget ledger", { timeout: 3
       limit: 1,
       used: 1,
     });
-    expect((await ledger(ids, "day")).cost).toBe("1");
+    expect((await ledger(ids, "day"))?.cost).toBe("1");
   });
 
   it("two runs of one agent racing for the last budget: exactly one reaches the model", async () => {
