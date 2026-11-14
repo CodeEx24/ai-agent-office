@@ -338,6 +338,8 @@ describe.skipIf(!live)(
         (await events(runId)).find((row) => row.type === "run.failed"),
       );
       expect(failed.payload).toMatchObject({ reason: "agent_archived" });
+      await waitFor(async () => (await runStatus(runId)) === RUN_STATUS.failed);
+      expect(await runStatus(runId)).toBe(RUN_STATUS.failed);
       expect(requests).toHaveLength(0);
     });
   },
