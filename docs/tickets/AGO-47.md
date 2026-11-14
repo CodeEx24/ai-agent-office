@@ -75,4 +75,5 @@ Unit tests with fakes (no model calls). Integration tests against the local stac
 - Consider an `approval.consumed` run event if the audit trail needs it (would add an event type).
 
 ## Outcome
-(pending)
+Feature guide: docs/features/approvals.md
+PR: https://github.com/CodeEx24/ai-agent-office/pull/63

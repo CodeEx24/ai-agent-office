@@ -1,15 +1,17 @@
 # Approval requests
-Tickets: AGO-21 (created)
+Tickets: AGO-21 (created) · AGO-47 (payload-hash binding, single use, expiry limit)
 
 ## What it does
 When the policy engine says a tool call `needs_approval` (tier 3 and 4, or any call a policy escalates), the worker
 records a **pending approval**, pauses the run, and waits for a human. If nobody answers in time the approval becomes
 `rejected` and the agent is told the call was not run. A human is always in the loop: nothing here lets an agent or the
-loop approve anything, and the tool runs in no path that is not an honoured approval. Today none is honoured.
+loop approve anything, and the tool runs in no path that is not an honoured approval. An approval is honoured only
+for the exact call it was given for, once, and before it expires (AGO-47). Until the human decide route exists (AGO-58),
+no `approved` row appears in production.
 
 ## Screens
 None yet. The decide routes (approve or deny) and the inbox UI are AGO-58 and AGO-37. Until then nobody can answer a
-request, so every request ends in a timeout denial.
+request in production, so every request ends in a timeout denial.
 
 ## Data model
 One table, `public.approvals` (created in AGO-74, RLS in AGO-107). This feature adds no migration.
@@ -21,7 +23,8 @@ One table, `public.approvals` (created in AGO-74, RLS in AGO-107). This feature 
 | `action` | the tool name only, never its input |
 | `payload_hash` | hash of the call's input; the payload itself is never stored |
 | `status` | `pending`, then `rejected` (worker, on expiry), or `approved` / `denied` (a human, through RLS) |
-| `expires_at` | when a pending request times out |
+| `expires_at` | when a pending request times out, and the last moment an approved one can be used (`now >= expires_at` is expired) |
+| `consumed_at` | set once by the worker when an approved row is used; a consumed row never grants again |
 
 `APPROVAL_STATUS` and `APPROVAL_ACTION_MAX_LENGTH` live in `packages/shared`.
 
@@ -39,6 +42,13 @@ flowchart LR
   Wake --> Queue["job queue (resume)"]
   Queue --> Resolve["resolveApproval in agent-loop.ts"]
   Resolve --> Closed["call closed approval_expired, model told, tool not run"]
+  Resolve --> Cand["approved row: candidate"]
+  Cand --> Exec["executeToolCall: policy, input check"]
+  Exec --> Hash["approvalPayloadHash (worker computes)"]
+  Hash --> Consume["ApprovalStore.consume (one UPDATE)"]
+  Consume --> Table3[("approvals: consumed_at set")]
+  Consume --> Tool["tool runs"]
+  Consume -->|no row| Refuse["describeApprovalRefusal: tool_call.failed with a code"]
 ```
 
 ## Main functions and files
@@ -46,8 +56,12 @@ flowchart LR
 |---|---|---|
 | `createAgentLoop` (escalation branch) | `apps/worker/src/agent/agent-loop.ts` | creates the pending row before the event and the pause |
 | `resolveApproval` | `apps/worker/src/agent/agent-loop.ts` | on resume: wait again, expire a late row itself, or close the call unrun |
+| `executeToolCall` (`grantedApprovalId`) | `apps/worker/src/agent/agent-loop.ts` | for an approved call: policy, input check, hash, consume, then the tool |
+| `uniqueStepCallIds` | `apps/worker/src/agent/agent-loop.ts` | one distinct call id per call in a step |
+| `approvalPayloadHash`, `canonicalJson` | `apps/worker/src/approvals/payload-hash.ts` | the one hash used on both the request and grant sides |
+| `describeApprovalRefusal` | `apps/worker/src/approvals/approval-refusal.ts` | picks the denial code from the row |
 | `approvalIdFor` | `apps/worker/src/approvals/approval-id.ts` | deterministic UUID for one call |
-| `createPgApprovalStore` (`create`, `get`, `expire`, `expireDue`) | `apps/worker/src/approvals/approval-store.ts` | the only SQL; idempotent create, conditional expire |
+| `createPgApprovalStore` (`create`, `get`, `expire`, `expireDue`, `consume`) | `apps/worker/src/approvals/approval-store.ts` | the only SQL; idempotent create, conditional expire |
 | `expireDueApprovals`, `createApprovalExpirySweeper` | `apps/worker/src/approvals/expire-approvals.ts` | one sweep pass, and the interval timer |
 | `createRunControl().resumeAfterApprovalExpiry` | `apps/worker/src/queue/run-control.ts` | the narrow system wake-up |
 | `createJobQueue` | `apps/worker/src/queue/job-queue.ts` | builds the sweeper; starts and stops it with the queue |
