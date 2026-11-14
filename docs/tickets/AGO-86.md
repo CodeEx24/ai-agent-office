@@ -68,4 +68,8 @@ Unit: loop order (control, budget, policy, tool), pause and stop between calls, 
 - The control, budget, policy, tool ordering test is deferred to AGO-40 (see Known limitations).
 
 ## Outcome
-Feature guide: `docs/features/control.md`. Merge pending by design: the PR touches `scripts/` (a human-merge path), so the owner merges.
+- Delivered: human-only pause, resume and stop of agent runs (web control route, worker control sweep, stop closes pending approvals as denied). Agent tokens get 403 on the control route.
+- Rounds: round 1 gate PASS (run 2; run 1 ago-151 load flake), functional PASS (41 tests), reviewers CHANGES (C1 unfinished stop after a failed run.stopped write; C2 stale control rows starve the sweep). Round 2 fixed both (aceaada): gate PASS, functional, code, security and invariants PASS.
+- Approver: code approved; held only because the PR adds `scripts/ago-86-rollback.test.mjs` (human-merge path), so the owner merges.
+- Follow-ups: see "Follow-up tasks" (rare double run.stopped window at run-stop.ts:69-80; the control-budget-policy-tool ordering test waits on AGO-40). No follow-up tickets created yet (owner approves tickets).
+- Feature guide: `docs/features/control.md`.
