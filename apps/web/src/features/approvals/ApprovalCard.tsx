@@ -21,16 +21,21 @@ export function ApprovalCard({
   card,
   nowMs,
   canDecide,
+  isLocked,
   state,
   onDecide,
+  onDismiss,
 }: {
   card: ApprovalCardData;
   nowMs: number;
   canDecide: boolean;
+  /** True while ANY card is being decided or the list is settling after a decision: no decide button may fire. */
+  isLocked: boolean;
   state: CardDecisionState;
   onDecide: (id: string, decision: "approved" | "denied") => void;
+  onDismiss: (id: string) => void;
 }) {
-  const isBusy = state.kind === "sending" || state.kind === "decided";
+  const isBusy = state.kind === "sending" || state.kind === "decided" || isLocked;
   const titleId = `approval-${card.id}-title`;
 
   return (
@@ -62,11 +67,11 @@ export function ApprovalCard({
             <dd>{card.action}</dd>
           </div>
           <div className="flex gap-2">
-            <dt className="font-medium">Payload</dt>
+            <dt className="font-medium">Call details</dt>
             <dd data-testid="approval-payload">
-              <code title={card.payloadHash}>{card.payloadHash.slice(0, 12)}…</code>{" "}
-              <span className="text-muted-foreground">
-                (fingerprint of the exact call; the full payload is not stored yet)
+              Not shown yet: the full call details are not stored yet.{" "}
+              <span className="text-xs text-muted-foreground">
+                Reference <code title={card.payloadHash}>{card.payloadHash.slice(0, 12)}…</code>
               </span>
             </dd>
           </div>
@@ -104,6 +109,13 @@ export function ApprovalCard({
         ) : null}
 
         {canDecide ? (
+          <p className="text-sm font-medium" data-testid="approval-details-note">
+            You can&apos;t see what this call will send or change (for example the recipient or the
+            message). Approving lets the agent run exactly the call it asked for.
+          </p>
+        ) : null}
+
+        {canDecide ? (
           <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
@@ -132,9 +144,24 @@ export function ApprovalCard({
             <Button type="button" size="sm" variant="outline" disabled title={NOT_YET_AVAILABLE}>
               Ask
             </Button>
+            {state.kind === "decided" ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  onDismiss(card.id);
+                }}
+              >
+                Dismiss
+              </Button>
+            ) : null}
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">Only members can decide an approval.</p>
+          <p className="text-sm text-muted-foreground" data-testid="approval-view-only">
+            You have view-only access, so you can&apos;t decide this request. Ask a workspace member
+            to decide it.
+          </p>
         )}
       </CardContent>
     </Card>

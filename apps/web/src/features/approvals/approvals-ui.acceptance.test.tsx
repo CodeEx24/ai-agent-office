@@ -175,8 +175,17 @@ describe("AC2: decisions update the run within 2 seconds (UI side)", () => {
       workspace_id: WORKSPACE,
       decision: "denied",
     });
+    // Round 2: every decide button is held for a moment after a decision, so a quick second click cannot land on
+    // another card. The other cards are untouched (no result, no request) and are enabled again after the hold.
     const first = screen.getAllByTestId("approval-card")[0]!;
-    expect(within(first).getByRole("button", { name: "Approve" })).toBeEnabled();
+    expect(within(first).getByRole("button", { name: "Approve" })).toBeDisabled();
+    await waitFor(
+      () => {
+        expect(within(first).getByRole("button", { name: "Approve" })).toBeEnabled();
+      },
+      { timeout: 3_000 },
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a decided card showing its verdict if the next read still lists it, never offering a second decision", async () => {
@@ -235,7 +244,8 @@ describe("AC4 edge cases: failure states, viewer, hostile text", () => {
     setup([makeCard(1), makeCard(2)], false);
     expect(screen.getAllByTestId("approval-card")).toHaveLength(2);
     expect(screen.queryAllByRole("button")).toHaveLength(0);
-    expect(screen.getAllByText("Only members can decide an approval.")).toHaveLength(2);
+    expect(screen.getAllByTestId("approval-view-only")).toHaveLength(2);
+    expect(screen.queryByText(/Only members can decide/)).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

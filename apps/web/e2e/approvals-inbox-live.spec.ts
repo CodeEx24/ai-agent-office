@@ -162,8 +162,9 @@ test.describe("AGO-37: approvals inbox (local stack)", () => {
     await expect(cardA.getByTestId("approval-reason")).toHaveText("tier_3_needs_human");
     await expect(cardA).toContainText("Tier 3");
     await expect(cardA.getByTestId("approval-payload")).toContainText(`${hashA.slice(0, 12)}…`);
-    await expect(cardA.getByTestId("approval-payload")).toContainText(
-      "the full payload is not stored yet",
+    await expect(cardA.getByTestId("approval-payload")).toContainText("Not shown yet");
+    await expect(cardA.getByTestId("approval-details-note")).toContainText(
+      "You can't see what this call will send or change",
     );
     await expect(cardA.getByTestId("approval-steps")).toContainText("Approval requested");
     await expect(cardA.getByTestId("approval-cost")).toContainText("$0.01");
@@ -205,16 +206,17 @@ test.describe("AGO-37: approvals inbox (local stack)", () => {
       await expect(viewerPage.getByTestId("approval-card")).toHaveCount(3);
       await expect(viewerPage.getByRole("button", { name: "Approve" })).toHaveCount(0);
       await expect(viewerPage.getByRole("button", { name: "Reject" })).toHaveCount(0);
-      await expect(
-        viewerPage.getByText("Only members can decide an approval.").first(),
-      ).toBeVisible();
+      await expect(viewerPage.getByTestId("approval-view-only").first()).toContainText(
+        "view-only access",
+      );
       await shot(viewerPage, "07-viewer-read-only");
     } finally {
       await viewerContext.close();
     }
     expect(viewerErrors).toEqual([]);
 
-    // AC2: approve card A and measure, in the page, from the click to the card leaving the list.
+    // AC2: approve card A and measure, in the page, from the click to the verdict showing on the card. Round 2: the
+    // decided card stays in place as a receipt (so the next card never moves under the cursor) until dismissed.
     await page.evaluate((cardSelector) => {
       const w = window as unknown as { __clickAt?: number; __goneAt?: number };
       w.__clickAt = undefined;
@@ -231,11 +233,13 @@ test.describe("AGO-37: approvals inbox (local stack)", () => {
       );
       const list = document.querySelector("[data-testid=approvals-list]");
       const watcher = new MutationObserver(() => {
-        const names = [...document.querySelectorAll(cardSelector)].map((el) => el.textContent);
+        const verdicts = [...document.querySelectorAll(cardSelector)].map(
+          (el) => el.querySelector("[data-testid=approval-result]")?.textContent ?? "",
+        );
         if (
           w.__clickAt !== undefined &&
           w.__goneAt === undefined &&
-          !names.some((t) => t.includes("email.send"))
+          verdicts.some((t) => t.includes("Approved"))
         ) {
           w.__goneAt = performance.now();
         }
@@ -244,7 +248,9 @@ test.describe("AGO-37: approvals inbox (local stack)", () => {
     }, "[data-testid=approval-card]");
     await shot(page, "08-ac2-before-approve");
     await cardA.getByRole("button", { name: "Approve" }).click();
-    await expect(cards.filter({ hasText: nameA })).toHaveCount(0, { timeout: BUDGET_MS * 2 });
+    await expect(cardA.getByTestId("approval-result")).toHaveText("Approved", {
+      timeout: BUDGET_MS * 2,
+    });
     const latencyMs = await page.evaluate(() => {
       const w = window as unknown as { __clickAt?: number; __goneAt?: number };
       return w.__clickAt !== undefined && w.__goneAt !== undefined
@@ -253,20 +259,28 @@ test.describe("AGO-37: approvals inbox (local stack)", () => {
     });
     await shot(page, "09-ac2-after-approve");
     console.log(
-      `AGO-37 approve latency (click to card gone, in the page): ${String(latencyMs)} ms`,
+      `AGO-37 approve latency (click to verdict on the card, in the page): ${String(latencyMs)} ms`,
     );
+    // Round 2: while the list settles, no other card can be decided (every decide button is held).
+    await expect(cardB.getByRole("button", { name: "Reject" })).toBeDisabled();
     expect(latencyMs).not.toBeNull();
     expect(latencyMs ?? Infinity).toBeLessThan(BUDGET_MS);
     expect((await svcRow("approvals", idA))?.status).toBe("approved");
     expect(typeof (await svcRow("approvals", idA))?.decided_by).toBe("string");
 
-    // AC2: reject card B; it leaves the list and is stored as denied.
+    // AC2: reject card B (its button re-enables once the hold ends); the verdict shows and it is stored as denied.
+    await cardA.getByRole("button", { name: "Dismiss" }).click();
+    await expect(cards.filter({ hasText: nameA })).toHaveCount(0);
     const rejectStart = Date.now();
     await cardB.getByRole("button", { name: "Reject" }).click();
-    await expect(cards.filter({ hasText: nameB })).toHaveCount(0, { timeout: BUDGET_MS * 2 });
+    await expect(cardB.getByTestId("approval-result")).toHaveText("Rejected", {
+      timeout: BUDGET_MS * 2,
+    });
     console.log(
-      `AGO-37 reject latency (click to card gone, from the test): ${String(Date.now() - rejectStart)} ms`,
+      `AGO-37 reject latency (click to verdict, from the test): ${String(Date.now() - rejectStart)} ms`,
     );
+    await cardB.getByRole("button", { name: "Dismiss" }).click();
+    await expect(cards.filter({ hasText: nameB })).toHaveCount(0);
     expect((await svcRow("approvals", idB))?.status).toBe("denied");
     await shot(page, "10-ac2-after-reject");
 
@@ -289,6 +303,7 @@ test.describe("AGO-37: approvals inbox (local stack)", () => {
     // Empty state once everything is decided.
     await page.setViewportSize({ width: 1280, height: 800 });
     await cards.first().getByRole("button", { name: "Reject" }).click();
+    await cards.first().getByRole("button", { name: "Dismiss" }).click();
     await expect(page.getByTestId("approvals-empty")).toHaveText("Nothing is waiting for you.", {
       timeout: BUDGET_MS * 2,
     });

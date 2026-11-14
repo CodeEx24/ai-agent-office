@@ -52,6 +52,31 @@ export interface ApprovalInbox {
   readonly cards: readonly ApprovalCardData[];
 }
 
+/** What the page gets when the list could not be read this time (a query failed): the inbox keeps its last good list. */
+export interface ApprovalInboxLoadFailure {
+  readonly workspaceId: string;
+  readonly generatedAtMs: number;
+  readonly loadFailed: true;
+}
+
+/**
+ * Like `listPendingApprovals`, but a failed READ comes back as a value instead of a throw. The page uses it so a
+ * failed poll shows an inline "couldn't refresh, retrying" line rather than dropping to the route's error
+ * boundary (which would stop the polling). Access errors still throw: signed out or not a member is not a retry.
+ */
+export async function loadApprovalInbox(
+  workspaceId: string,
+): Promise<ApprovalInbox | ApprovalInboxLoadFailure> {
+  try {
+    return await listPendingApprovals(workspaceId);
+  } catch (error) {
+    if (error instanceof ApprovalInboxError) {
+      return { workspaceId, generatedAtMs: Date.now(), loadFailed: true };
+    }
+    throw error;
+  }
+}
+
 export async function listPendingApprovals(workspaceId: string): Promise<ApprovalInbox> {
   const access = await requireWorkspaceRole(workspaceId, "viewer");
   const supabase = await createSupabaseServerClient();

@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 
 import { getCurrentUser } from "../../../features/auth/current-user";
 import { ApprovalInbox } from "../../../features/approvals/ApprovalInbox";
-import { listPendingApprovals } from "../../../features/approvals/inbox-data";
+import { loadApprovalInbox } from "../../../features/approvals/inbox-data";
 import { getActiveWorkspace } from "../../../features/workspaces/workspace-access";
 
 export const metadata: Metadata = { title: "Approvals · Agent Office" };
@@ -16,7 +16,7 @@ export default async function ApprovalsPage() {
   const workspace = user ? await getActiveWorkspace(user.id) : null;
   if (!workspace) redirect("/app");
 
-  const inbox = await listPendingApprovals(workspace.id);
+  const inbox = await loadApprovalInbox(workspace.id);
 
   return (
     <main className="mx-auto grid max-w-3xl gap-6 p-8 [&>*]:min-w-0">
@@ -27,12 +27,22 @@ export default async function ApprovalsPage() {
           request nobody answers is denied when it times out.
         </p>
       </header>
-      <ApprovalInbox
-        workspaceId={inbox.workspaceId}
-        cards={inbox.cards}
-        canDecide={inbox.canDecide}
-        serverNowMs={inbox.generatedAtMs}
-      />
+      {"loadFailed" in inbox ? (
+        <ApprovalInbox
+          workspaceId={inbox.workspaceId}
+          cards={[]}
+          canDecide={false}
+          serverNowMs={inbox.generatedAtMs}
+          loadFailed
+        />
+      ) : (
+        <ApprovalInbox
+          workspaceId={inbox.workspaceId}
+          cards={inbox.cards}
+          canDecide={inbox.canDecide}
+          serverNowMs={inbox.generatedAtMs}
+        />
+      )}
     </main>
   );
 }
