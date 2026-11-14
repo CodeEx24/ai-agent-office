@@ -1,0 +1,25 @@
+// PLANTED VIOLATIONS: approved reaches a status write through a const, a const alias, an import alias and a const
+// alias of the status holder. Each write must be reported.
+import { APPROVAL_STATUS } from "@ago/shared";
+import { APPROVAL_STATUS as A } from "@ago/shared";
+
+const GRANTED = APPROVAL_STATUS.approved;
+const STATE = "approved";
+const alias = STATE;
+
+export function viaConst(store: { update(input: unknown): Promise<void> }) {
+  return store.update({ status: GRANTED });
+}
+
+export function viaAlias(store: { update(input: unknown): Promise<void> }) {
+  return store.update({ status: alias });
+}
+
+export function viaImportAlias() {
+  return { status: A.approved };
+}
+
+export function viaHolderAlias() {
+  const s = APPROVAL_STATUS;
+  return { status: s.approved };
+}

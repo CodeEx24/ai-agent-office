@@ -56,7 +56,15 @@ None. No migration.
 AGO-21 (done), AGO-47 (done). AGO-58 must add its human-only route to `HUMAN_DECISION_FILES`.
 
 ## Known limitations
-A static check is heuristic: it catches the shapes listed above, not every indirection (for example a status built by string concatenation). The runtime guarantee (the RLS policy "an expired approval can no longer be approved", the worker's conditional `expire` and `consume`) stays the real enforcement; the check is a tripwire.
+The static check is a tripwire, not a proof. It follows values inside one file: constants, pure aliases (`const s = APPROVAL_STATUS`, an import alias), `+` and template concatenation, ternaries, SQL `||` joins and plpgsql variables. It does not follow these shapes, so review is the backstop for them:
+- computed keys: `{ ["status"]: "approved" }`, `{ [k]: "approved" }`, `row["sta" + "tus"] = ...`
+- object and array indirection: `const S = { ok: "approved" }; S.ok`, `["approved"][0]`
+- cross-file indirection: a constant, helper or return value defined in another module
+- runtime-built values: `.join("")`, `.toLowerCase()`, row data, a function's return value, a parameter
+- plpgsql dynamic SQL (`execute format(...)`), and SQL assembled in another file
+- setter calls whose name is not a write verb (`set`, `update`, `mark`, `save`, `write`, `change`, `transition`, `record`) followed by `Status`, `Decision` or `Outcome`, or whose status argument is not a literal or a bound alias (`store.write(id, "approved")`)
+
+The runtime guarantee (the RLS policy "an expired approval can no longer be approved", the worker's conditional `expire` and `consume`) stays the real enforcement.
 
 ## Testing notes
 `pnpm --filter @ago/worker test -- no-auto-approve` and `agent-loop.approvals`. No database, no model calls.

@@ -136,20 +136,32 @@ source could approve without a human. It scans non-test `.ts`/`.tsx` under `apps
 
 | Rule | Catches |
 |---|---|
-| R1 status write | `status: approved`, `status` shorthand, `x.status = approved`, also through a constant, a concatenation or a ternary |
+| R1 status write | `status: approved`, `status` shorthand, `x.status = approved`, a setter call such as `setStatus(id, "approved")`; also through a constant, a pure alias (`const s = APPROVAL_STATUS`, an import alias), a concatenation or a ternary |
 | R2 timeout allows | an expiry/timeout/deadline/ttl/sweep handler, or an `if`/`?:` on an expiry condition, that resolves to allow, approved or proceed or runs the call; an `approval.decided` event that is `approved` and decided by the timeout |
-| R3 SQL approves | `UPDATE ... SET status = 'approved'`, `new.status := 'approved'`, an `INSERT` of an approved row, a `$n` bound to approved, in `.sql` files and in strings in TypeScript |
+| R3 SQL approves | `UPDATE ... SET status = 'approved'`, `new.status := 'approved'`, `new.status = 'approved'` at the start of a statement (a plain `=` in plpgsql is an assignment), an `INSERT` of an approved row, a `$n` bound to approved, a SQL `||` join or a plpgsql variable bound to approved, in `.sql` files and in strings in TypeScript (also built with `+`) |
+
+Comparisons are not writes and stay clean: `where status = 'approved'`, `if new.status = 'approved'`, `case when status = 'approved'`, a trigger `when (new.status = 'approved')`, and `set status = case when status = 'approved' ...`.
 
 The test proves itself: planted violations in `__fixtures__/auto-approve/` (a direct update, a computed status, SQL strings,
-a ternary on expiry, a timeout-decided approved event, a DB trigger, a cron update and a CASE expression) must each be
-reported, look-alikes that only read `approved` must not, a sanity check asserts the real scan saw the files, and two
+a ternary on expiry, a timeout-decided approved event, a DB trigger, a cron update, a CASE expression, a plain `=` assignment
+in plpgsql, a setter called with `approved`, aliases of approved, a `+` and a `||` concatenation) must each be reported,
+the comparison forms in `clean-comparisons.sql.fixture` and look-alikes that only read `approved` must not, a sanity check asserts the real scan saw the files, and two
 violations planted into the real `approval-store.ts` and `expire-approvals.ts` text must be caught. The fixtures folder
 and the Playwright `e2e/` folder (which plays the human decider against a local database) are excluded explicitly.
 
 **The one exception.** A human decide route (AGO-58) must write `approved`. It is listed in `HUMAN_DECISION_FILES` in the
 check, which keeps the exception visible in review; the list is empty until that route exists. The check is a tripwire
-(it follows constants, concatenations and ternaries within one file, not a status built across files); the runtime
-enforcement remains the conditional `expire` and `consume` SQL, the RLS policy and the loop's refusal codes.
+(it follows constants, pure aliases, concatenations and ternaries within one file, not a status built across files); the
+runtime enforcement remains the conditional `expire` and `consume` SQL, the RLS policy and the loop's refusal codes.
+
+**Known limitations.** The check does not follow these shapes. Review is the backstop for them, so a reviewer checks any
+new code that builds a status:
+- computed keys: `{ ["status"]: "approved" }`, `{ [k]: "approved" }`, `row["sta" + "tus"] = ...`
+- object and array indirection: `const S = { ok: "approved" }; S.ok`, `["approved"][0]`
+- cross-file indirection: a constant, helper or return value defined in another module
+- runtime-built values: `.join("")`, `.toLowerCase()`, row data, a function's return value, a parameter
+- plpgsql dynamic SQL (`execute format(...)`), and SQL assembled in another file
+- setter calls whose name is not a write verb (`set`, `update`, `mark`, `save`, `write`, `change`, `transition`, `record`) followed by `Status`, `Decision` or `Outcome`, or whose status argument is not a literal or a bound alias (`store.write(id, "approved")`)
 
 ## How to extend it
 - Add the human decision: write `approved` or `denied` from a human-only route (AGO-58). The grant path (hash binding,

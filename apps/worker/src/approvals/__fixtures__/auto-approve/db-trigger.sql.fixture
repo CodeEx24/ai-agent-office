@@ -9,6 +9,17 @@ begin
 end;
 $$;
 
+-- plpgsql with a plain = (not :=): still an assignment, and it must be reported.
+create or replace function public.approvals_plain_assign() returns trigger
+language plpgsql as $$
+begin
+  if old.expires_at <= now() then
+    new.status = 'approved';
+  end if;
+  return new;
+end;
+$$;
+
 select cron.schedule('auto-approve', '* * * * *',
   $$update public.approvals set status = 'approved' where status = 'pending' and expires_at <= now()$$);
 

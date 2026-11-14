@@ -1,0 +1,4 @@
+// PLANTED VIOLATION: a status setter called with the literal 'approved' (a setter name: set + Status).
+export function markReviewed(store: { setStatus(id: string, status: string): Promise<void> }, id: string) {
+  return store.setStatus(id, "approved");
+}

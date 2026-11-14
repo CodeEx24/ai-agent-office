@@ -11,19 +11,27 @@ import { describe, expect, it } from "vitest";
  * No code path may turn a pending or expired approval into an approved one without a human decision. This test
  * scans the source (TypeScript and SQL, including `supabase/migrations`) for the shapes such a path would take:
  *
- *   R1  a write of `approved` to a `status` (object property, shorthand, assignment), even through a constant,
- *       a concatenation or a ternary;
+ *   R1  a write of `approved` to a `status` (object property, shorthand, assignment), or a setter call whose name is a
+ *       write verb then Status, Decision or Outcome (`setStatus(id, "approved")`). The value may come through a
+ *       constant, a pure alias (`const s = APPROVAL_STATUS`, an import alias, `APPROVAL_STATUS.approved`), a `+`
+ *       concatenation or a ternary;
  *   R2  a timeout/expiry handler (by function name, or by an `if` / `?:` on an expiry condition) that resolves to
  *       allow, approved or proceed, or runs the call; and a decision event that is `approved` and `timeout`-decided;
- *   R3  SQL that sets a status to `approved` (UPDATE ... SET, `new.status :=`, INSERT), in a `.sql` file or in a
- *       string in TypeScript, including a `$n` parameter bound to `approved`.
+ *   R3  SQL that sets a status to `approved`: UPDATE ... SET, `new.status = ` starting a statement, `new.status :=`,
+ *       INSERT. It is found in a `.sql` file or in a string in TypeScript (also a `+` concatenation). A `$n` parameter
+ *       bound to `approved`, a SQL `||` join and a plpgsql variable bound to `approved` all count. Comparisons are not
+ *       writes: `where status = 'approved'`, `if new.status = 'approved'`, `case when status = 'approved'`, a trigger
+ *       `when (...)` clause.
  *
  * The only place that may write `approved` is a human decide route (AGO-58). It must be listed in
  * `HUMAN_DECISION_FILES` below, which makes the exception visible in review.
  *
- * It is a tripwire, not a proof: it follows constants, concatenations and ternaries inside one file, not a status
- * built across files or from runtime data. The runtime guarantees (the conditional `expire` and `consume` SQL, the
- * RLS policy, the loop's refusal codes) are the real enforcement.
+ * It is a tripwire, not a proof. It follows values inside one file only. It does not follow computed keys, object or
+ * array indirection (`S.ok`, `["approved"][0]`), values from another module, runtime-built strings (`.join`,
+ * `.toLowerCase()`, a function's return value, row data) or dynamic SQL (`execute format(...)`). The list of misses is
+ * in docs/features/approvals.md under "Timeout means deny (AGO-51)". Review is the backstop for those. The runtime
+ * guarantees (the conditional `expire` and `consume` SQL, the RLS policy, the loop's refusal codes) are the real
+ * enforcement.
  */
 
 type RuleId = "R1-status-write" | "R2-timeout-allows" | "R3-sql-approve";
@@ -56,6 +64,9 @@ const ALLOW_FLAGS: ReadonlySet<string> = new Set([
   "proceed",
 ]);
 const ALLOW_CALL = /^(approve|grant|allow|proceed|execute|run)\w*$/i;
+/** A setter for a status, decision or outcome: `setStatus`, `updateDecision`, `markOutcome`, ... */
+const SETTER =
+  /^(set|update|mark|save|write|change|transition|record)\w*(Status|Decision|Outcome)$/;
 const SYSTEM_ACTOR = /^(timeout|system|sweeper|sweep|expiry|expired|timer|cron)$/i;
 const STATUS_HOLDER = /(status|outcome|decision)/i;
 const UNKNOWN = "\u0000";
@@ -64,18 +75,37 @@ const isApproved = (value: string): boolean => value.toLowerCase() === "approved
 
 // ---------------------------------------------------------------------------------------------- values
 
-type Env = ReadonlyMap<string, ts.Expression>;
+type Env = ReadonlyMap<string, ts.Node>;
 
 function collectEnv(source: ts.SourceFile): Env {
-  const env = new Map<string, ts.Expression>();
+  const env = new Map<string, ts.Node>();
   const visit = (node: ts.Node): void => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
       env.set(node.name.text, node.initializer);
+    }
+    // `import { APPROVAL_STATUS as A }` binds A to the status holder.
+    if (ts.isImportSpecifier(node) && STATUS_HOLDER.test((node.propertyName ?? node.name).text)) {
+      env.set(node.name.text, node);
     }
     ts.forEachChild(node, visit);
   };
   visit(source);
   return env;
+}
+
+/**
+ * True for `APPROVAL_STATUS`, for a name that says status, and for a pure alias of one (`const s = APPROVAL_STATUS`,
+ * an import alias). An alias counts only when its initializer is a bare identifier, a property access or an import,
+ * so `const counts = countByStatus(...)` is not a holder.
+ */
+function isStatusHolder(expression: ts.Expression, env: Env): boolean {
+  if (STATUS_HOLDER.test(expression.getText())) return true;
+  if (!ts.isIdentifier(expression)) return false;
+  const bound = env.get(expression.text);
+  if (bound === undefined) return false;
+  const isPure =
+    ts.isIdentifier(bound) || ts.isPropertyAccessExpression(bound) || ts.isImportSpecifier(bound);
+  return isPure && STATUS_HOLDER.test(bound.getText());
 }
 
 /**
@@ -121,8 +151,8 @@ function valuesOf(
     if (init === undefined || seen.has(node.text)) return unknown;
     return valuesOf(init, env, unknownAs, new Set([...seen, node.text]));
   }
-  if (ts.isPropertyAccessExpression(node) && STATUS_HOLDER.test(node.expression.getText())) {
-    // APPROVAL_STATUS.approved, ApprovalStatus.approved: the member name is the value.
+  if (ts.isPropertyAccessExpression(node) && isStatusHolder(node.expression, env)) {
+    // APPROVAL_STATUS.approved, ApprovalStatus.approved, or an alias of it: the member name is the value.
     return [node.name.text];
   }
   return unknown;
@@ -132,6 +162,26 @@ function valuesOf(
 
 function stripSqlComments(sql: string): string {
   return sql.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
+}
+
+/** Lower-cased, comment-free, single-spaced SQL with adjacent string literals joined (`'appro' || 'ved'`). */
+function normalizeSql(raw: string): string {
+  let joined = stripSqlComments(raw).replace(/\s+/g, " ").toLowerCase();
+  let previous = "";
+  while (joined !== previous) {
+    previous = joined;
+    joined = joined.replace(/'([^']*)'\s*\|\|\s*'([^']*)'/g, "'$1$2'");
+  }
+  return joined;
+}
+
+/** plpgsql variables assigned in this text: `v_status := 'approved';` binds v_status to `'approved'`. */
+function sqlVariables(normalized: string): ReadonlyMap<string, string> {
+  const vars = new Map<string, string>();
+  for (const match of normalized.matchAll(/(?<![.\w])(\w+)\s*:=\s*([^;]*)/g)) {
+    vars.set(match[1] ?? "", match[2] ?? "");
+  }
+  return vars;
 }
 
 /** Split on top-level commas (not inside parentheses or quotes). */
@@ -156,28 +206,60 @@ function splitTopLevel(text: string): string[] {
 }
 
 /**
- * Snippets of SQL that set a status to `approved`. `params[n-1]` lists the values a `$n` may take.
- * Comparisons (`where status = 'approved'`, `new.status = 'approved'`) and policies are not writes.
+ * True when a value written to a status is `'approved'`. An occurrence that is the operand of a comparison
+ * (`status = 'approved'`, `'approved' <> status`, `in ('approved', ...)`) is not a write, and neither is `:=` on its
+ * left (that is an assignment).
  */
-function sqlApproves(rawSql: string, params: readonly (readonly string[])[] = []): string[] {
-  const sql = stripSqlComments(rawSql).replace(/\s+/g, " ").toLowerCase();
+function writesApproved(expression: string): boolean {
+  for (const match of expression.matchAll(/'approved'/g)) {
+    const at = match.index;
+    const before = expression.slice(0, at).trimEnd();
+    const after = expression.slice(at + "'approved'".length).trimStart();
+    const comparedBefore = /(?:(?<!:)=|<>|!=)$/.test(before) || /\bin\s*\([^()]*$/.test(before);
+    const comparedAfter = /^(?:=|<>|!=)/.test(after);
+    if (!comparedBefore && !comparedAfter) return true;
+  }
+  return false;
+}
+
+/**
+ * Snippets of SQL that set a status to `approved`. `params[n-1]` lists the values a `$n` may take. `vars` binds
+ * plpgsql variables for the whole text; it defaults to the variables of `rawSql` itself.
+ */
+function sqlApproves(
+  rawSql: string,
+  params: readonly (readonly string[])[] = [],
+  vars?: ReadonlyMap<string, string>,
+): string[] {
+  const sql = normalizeSql(rawSql);
+  const bindings = vars ?? sqlVariables(sql);
+  const valueOf = (expression: string): string => {
+    const trimmed = expression.trim();
+    return bindings.get(trimmed) ?? trimmed;
+  };
   const hits: string[] = [];
   for (const match of sql.matchAll(/\bset ([^;]*)/g)) {
     const clause = (match[1] ?? "").split(/ (?:where|returning|from) /)[0] ?? "";
     for (const assignment of splitTopLevel(clause)) {
-      const target = /^\s*(?:\w+\.)?status\s*(?::?=)\s*(.*)$/.exec(assignment);
+      const target = /^\s*(?:\w+\.)?status\s*=\s*(.*)$/.exec(assignment);
       if (target === null) continue;
       const expression = target[1] ?? "";
       const bound = /^\$(\d+)\b/.exec(expression.trim());
       const boundValues = bound === null ? [] : (params[Number(bound[1]) - 1] ?? []);
-      if (expression.includes("'approved'") || boundValues.some(isApproved)) {
+      if (writesApproved(valueOf(expression)) || boundValues.some(isApproved)) {
         hits.push(`set ${assignment.trim()}`);
       }
     }
   }
-  for (const match of sql.matchAll(/\bnew\.status\s*:=\s*([^;]*)/g)) {
-    if ((match[1] ?? "").includes("'approved'"))
-      hits.push(`new.status := ${match[1] ?? ""}`.trim());
+  // `new.status = x` is an assignment only at the start of a statement. Elsewhere it is a comparison (`if`, `elsif`,
+  // `when`, `where`, a trigger `when (...)`). `new.status := x` is always an assignment.
+  const assignmentStart =
+    /(?:(?:^|;|\bbegin|\bthen|\belse|\bloop)\s*new\.status\s*(=)|\bnew\.status\s*(:=))\s*([^;]*)/g;
+  for (const match of sql.matchAll(assignmentStart)) {
+    const operator = match[1] ?? match[2] ?? "=";
+    const expression = match[3] ?? "";
+    if (writesApproved(valueOf(expression)))
+      hits.push(`new.status ${operator} ${expression.trim()}`);
   }
   for (const match of sql.matchAll(/\binsert into (?:\w+\.)?approvals\b[^;]*/g)) {
     if (match[0].includes("'approved'")) hits.push(match[0].slice(0, 80));
@@ -192,10 +274,12 @@ function lineOfOffset(text: string, offset: number): number {
 function scanSql(file: string, text: string): Finding[] {
   const findings: Finding[] = [];
   const stripped = stripSqlComments(text);
+  // Variables come from the whole file, so a plpgsql variable set in one statement and written in a later one counts.
+  const vars = sqlVariables(normalizeSql(stripped));
   // Report per statement-ish chunk so each hit carries a useful line.
   let offset = 0;
   for (const chunk of stripped.split(/(?<=;)/)) {
-    for (const snippet of sqlApproves(chunk)) {
+    for (const snippet of sqlApproves(chunk, [], vars)) {
       findings.push({
         file,
         line: lineOfOffset(stripped, offset),
@@ -212,6 +296,12 @@ function scanSql(file: string, text: string): Finding[] {
 
 function propName(name: ts.PropertyName | ts.BindingName): string | undefined {
   return ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
+}
+
+function calleeName(call: ts.CallExpression): string {
+  if (ts.isIdentifier(call.expression)) return call.expression.text;
+  if (ts.isPropertyAccessExpression(call.expression)) return call.expression.name.text;
+  return "";
 }
 
 type FunctionNode =
@@ -278,13 +368,8 @@ function scanTypeScript(file: string, text: string): Finding[] {
           add(node, "R2-timeout-allows");
         }
       }
-      if (ts.isCallExpression(node)) {
-        const callee = ts.isIdentifier(node.expression)
-          ? node.expression.text
-          : ts.isPropertyAccessExpression(node.expression)
-            ? node.expression.name.text
-            : "";
-        if (ALLOW_CALL.test(callee)) add(node, "R2-timeout-allows");
+      if (ts.isCallExpression(node) && ALLOW_CALL.test(calleeName(node))) {
+        add(node, "R2-timeout-allows");
       }
     });
   };
@@ -313,6 +398,14 @@ function scanTypeScript(file: string, text: string): Finding[] {
           ts.isStringLiteralLike(node.left.argumentExpression) &&
           node.left.argumentExpression.text === "status")) &&
       approvedValue(node.right)
+    ) {
+      add(node, "R1-status-write");
+    }
+    // R1: a setter for a status, decision or outcome called with approved (`setStatus(id, "approved")`).
+    if (
+      ts.isCallExpression(node) &&
+      SETTER.test(calleeName(node)) &&
+      node.arguments.some(approvedValue)
     ) {
       add(node, "R1-status-write");
     }
@@ -361,6 +454,19 @@ function scanTypeScript(file: string, text: string): Finding[] {
       ts.isStringLiteral(node) ||
       ts.isNoSubstitutionTemplateLiteral(node) ||
       ts.isTemplateExpression(node)
+    ) {
+      for (const sql of valuesOf(node, env, UNKNOWN)) {
+        if (sqlApproves(sql).length > 0) add(node, "R3-sql-approve");
+      }
+    }
+    // R3: SQL built with `+` (the outermost `+` of a chain, so each built string is checked once).
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+      !(
+        ts.isBinaryExpression(node.parent) &&
+        node.parent.operatorToken.kind === ts.SyntaxKind.PlusToken
+      )
     ) {
       for (const sql of valuesOf(node, env, UNKNOWN)) {
         if (sqlApproves(sql).length > 0) add(node, "R3-sql-approve");
@@ -477,9 +583,10 @@ describe("AGO-51 AC1: no code path approves on timeout", () => {
     expect(rulesOf(findings)).toEqual(["R3-sql-approve"]);
     const snippets = findings.map((f) => f.snippet).join("\n");
     expect(snippets).toContain("new.status := 'approved'");
+    expect(snippets).toContain("new.status = 'approved'");
     expect(snippets).toContain("set status = 'approved'");
     expect(snippets).toContain("case when");
-    expect(findings.length).toBeGreaterThanOrEqual(3);
+    expect(findings.length).toBeGreaterThanOrEqual(4);
   });
 });
 
@@ -513,6 +620,36 @@ describe("AGO-51 AC1: the check fails on each planted shape", () => {
   it("reports nothing for look-alikes that only read approved or only deny", () => {
     expect(fixture("clean.ts.fixture")).toEqual([]);
     expect(fixture("clean.sql.fixture")).toEqual([]);
+  });
+});
+
+describe("AGO-51 AC1: the widened shapes are caught", () => {
+  it('a setter called with the literal approved (setStatus(id, "approved"))', () => {
+    const findings = fixture("call-literal.ts.fixture");
+    expect(rulesOf(findings)).toEqual(["R1-status-write"]);
+    expect(findings).toHaveLength(1);
+  });
+
+  it("a const or alias bound to approved or APPROVAL_STATUS.approved, then written", () => {
+    const findings = fixture("alias-approved.ts.fixture");
+    expect(rulesOf(findings)).toEqual(["R1-status-write"]);
+    expect(findings).toHaveLength(4);
+  });
+
+  it("a SQL string built with + from a variable bound to approved", () => {
+    const findings = fixture("sql-concat.ts.fixture");
+    expect(rulesOf(findings)).toEqual(["R3-sql-approve"]);
+    expect(findings).toHaveLength(2);
+  });
+
+  it("a plpgsql status built with || and written from a variable", () => {
+    const findings = fixture("sql-concat.sql.fixture");
+    expect(rulesOf(findings)).toEqual(["R3-sql-approve"]);
+    expect(findings).toHaveLength(1);
+  });
+
+  it("a comparison against approved is not a write (negative fixture, must report nothing)", () => {
+    expect(fixture("clean-comparisons.sql.fixture")).toEqual([]);
   });
 });
 
