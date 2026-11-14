@@ -70,6 +70,22 @@ export interface CheckpointStore {
   clearResumeRequest(ref: CheckpointRef): Promise<void>;
   /** Runs with a stop or resume request a person recorded and the worker has not handled yet (AGO-86). */
   listControlRequests(limit: number): Promise<readonly ControlRequest[]>;
+  /**
+   * Forget the stop and resume requests of runs that are already `succeeded` or `failed` (AGO-86): nothing can act
+   * on them, and left alone they would crowd live requests out of `listControlRequests`. Returns how many rows.
+   */
+  clearStaleControlRequests(): Promise<number>;
+  /**
+   * Finish a stop whose run is already `stopped` but whose tail is not done (the `run.stopped` write failed, or the
+   * flag could not be dropped). ONE caller at a time per run (row lock, others skip): `write` gets whether a
+   * `run.stopped` event already exists, writes the event only when it does not, and the checkpoint (and so the
+   * flag) is dropped only after `write` returns. A `write` failure throws and leaves the flag set for the next
+   * pass. False when there is no such stop to finish (no flag, or the run is not `stopped`).
+   */
+  finishStopTail(
+    ref: CheckpointRef,
+    write: (isEventWritten: boolean) => Promise<void>,
+  ): Promise<boolean>;
   /** Delete the checkpoint and the pause request (the run is over; the event log keeps the history). */
   clear(ref: CheckpointRef): Promise<void>;
 }
@@ -84,6 +100,8 @@ export const noopCheckpointStore: CheckpointStore = {
   readControl: () => Promise.resolve({ pauseRequested: false, stopRequested: false }),
   clearResumeRequest: () => Promise.resolve(),
   listControlRequests: () => Promise.resolve([]),
+  clearStaleControlRequests: () => Promise.resolve(0),
+  finishStopTail: () => Promise.resolve(false),
   clear: () => Promise.resolve(),
 };
 
@@ -175,11 +193,20 @@ export function createPgCheckpointStore(pool: pg.Pool): CheckpointStore {
         is_resume: boolean;
         control_requested_by: string | null;
       }>(
-        `select workspace_id, run_id, stop_requested_at is not null as is_stop,
-                resume_requested_at is not null as is_resume, control_requested_by
-           from private.run_checkpoints
-          where stop_requested_at is not null or resume_requested_at is not null
-          order by coalesce(stop_requested_at, resume_requested_at)
+        // Only requests something can still act on: a stop for a queued or paused run (the sweep stops it) or a
+        // `stopped` run (its tail may be unfinished); a resume for a queued or paused run. A running run's own
+        // loop ends it; a finished run's request is stale (`clearStaleControlRequests`). Joining `runs` keeps a
+        // pile of dead rows from filling the batch.
+        `select c.workspace_id, c.run_id,
+                (c.stop_requested_at is not null) as is_stop,
+                (c.resume_requested_at is not null and c.stop_requested_at is null) as is_resume,
+                c.control_requested_by
+           from private.run_checkpoints c
+           join public.runs r on r.workspace_id = c.workspace_id and r.id = c.run_id
+          where (c.stop_requested_at is not null and r.status in ('queued', 'paused', 'stopped'))
+             or (c.resume_requested_at is not null and c.stop_requested_at is null
+                 and r.status in ('queued', 'paused'))
+          order by coalesce(c.stop_requested_at, c.resume_requested_at)
           limit $1`,
         [limit],
       );
@@ -190,6 +217,55 @@ export function createPgCheckpointStore(pool: pg.Pool): CheckpointStore {
         resumeRequested: row.is_resume,
         requestedBy: row.control_requested_by,
       }));
+    },
+
+    async clearStaleControlRequests() {
+      const result = await pool.query(
+        `update private.run_checkpoints c
+            set stop_requested_at = null, resume_requested_at = null
+           from public.runs r
+          where r.workspace_id = c.workspace_id and r.id = c.run_id
+            and r.status in ('succeeded', 'failed')
+            and (c.stop_requested_at is not null or c.resume_requested_at is not null)`,
+      );
+      return result.rowCount ?? 0;
+    },
+
+    async finishStopTail({ workspaceId, runId }, write) {
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        // The row lock makes one worker at a time finish this tail; a second one skips (it gets false).
+        const locked = await client.query(
+          `select 1 from private.run_checkpoints c
+             join public.runs r on r.workspace_id = c.workspace_id and r.id = c.run_id
+            where c.workspace_id = $1 and c.run_id = $2
+              and c.stop_requested_at is not null and r.status = 'stopped'
+            for update of c skip locked`,
+          [workspaceId, runId],
+        );
+        if (locked.rowCount !== 1) {
+          await client.query("rollback");
+          return false;
+        }
+        const written = await client.query(
+          `select 1 from public.run_events
+            where workspace_id = $1 and run_id = $2 and type = 'run.stopped' limit 1`,
+          [workspaceId, runId],
+        );
+        await write(written.rowCount === 1);
+        await client.query(
+          `delete from private.run_checkpoints where workspace_id = $1 and run_id = $2`,
+          [workspaceId, runId],
+        );
+        await client.query("commit");
+        return true;
+      } catch (error) {
+        await client.query("rollback").catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
     },
 
     async clear({ workspaceId, runId }) {

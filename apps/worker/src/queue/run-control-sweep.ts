@@ -11,6 +11,8 @@ import type { CheckpointStore } from "../agent/checkpoint-store.js";
  *    loop sees the flag before its next tool call and ends the run, so no call is cut short;
  *  - resume on a `paused` run: `RunControl.resumeRun` with the person who asked. A stop beats a resume: a run with
  *    a stop request is never resumed (the stop is checked first here, and `resumeRun` refuses it in the database).
+ *  - a stop whose tail did not finish (the run is `stopped`, `run.stopped` missing or the flag still set) is finished;
+ *  - requests of runs that already ended are forgotten, and never listed, so they cannot fill the batch.
  * The resume flag is forgotten after one attempt, whatever came of it, so a request that no longer applies is not
  * retried forever. Resuming never bypasses an approval or a budget: the woken loop reads the approval again and
  * waits or closes the call, and checks its limits before the next step.
@@ -21,7 +23,11 @@ export const DEFAULT_CONTROL_SWEEP_BATCH = 100;
 export interface ControlSweepDeps extends RunStopDeps {
   readonly checkpoints: Pick<
     CheckpointStore,
-    "clear" | "listControlRequests" | "clearResumeRequest"
+    | "clear"
+    | "listControlRequests"
+    | "clearResumeRequest"
+    | "clearStaleControlRequests"
+    | "finishStopTail"
   >;
   readonly control: Pick<RunControl, "resumeRun">;
   readonly batchSize?: number;
@@ -30,6 +36,11 @@ export interface ControlSweepDeps extends RunStopDeps {
 
 /** One pass. Returns how many requests it handled. A failure on one run never stops the others. */
 export async function sweepControlRequests(deps: ControlSweepDeps): Promise<number> {
+  // Requests of runs that already ended can never be acted on; forget them first so they cannot crowd out live
+  // ones. Best effort: the listing below ignores them anyway, so a failure here only costs a retry next pass.
+  await deps.checkpoints.clearStaleControlRequests().catch((error: unknown) => {
+    deps.logger.error({ err: error }, "could not clear stale run control requests");
+  });
   const requests = await deps.checkpoints.listControlRequests(
     deps.batchSize ?? DEFAULT_CONTROL_SWEEP_BATCH,
   );
@@ -39,7 +50,8 @@ export async function sweepControlRequests(deps: ControlSweepDeps): Promise<numb
     const logger = withContext(deps.logger, { run_id: ref.runId, workspace_id: ref.workspaceId });
     try {
       if (request.stopRequested) {
-        // A running run is not touched here (its loop ends it); a finished run's flag was dropped with its checkpoint.
+        // A running run is not listed (its loop ends it). A `stopped` run that is still listed has an unfinished
+        // tail: `finalizeStop` moves nothing and finishes it (`run.stopped` once, then the flag is dropped).
         if (await finalizeStop(deps, ref, ["queued", "paused"])) handled += 1;
         continue;
       }

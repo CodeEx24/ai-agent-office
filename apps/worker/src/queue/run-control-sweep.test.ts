@@ -118,6 +118,125 @@ describe("AGO-86: finalizeStop", () => {
   });
 });
 
+describe("AGO-86 round 2 (C1): a failed run.stopped write is finished by the next sweep", () => {
+  /** Events that fail the first `failures` writes of `run.stopped`, then behave. */
+  function flakyStopEvents(w: ReturnType<typeof world>, failures: number): RunEventStore {
+    let left = failures;
+    return {
+      insert: (row) => {
+        if (row.type === "run.stopped" && left > 0) {
+          left -= 1;
+          return Promise.reject(new Error("event store is down"));
+        }
+        w.rows.push(row);
+        return Promise.resolve({
+          id: String(w.rows.length),
+          seq: w.rows.length,
+          created_at: "now",
+        });
+      },
+    };
+  }
+
+  it("keeps the flag when the event write fails, then one sweep writes run.stopped once and clears the flag", async () => {
+    const w = world(RUN_STATUS.paused);
+    w.checkpoints.flagStop(REF, HUMAN);
+    const deps = { ...w.deps, events: flakyStopEvents(w, 1) };
+
+    // pass 1: the run moves to stopped, the event write fails: the stop is not lost, and nothing throws
+    expect(await sweepControlRequests(deps)).toBe(1);
+    expect(w.state.status).toBe(RUN_STATUS.stopped);
+    expect(w.rows.filter((r) => r.type === "run.stopped")).toHaveLength(0);
+    expect(w.checkpoints.isStopRequestedNow(REF)).toBe(true);
+    w.checkpoints.setRunStatus(REF, "stopped");
+
+    // pass 2: markStopped moves nothing; the tail is finished
+    expect(await sweepControlRequests(deps)).toBe(1);
+    expect(w.rows.filter((r) => r.type === "run.stopped")).toHaveLength(1);
+    expect(w.checkpoints.isStopRequestedNow(REF)).toBe(false);
+
+    // pass 3: nothing left to do, still exactly one event
+    expect(await sweepControlRequests(deps)).toBe(0);
+    expect(w.rows.filter((r) => r.type === "run.stopped")).toHaveLength(1);
+  });
+
+  it("retries on every pass while the event store stays down, and never clears the flag early", async () => {
+    const w = world(RUN_STATUS.paused);
+    w.checkpoints.flagStop(REF, HUMAN);
+    const deps = { ...w.deps, events: flakyStopEvents(w, 3) };
+
+    await sweepControlRequests(deps);
+    w.checkpoints.setRunStatus(REF, "stopped");
+    await sweepControlRequests(deps).catch(() => undefined);
+    await sweepControlRequests(deps).catch(() => undefined);
+    expect(w.rows.filter((r) => r.type === "run.stopped")).toHaveLength(0);
+    expect(w.checkpoints.isStopRequestedNow(REF)).toBe(true);
+
+    await sweepControlRequests(deps);
+    expect(w.rows.filter((r) => r.type === "run.stopped")).toHaveLength(1);
+    expect(w.checkpoints.isStopRequestedNow(REF)).toBe(false);
+  });
+
+  it("does not write a second run.stopped when the event exists but the flag could not be dropped", async () => {
+    const w = world(RUN_STATUS.stopped);
+    w.checkpoints.flagStop(REF, HUMAN);
+    w.checkpoints.setRunStatus(REF, "stopped");
+    w.checkpoints.markStopEventWritten(REF);
+
+    expect(await sweepControlRequests(w.deps)).toBe(1);
+
+    expect(w.rows.filter((r) => r.type === "run.stopped")).toHaveLength(0);
+    expect(w.checkpoints.isStopRequestedNow(REF)).toBe(false);
+  });
+
+  it("finalizeStop never throws once the run has moved to stopped", async () => {
+    const w = world(RUN_STATUS.running);
+    w.checkpoints.flagStop(REF);
+
+    await expect(
+      finalizeStop({ ...w.deps, events: flakyStopEvents(w, 1) }, REF, ["running"]),
+    ).resolves.toBe(true);
+
+    expect(w.state.status).toBe(RUN_STATUS.stopped);
+    expect(w.checkpoints.isStopRequestedNow(REF)).toBe(true);
+  });
+});
+
+describe("AGO-86 round 2 (C2): stale rows cannot crowd out a live request", () => {
+  it("processes the one live stop among more than 100 stale stop requests", async () => {
+    const w = world(RUN_STATUS.paused);
+    for (let i = 0; i < 150; i += 1) {
+      const stale = {
+        workspaceId: WS,
+        runId: `86000000-0000-4000-8000-${String(1000 + i).padStart(12, "0")}`,
+      };
+      w.checkpoints.flagStop(stale, HUMAN);
+      w.checkpoints.setRunStatus(stale, i % 2 === 0 ? "succeeded" : "failed");
+    }
+    w.checkpoints.flagStop(REF, HUMAN); // flagged last, so it sits behind every stale row
+    w.checkpoints.setRunStatus(REF, "paused");
+
+    expect(await sweepControlRequests({ ...w.deps, batchSize: 100 })).toBe(1);
+
+    expect(w.state.status).toBe(RUN_STATUS.stopped);
+    expect(w.rows.filter((r) => r.type === "run.stopped")).toHaveLength(1);
+    expect(w.checkpoints.isStopRequestedNow(REF)).toBe(false);
+    // the stale ones were forgotten, not stopped: no run.stopped for them
+    expect(await w.checkpoints.listControlRequests(1000)).toEqual([]);
+  });
+
+  it("leaves a running run's stop request for its own loop (not listed, not cleared)", async () => {
+    const w = world(RUN_STATUS.running);
+    w.checkpoints.flagStop(REF, HUMAN);
+    w.checkpoints.setRunStatus(REF, "running");
+
+    expect(await sweepControlRequests(w.deps)).toBe(0);
+
+    expect(w.state.status).toBe(RUN_STATUS.running);
+    expect(w.checkpoints.isStopRequestedNow(REF)).toBe(true);
+  });
+});
+
 describe("AGO-86: the control sweep", () => {
   it("stops a paused run that has a stop request", async () => {
     const w = world(RUN_STATUS.paused);

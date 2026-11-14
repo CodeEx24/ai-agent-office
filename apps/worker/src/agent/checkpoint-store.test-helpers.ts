@@ -41,6 +41,13 @@ export interface MemoryCheckpointStore extends CheckpointStore {
   failControlReads(): void;
   /** Runs (and awaits) before `readControl` answers: a test records a request landing in that window. */
   onControlRead(hook: (() => Promise<void>) | null): void;
+  /**
+   * AGO-86: the status of a run as the database join would see it. A run with no status set is listed like a live
+   * one (older tests never set one); a `succeeded` or `failed` run is stale; a `running` run is left to its loop.
+   */
+  setRunStatus(ref: CheckpointRef, status: string): void;
+  /** AGO-86: tell `finishStopTail` that a `run.stopped` event already exists for the run. */
+  markStopEventWritten(ref: CheckpointRef): void;
 }
 
 const keyOf = ({ workspaceId, runId }: CheckpointRef): string => `${workspaceId}:${runId}`;
@@ -55,6 +62,8 @@ export function createMemoryCheckpointStore(
   let saveFails = false;
   let readsFail = false;
   let onControlRead: (() => Promise<void>) | null = null;
+  const statuses = new Map<string, string>();
+  const stopEvents = new Set<string>();
   const row = (ref: CheckpointRef): MemoryRow => {
     const key = keyOf(ref);
     const existing = rows.get(key);
@@ -135,17 +144,56 @@ export function createMemoryCheckpointStore(
     listControlRequests() {
       const open: ControlRequest[] = [];
       for (const [key, value] of rows) {
-        if (!value.stopRequested && !value.resumeRequested) continue;
+        const status = statuses.get(key);
+        // Same rule as the database join: a stop for a queued, paused or stopped run; a resume (with no stop
+        // request) for a queued or paused run. No status set: listed.
+        const isStop =
+          value.stopRequested &&
+          (status === undefined || ["queued", "paused", "stopped"].includes(status));
+        const isResume =
+          value.resumeRequested &&
+          !value.stopRequested &&
+          (status === undefined || ["queued", "paused"].includes(status));
+        if (!isStop && !isResume) continue;
         const [workspaceId = "", runId = ""] = key.split(":");
         open.push({
           workspaceId,
           runId,
-          stopRequested: value.stopRequested,
-          resumeRequested: value.resumeRequested,
+          stopRequested: isStop,
+          resumeRequested: isResume,
           requestedBy: value.requestedBy,
         });
       }
       return Promise.resolve(open);
+    },
+    clearStaleControlRequests() {
+      let cleared = 0;
+      for (const [key, value] of rows) {
+        const status = statuses.get(key);
+        if (status !== "succeeded" && status !== "failed") continue;
+        if (!value.stopRequested && !value.resumeRequested) continue;
+        value.stopRequested = false;
+        value.resumeRequested = false;
+        cleared += 1;
+      }
+      return Promise.resolve(cleared);
+    },
+    async finishStopTail(ref, write) {
+      const key = keyOf(ref);
+      const existing = rows.get(key);
+      const status = statuses.get(key);
+      if (existing?.stopRequested !== true) return false;
+      // Like the database join: only a run known to be `stopped` has a tail to finish.
+      if (status !== "stopped") return false;
+      await write(stopEvents.has(key));
+      rows.delete(key);
+      return true;
+    },
+    setRunStatus(ref, status) {
+      statuses.set(keyOf(ref), status);
+    },
+    markStopEventWritten(ref) {
+      stopEvents.add(keyOf(ref));
     },
     flagStop(ref, requestedBy = null) {
       const target = row(ref);

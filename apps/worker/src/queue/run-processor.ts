@@ -81,7 +81,7 @@ export interface RunProcessorDeps {
   readonly logger: Logger;
   readonly errorTracker: ErrorTracker;
   /** Where the loop saved the run's state (AGO-30). Dropped when the run ends for good; omitted: nothing to drop. */
-  readonly checkpoints?: Pick<CheckpointStore, "clear">;
+  readonly checkpoints?: Pick<CheckpointStore, "clear" | "finishStopTail">;
   /** AGO-86: where a stop closes the run's pending approvals. Omitted: there is nothing to close. */
   readonly approvals?: Pick<ApprovalStore, "rejectPendingForRun">;
   /** Retries allowed after the first attempt: the attempt with `retryCount` of this is the last. */
