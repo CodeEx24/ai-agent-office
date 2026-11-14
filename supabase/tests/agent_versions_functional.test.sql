@@ -22,13 +22,17 @@ insert into public.members (id, workspace_id, user_id, role) values
   ('8a000000-0000-4000-8000-0000000001a2', '8aaaaaaa-0000-4000-8000-000000000001', '8a000000-0000-4000-8000-00000000000c', 'member'),
   ('8a000000-0000-4000-8000-0000000001a3', '8aaaaaaa-0000-4000-8000-000000000001', '8a000000-0000-4000-8000-00000000000d', 'viewer'),
   ('8a000000-0000-4000-8000-0000000001b1', '8abbbbbb-0000-4000-8000-000000000001', '8a000000-0000-4000-8000-00000000000b', 'owner');
--- p = autonomous source, e = edit target, r = archived (for the viewer/member unarchive checks), a = active, bb = B
+-- p = non-strict source (raised below), e = edit target, r = archived (for the viewer/member unarchive checks), a = active, bb = B
 insert into public.agents (id, workspace_id, name, role, model, prompt, daily_budget_cents, mode, archived_at) values
-  ('8a000000-0000-4000-8000-0000000002a1', '8aaaaaaa-0000-4000-8000-000000000001', 'Auto source', 'R', 'claude-haiku-5-5', 'p', 100, 'autonomous', null),
+  ('8a000000-0000-4000-8000-0000000002a1', '8aaaaaaa-0000-4000-8000-000000000001', 'Auto source', 'R', 'claude-haiku-5-5', 'p', 100, 'strict', null),
   ('8a000000-0000-4000-8000-0000000002a2', '8aaaaaaa-0000-4000-8000-000000000001', 'Edit target', 'R', 'claude-haiku-5-5', 'p', 100, 'strict', null),
   ('8a000000-0000-4000-8000-0000000002a3', '8aaaaaaa-0000-4000-8000-000000000001', 'Archived one', 'R', 'claude-haiku-5-5', 'p', 100, 'strict', now()),
   ('8a000000-0000-4000-8000-0000000002a4', '8aaaaaaa-0000-4000-8000-000000000001', 'Task target', 'R', 'claude-haiku-5-5', 'p', 100, 'strict', null),
   ('8a000000-0000-4000-8000-0000000002b1', '8abbbbbb-0000-4000-8000-000000000001', 'B agent', 'R', 'claude-haiku-5-5', 'p', 100, 'strict', null);
+-- AGO-99: a mode changes only through set_agent_mode(); the fixture raises the source the way that function does
+select set_config('ago.mode_change', 'on', true);
+update public.agents set mode = 'relaxed' where id = '8a000000-0000-4000-8000-0000000002a1';
+select set_config('ago.mode_change', 'off', true);
 insert into public.tasks (id, workspace_id, title, agent_id) values
   ('8a000000-0000-4000-8000-0000000006a1', '8aaaaaaa-0000-4000-8000-000000000001', 'Loose', null),
   ('8a000000-0000-4000-8000-0000000006a2', '8aaaaaaa-0000-4000-8000-000000000001', 'Assigned to a4', '8a000000-0000-4000-8000-0000000002a4');
@@ -91,7 +95,7 @@ select throws_ok($$select public.update_agent('8aaaaaaa-0000-4000-8000-000000000
 create temp table t_copy as
   select public.duplicate_agent('8aaaaaaa-0000-4000-8000-000000000001', '8a000000-0000-4000-8000-0000000002a1', 'Auto copy') as id;
 grant select on t_copy to authenticated;
-select is((select mode from public.agents where id = '8a000000-0000-4000-8000-0000000002a1'), 'autonomous', 'the source really is autonomous (precondition)');
+select is((select mode from public.agents where id = '8a000000-0000-4000-8000-0000000002a1'), 'relaxed', 'the source really is not strict (precondition)');
 select is((select mode from public.agents where id = (select id from t_copy)), 'strict', 'AC3: a copy of an autonomous agent starts strict');
 select is((select status from public.agents where id = (select id from t_copy)), 'idle', 'the copy starts idle, not running');
 select is((select archived_at is null from public.agents where id = (select id from t_copy)), true, 'the copy is not archived');

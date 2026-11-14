@@ -95,6 +95,38 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"agent_mode_changes": {
+                  Row: {
+                    "agent_id": string,"changed_by": string,"created_at": string,"from_mode": string,"id": string,"to_mode": string,"workspace_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "agent_id": string,"changed_by": string,"created_at"?: string,"from_mode": string,"id"?: string,"to_mode": string,"workspace_id": string
+                  }
+                  Update: {
+                    "agent_id"?: string,"changed_by"?: string,"created_at"?: string,"from_mode"?: string,"id"?: string,"to_mode"?: string,"workspace_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "agent_mode_changes_workspace_id_agent_id_fkey"
+      columns: ["workspace_id","agent_id"]
+isOneToOne: false
+      referencedRelation: "agents"
+      referencedColumns: ["workspace_id","id"]
+    },{
+      foreignKeyName: "agent_mode_changes_workspace_id_changed_by_fkey"
+      columns: ["workspace_id","changed_by"]
+isOneToOne: false
+      referencedRelation: "members"
+      referencedColumns: ["workspace_id","id"]
+    },{
+      foreignKeyName: "agent_mode_changes_workspace_id_fkey"
+      columns: ["workspace_id"]
+isOneToOne: false
+      referencedRelation: "workspaces"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"agent_skills": {
                   Row: {
                     "agent_id": string,"created_at": string,"id": string,"skill_id": string,"updated_at": string,"workspace_id": string
@@ -616,6 +648,9 @@ isOneToOne: false
                            },
 "request_run_control":
 { Args: { "p_action": string,"p_run_id": string,"p_workspace_id": string }; Returns: string
+                           },
+"set_agent_mode":
+{ Args: { "p_agent_id": string,"p_mode": string,"p_workspace_id": string }; Returns: undefined
                            },
 "set_agent_run_limits":
 { Args: { "p_agent_id": string,"p_limits": Json,"p_workspace_id": string }; Returns: undefined

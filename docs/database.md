@@ -85,6 +85,7 @@ Every table has RLS and per-command policies for `authenticated` built on `priva
 | capabilities | viewer | - (seeded by migration and trigger) | owner (`enabled`, `description` only) | - |
 | agent_identities | viewer | - (created by a trigger on agents) | - | - |
 | agent_credentials | viewer | - (the worker appends; see the AGO-148 section) | - | - |
+| agent_mode_changes | viewer (AGO-99) | - (`set_agent_mode` appends) | - (blocked for every role) | - (blocked; only the agent or workspace delete cascades) |
 
 Rules that hold for every table: policies are `to authenticated`, one per command, named `<table>_<command>_<minimum role>`; `workspace_id` and other ids are never in an UPDATE grant (a row cannot move workspaces); approvals keep their `payload_hash`, `expires_at` and `consumed_at` immutable; `run_events` stays append-only; attribution columns (`granted_by`, `decided_by`, `created_by`) must be the caller's own membership (`private.current_member_id`).
 
@@ -162,3 +163,14 @@ One agent owns a task at a time and an unrenewed claim expires. Guide: [features
 - **`claim_events`.** Append-only audit table (`workspace_id`, `task_id`, `claim_id`, `agent_id`, `type`, `payload`, `created_at`). UPDATE, DELETE and TRUNCATE are revoked and blocked by a trigger for every role; the only removal is the cascade from a deleted workspace. No foreign keys on `task_id`, `claim_id` and `agent_id`, so the trail outlives them. RLS: members and viewers read their own workspace's rows; nobody writes through the API. The token is never in `payload`.
 - **Archived agents.** `claim_task` reads the agent with `FOR SHARE` and refuses an archived one (closes AGO-89 follow-up 2 for the claim path).
 - **Rollback.** `supabase/rollbacks/20261114010001_ago_160_task_claims.down.sql` (local data only; it drops `claim_events` and the new columns, and restores the AGO-107 table-level grant). Tests: `supabase/tests/task_claims.test.sql`.
+
+## Agent mode: Strict default and owner promotion (AGO-99)
+
+New agents start in Strict; only a signed-in workspace owner changes a mode, and every change is logged. Guide: [features/agents.md](features/agents.md).
+
+- **`agents.mode` constraint.** `agents_mode_check` allows `strict`, `standard`, `relaxed`. The default stays `strict`. `mode` is still in no column grant, so the API cannot write it.
+- **Guard triggers.** `agents_guard_mode_insert` (a new row must be `strict`, even for the table owner) and `agents_guard_mode_update` (a change of `mode` is refused unless the transaction flag `ago.mode_change` is `on`). Only `set_agent_mode` sets the flag, so no other path, `service_role` included, can change a mode.
+- **`agent_mode_changes`.** Append-only log (`workspace_id`, `agent_id`, `from_mode`, `to_mode`, `changed_by` member id, `created_at`; `from_mode <> to_mode`). Composite foreign keys to `agents` and `members` keep it in one workspace. UPDATE, DELETE and TRUNCATE are revoked and blocked by triggers (enabled `ALWAYS`); the agent or workspace delete cascade is the only exception. Members and viewers read it through RLS. It holds no prompt or run content.
+- **`public.set_agent_mode(p_workspace_id, p_agent_id, p_mode)`.** `SECURITY DEFINER`, `search_path = ''`, `EXECUTE` for `authenticated` only. It needs `auth.uid()` and the owner role (an agent credential has no user, so it is refused), then changes the mode and appends the log row in one transaction. SQLSTATEs: `42501` not an owner, `22023` unknown mode, `P0002` agent not in this workspace, `55000` archived agent, `AGM01` already in that mode.
+- **Rollback.** `supabase/rollbacks/20261115010001_ago_99_agent_mode_promotion.down.sql` (local data only; it drops the log, so the history is lost; agents keep their mode). Tests: `supabase/tests/agent_mode.test.sql`; the catalog tests (`core_schema*`, `rls_every_table*`) count the new table.
+- **Fixture note.** A test that needs a non-Strict agent inserts it as `strict` and then sets `ago.mode_change` to `on` for its own update (see `agent_versions.test.sql`).

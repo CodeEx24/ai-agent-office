@@ -20,11 +20,12 @@ Acceptance criteria (verbatim):
 - `run_events` needs a `run_id`, so a promotion (not part of a run) cannot go there. Precedents for a workspace-level append-only audit: `pack_events` (AGO-192, written only by a SECURITY DEFINER function), `agent_versions` (AGO-89, trigger-written).
 - Human-only: `requireHumanRequest` / `AgentCredentialRejectedError` (AGO-148, `apps/web/src/lib/auth/human-only.ts`); the agent actions in `features/agents/actions.ts` use `rejectAgentCredentialForEdit`. AGO-58 added the rejection event for approval routes.
 
-## Implementation details (proposed, pending the decisions below)
+## Implementation details (as built)
 1. **Shared** (`packages/shared/src/agents/`, additive): `AGENT_MODES` (`strict`, `standard`, `relaxed`) and `DEFAULT_AGENT_MODE = "strict"` as the one place the default lives (reused by the wizard, duplicate and, later, pack import AGO-194); `setAgentModeSchema` (strict Zod: `agentId`, `mode`, no other keys); label and error copy.
-2. **Database (needs the schema slot, see Q1):** one migration `<ts>_ago_99_agent_mode_promotion.sql` + rollback:
+2. **Database:** `supabase/migrations/20261115010001_ago_99_agent_mode_promotion.sql` + `supabase/rollbacks/20261115010001_ago_99_agent_mode_promotion.down.sql`:
    - `agents.mode` CHECK in (`strict`,`standard`,`relaxed`), after a guard that fails the migration if any row holds another value. Default stays `strict`.
    - `public.set_agent_mode(p_workspace_id, p_agent_id, p_mode)`: owner only, same style as the AGO-89 RPCs, refuses an archived agent, refuses a no-op, updates `mode` and writes one log row in the same transaction. No grant on `agents.mode` itself.
+   - Guard triggers on `agents`: a new row must be `strict`; a change of `mode` is refused unless the transaction flag `ago.mode_change` is on, which only `set_agent_mode` sets. So no path (service_role and the table owner included) changes a mode without a log row.
    - The log (Q2). Append-only, no direct INSERT grant, UPDATE/DELETE/TRUNCATE blocked, workspace RLS, the actor pinned to the caller's own member id.
 3. **Web** (`apps/web/src/features/agents/`): `promote-agent.ts` (logic behind an `AgentModeEditor` interface, testable without a DB), a server-only editor calling the RPC, `setAgentModeAction` in `actions.ts` (human-only check first, `parseInput`, owner check, revalidate), a small `AgentModeForm` on `/app/agents/[agentId]` (Q4).
 4. **Human-only**: the action rejects an agent credential (the existing guard); an agent credential cannot reach the RPC because it has no `auth.uid()`. A rejected attempt returns the same error state as the other agent actions. An agent can never change its own mode.
@@ -34,7 +35,7 @@ Acceptance criteria (verbatim):
 ## Decisions
 | # | Decision | Who / when |
 |---|---|---|
-| Q1 | A, queued: one migration (mode CHECK, `set_agent_mode` RPC, the log). AGO-86 holds the schema slot, so the SQL stays a draft (`docs/tickets/AGO-99-migration-draft.sql`) and is NOT added under `supabase/migrations` or run until the orchestrator says the slot is free; then it gets a fresh timestamp after AGO-86's. Everything not needing the schema is built first | owner via orchestrator, 2026-11-14 |
+| Q1 | A, queued: one migration (mode CHECK, `set_agent_mode` RPC, the log). AGO-86 holds the schema slot, so the SQL stays a draft (`docs/tickets/AGO-99-migration-draft.sql`) and was held back until the slot was free (the orchestrator granted it 2026-11-15 after AGO-86 merged); it now sits under `supabase/migrations` with a timestamp after AGO-86's. Everything not needing the schema is built first | owner via orchestrator, 2026-11-14 |
 | Q2 | A: new append-only `agent_mode_changes` table, written only by the RPC (no UPDATE/DELETE grants), workspace-scoped RLS, like `pack_events` | owner via orchestrator, 2026-11-14 |
 | Q3 | A: any mode to any other, owner only, every change logged with from, to, who, when. The RPC rejects agent tokens and service callers acting for an agent | owner via orchestrator, 2026-11-14 |
 | Q4 | A: owner-only form on `/app/agents/[agentId]` with a confirm step | owner via orchestrator, 2026-11-14 |
@@ -51,7 +52,7 @@ Acceptance criteria (verbatim):
 No HTTP route. One server action (`setAgentModeAction`), human only, owner only. One RPC `set_agent_mode`.
 
 ## Database changes
-See above; migration, rollback and pgTAP (`supabase/tests/agent_mode.test.sql`) to be written once the slot is granted. No migration is written before the orchestrator says the slot is ours.
+One migration (see Implementation details, point 2): `agents_mode_check`, the guard triggers, table `agent_mode_changes` and function `set_agent_mode`. Rollback in `supabase/rollbacks/` (drops the log). pgTAP: `supabase/tests/agent_mode.test.sql`; the catalog tests and two fixtures (`agent_versions*.test.sql`, which inserted modes outside the new allow-list) were updated. Details in `docs/database.md`.
 
 ## Dependencies on other tickets
 AGO-43 (modes; the policy engine reads `agents.mode`), AGO-89 (RPC, trigger and version patterns; duplicate), AGO-58 and AGO-148 (human-only), AGO-192 (audit table precedent), AGO-194 (will reuse `DEFAULT_AGENT_MODE`).

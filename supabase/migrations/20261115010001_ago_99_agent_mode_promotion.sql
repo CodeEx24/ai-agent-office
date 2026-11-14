@@ -69,7 +69,7 @@ alter table public.agent_mode_changes enable always trigger agent_mode_changes_b
 alter table public.agent_mode_changes enable always trigger agent_mode_changes_block_truncate;
 
 revoke all on table public.agent_mode_changes from public, anon, authenticated, service_role;
-grant select on public.agent_mode_changes to authenticated;
+grant select on public.agent_mode_changes to authenticated, service_role; -- the runtime may read the log; nobody writes it directly
 create policy agent_mode_changes_select_member on public.agent_mode_changes for select to authenticated
   using (private.is_member(workspace_id));
 
