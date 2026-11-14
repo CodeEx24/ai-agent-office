@@ -83,18 +83,30 @@ async function stackIsUp() {
   }
 }
 
-async function pgtapStep(key) {
+/**
+ * True only when `db-lock acquire` output says THIS call took the lock ("db lock acquired by X").
+ * "db lock already held by X" means the caller (same owner key) held it before this step, so the step
+ * must not release it (AGO-213: the release used to free the caller's lock mid-run).
+ */
+export function lockTakenByThisStep(acquireOutput) {
+  return /\bdb lock acquired by\b/.test(acquireOutput) && !/\balready held\b/.test(acquireOutput);
+}
+
+export async function pgtapStep(key, deps = {}) {
+  const { runCommand = run, runStep = step, isStackUp = stackIsUp } = deps;
   const command = "pnpm exec supabase test db (inside node scripts/db-lock.mjs)";
-  if (!(await stackIsUp())) {
+  if (!(await isStackUp())) {
     return { name: "pgTAP", command, status: "skip", output: "Skipped: the local Supabase stack is not up (pnpm db:start)." };
   }
   const owner = key ?? "CHECKS";
-  const acquire = run("node", ["scripts/db-lock.mjs", "acquire", owner]);
+  const acquire = runCommand("node", ["scripts/db-lock.mjs", "acquire", owner]);
   if (acquire.code !== 0) return { name: "pgTAP", command, status: "fail", output: acquire.output };
+  const tookLock = lockTakenByThisStep(acquire.output);
   try {
-    return step("pgTAP", "pnpm", ["exec", "supabase", "test", "db"]);
+    return runStep("pgTAP", "pnpm", ["exec", "supabase", "test", "db"]);
   } finally {
-    run("node", ["scripts/db-lock.mjs", "release", owner]);
+    // Only release a lock this step took; a caller that already holds it keeps it.
+    if (tookLock) runCommand("node", ["scripts/db-lock.mjs", "release", owner]);
   }
 }
 

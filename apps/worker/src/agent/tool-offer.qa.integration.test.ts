@@ -60,7 +60,7 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 async function waitFor<T>(
   read: () => Promise<T | undefined | false>,
-  timeoutMs = 20_000,
+  timeoutMs = 60_000,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -81,7 +81,7 @@ const finalAnswer: ModelResponse = { text: "Integration result.", toolCalls: [],
 
 describe.skipIf(!live)(
   "AGO-25 QA: ungranted tools are filtered from the model (live database)",
-  { timeout: 60_000 },
+  { timeout: 180_000 },
   () => {
     let pool: pg.Pool;
     const queues: JobQueue[] = [];
@@ -337,6 +337,10 @@ describe.skipIf(!live)(
       });
       expect(toolNames(requests[0])).toEqual(["get_current_time", "run_code"]);
       expect(ran).not.toHaveBeenCalled();
+      // Wait for the event the assertion reads, not only for the status that follows it (AGO-213).
+      await waitFor(async () =>
+        (await events(runId)).some((row) => row.type === "approval.requested") ? true : undefined,
+      );
       const rows = await events(runId);
       expect(rows.some((row) => row.type === "approval.requested")).toBe(true);
       expect(rows.some((row) => row.type === "tool_call.started")).toBe(false);

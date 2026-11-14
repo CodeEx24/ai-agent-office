@@ -158,10 +158,8 @@ export function createRunProcessor(deps: RunProcessorDeps) {
         agent_id: run.agentId,
         workspace_id: payload.workspace_id,
       });
-      await runs.markFinished(ref, RUN_STATUS.failed).catch((markError: unknown) => {
-        jobLogger.error({ err: markError }, "could not mark run failed");
-      });
-      await dropCheckpoint();
+      // AGO-213: the terminal event goes in BEFORE the failed status, so a reader that sees status
+      // "failed" always finds run.failed in the log (run_events stays append-only).
       await emitter
         .emit({
           type: "run.failed",
@@ -171,6 +169,10 @@ export function createRunProcessor(deps: RunProcessorDeps) {
           },
         })
         .catch(() => undefined); // already logged by the emitter; the job failure must still surface
+      await runs.markFinished(ref, RUN_STATUS.failed).catch((markError: unknown) => {
+        jobLogger.error({ err: markError }, "could not mark run failed");
+      });
+      await dropCheckpoint();
     };
 
     try {
