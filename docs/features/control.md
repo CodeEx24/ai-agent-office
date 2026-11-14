@@ -1,45 +1,60 @@
-# Run control: pause, resume and stop (AGO-86)
+# Run control: pause, resume and stop
+Tickets: AGO-86 (created)
 
-A person can pause, resume or stop any agent run. Only a person: agent credentials are refused on the control route, and the database function behind it refuses them too.
+## What it does
+A person can pause, resume or stop any agent run. Only a person: agent credentials are refused on the control route, and the database function behind it refuses them too. The web app only records the request. The worker makes it happen.
 
-## How it works
+## Screens
+None yet. The route `POST /api/runs/[id]/control` (body `{ workspace_id, action: "pause" | "resume" | "stop" }`) is the only entry point. The right-click controls UI is AGO-178.
 
+Answers: 200 `{ id, action, status: "accepted" }`; 400 bad input; 401 not signed in; 403 agent credential or not a member; 404 the run is not in a state the action applies to (or is already stopped); 500 `control_unavailable`.
+
+## Data model
+Three nullable columns on `private.run_checkpoints` (worker-only table, no grants for web roles): `pause_requested_at`, `stop_requested_at` (never cleared: stop is final), `resume_requested_at`, plus `control_requested_by` (the person, audit only). `public.runs.status` gains the free-text value `stopped`. No new table. `public.request_run_control(p_workspace_id, p_run_id, p_action)` is a `SECURITY DEFINER` function, executable by `authenticated` only. It writes no `run_events` and no `runs` row.
+
+## Data flow
+```mermaid
+flowchart LR
+  Person --> Route["POST /api/runs/[id]/control"]
+  Route --> Fn["public.request_run_control"]
+  Fn --> Flags[("private.run_checkpoints flags")]
+  Flags --> Loop["agent-loop executeToolCall"]
+  Flags --> Sweep["run-control-sweep (5 s)"]
+  Loop --> Stop["run-stop finalizeStop"]
+  Sweep --> Stop
+  Sweep --> Resume["RunControl.resumeRun"]
+  Stop --> Runs[("runs status stopped")]
+  Stop --> Events[("run_events run.stopped")]
+  Resume --> Runs
 ```
-person -> POST /api/runs/:id/control { workspace_id, action } -> request_run_control() -> flag on private.run_checkpoints
-                                                                                              |
-worker loop reads the flag before EVERY tool call  <-----------------------------------------+
-worker control sweep applies stop / resume to runs with no loop running  <--------------------+
-```
 
-1. **The route records a request, nothing more.** `POST /api/runs/[id]/control` checks, in order: agent credential (403, plus an `error.raised` event `control_route_rejected`), the body (400), a signed-in member of the workspace (401/403), then calls `public.request_run_control`. A run that is not in a state the action applies to answers 404. Success is 200 `{ id, action, status: "accepted" }`. The function writes no `run_events` and no `runs` row: the flags live in `private.run_checkpoints`, which only the worker can touch.
-2. **The loop checks the flag before every tool call.** The check is the first thing `executeToolCall` does, ahead of the `tool_call.requested` event, the policy hook, the approval consume and the tool. Order for one call: **control flag, then policy, then tool** (budget slots in between control and policy when AGO-40 lands). A pause or stop seen there leaves the call untouched in the checkpoint, so a resume runs it from the top with the flag checked again. A flag that cannot be read throws: the attempt fails and is retried, it is never run through (fail closed). The same check runs at the start of each step and after each model answer.
-3. **A paused agent makes no further calls within one tool-call boundary.** A pause that arrives while a tool is running lets that one call finish and starts none after it.
-4. **Stop is final.** A stop wins over a pause and over a resume. A running run is ended by its own loop at the next boundary; a queued or paused run is stopped by the control sweep. Finalizing a stop (`finalizeStop`) first closes the run's pending approvals as `rejected` with an `approval.decided` event (`denied`, decided by a human); the runtime never writes `approved`. Then the run moves to `stopped` in one conditional update, and the caller that moved it writes `run.stopped` (`stopped_by: human`, `reason: stopped_by_human`) and only then drops the checkpoint, and with it the flag. If that event write fails (or the worker dies) the run is already `stopped` and the flag stays set: the next control sweep lists it, finds nothing to move, and finishes the tail under a row lock, writing `run.stopped` only if no such event exists and then dropping the flag, so the event is written exactly once. The sweep lists a stop only for a queued, paused or `stopped` run (a running run's loop ends it) and a resume only for a queued or paused run, and it first clears the requests of runs that already succeeded or failed, so stale rows never fill its 100-row batch. Nothing moves a run out of `stopped`: `resumeRun` and the approval-expiry wake both refuse a run with a stop request, and every other transition is conditional on a different status.
-5. **Resume bypasses nothing.** The route records `resume_requested_at`; the sweep calls `RunControl.resumeRun` as the person who asked, which only moves `paused -> queued`. The woken loop reads each awaiting approval again (pending stays paused, expired is denied) and applies its budget and policy checks as normal. A resume request that names no person is ignored.
+## Main functions and files
+| function / component | file | role |
+|---|---|---|
+| `POST` | `apps/web/src/app/api/runs/[id]/control/route.ts` | Agent guard, Zod input, member check, one call to the function |
+| `requestRunControl` | `apps/web/src/features/runs/request-run-control.ts` | Calls the RPC with the caller's own session |
+| `runControlBodySchema`, `isRunControlRoute` | `packages/shared/src/runs/run-control.ts` | Body schema and the path matcher for the rejection event |
+| `request_run_control` | `supabase/migrations/20261114150001_ago_86_run_control.sql` | Human session and member check, then sets one flag. Down script: `supabase/rollbacks/20261114150001_ago_86_run_control.down.sql` |
+| `readRunControl`, `executeToolCall` | `apps/worker/src/agent/agent-loop.ts` | Reads the flags first thing in every tool call; also at step start and after each model answer |
+| `readControl`, `listControlRequests`, `clearStaleControlRequests`, `finishStopTail` | `apps/worker/src/agent/checkpoint-store.ts` | Flag reads, sweep listing, stale cleanup, finishing a stop tail under a row lock |
+| `finalizeStop` | `apps/worker/src/queue/run-stop.ts` | Closes approvals, moves the run to `stopped`, writes `run.stopped`, drops the flags |
+| `sweepControlRequests`, `createControlSweeper` | `apps/worker/src/queue/run-control-sweep.ts` | Applies stop and resume to runs with no loop; started in `job-queue.ts` |
+| `rejectPendingForRun` | `apps/worker/src/approvals/approval-store.ts` | `pending` to `rejected` for a stopped run |
+| `markStopped`, `resumeRun` | `apps/worker/src/queue/run-store.ts` | Conditional status updates; `resumeRun` refuses a run with a stop request |
+| human-only guard | `apps/web/src/proxy.ts` | Reuses the AGO-58 guard and rejection event for the control path |
 
-## Pieces
+## Rules and edge cases
+- Order for one tool call: control flag, then policy, then tool (budget slots between control and policy when AGO-40 lands, with an ordering test then). A pause or stop leaves the call unrun in the checkpoint, so a resume runs it from the top. A flag that cannot be read throws and the attempt is retried: fail closed.
+- A tool already running when a pause or stop arrives finishes; none starts after it.
+- A stop wins over a pause and over a resume. A running run is ended by its own loop; a queued or paused run by the control sweep. Nothing leaves `stopped`: `resumeRun` and the approval-expiry wake both refuse a run with a stop request.
+- Stopping closes the run's pending approvals as `rejected` with an `approval.decided` event (`denied`, by a human). The runtime never writes `approved`.
+- The mover of the run writes `run.stopped` (`stopped_by: human`, `reason: stopped_by_human`) and then drops the checkpoint. If that write fails, the run stays `stopped` with the flag set, and the next sweep finishes it under a row lock. Known limit: a narrow window between `markStopped` and the unlocked write can let a second worker write `run.stopped` twice (see the ticket's follow-up). The run state and approvals are unaffected.
+- The sweep first forgets requests of finished runs, so stale rows never fill its 100-row batch. A resume request naming no person is ignored; the resume flag is cleared after one attempt.
+- Resume bypasses nothing: it only moves `paused` to `queued`; the loop re-reads approvals, budgets and policy.
+- A `running` run whose worker died is only stopped when a retry reclaims it.
 
-| Piece | Where |
-|---|---|
-| Route and member check | `apps/web/src/app/api/runs/[id]/control/route.ts`, `apps/web/src/features/runs/request-run-control.ts` |
-| Human-only guard (reused from AGO-58) | `apps/web/src/lib/auth/human-only.ts`, `apps/web/src/proxy.ts` |
-| Schemas and route matcher | `packages/shared/src/runs/run-control.ts` |
-| Flags and function | `supabase/migrations/20261114150001_ago_86_run_control.sql` (down script in `supabase/rollbacks/`) |
-| Loop check | `apps/worker/src/agent/agent-loop.ts` (`readRunControl`, `executeToolCall`) |
-| Stop finalizer | `apps/worker/src/queue/run-stop.ts` |
-| Control sweep (5 s timer) | `apps/worker/src/queue/run-control-sweep.ts`, started in `job-queue.ts` |
-
-## Known limitations
-
-- Stopping a `running` run whose worker has died only lands once a retry reclaims the run and its loop sees the flag.
-- A stop is noticed at tool-call boundaries: a tool that is already running is allowed to finish.
-- No UI yet (AGO-178) and no workspace-wide kill switch (AGO-84).
-- The AGO-40 budget check is not in the loop yet. When it merges, the order control, budget, policy, tool needs a test.
-
-## Testing
-
-- `apps/worker/src/agent/agent-loop.control.test.ts`: order, no call after a pause, concurrent pause and stop, fail closed, resume continues.
-- `apps/worker/src/queue/run-control-sweep.test.ts`: stop is final, approvals closed, stop beats resume, resume as the asker, a failed `run.stopped` write is finished once by the next sweep, and a live stop is processed behind more than 100 stale requests.
-- `apps/worker/src/queue/run-control.integration.test.ts` (live database, under the db lock): the same two cases against Postgres, plus the stop, resume and approval SQL.
-- `supabase/tests/run_control.test.sql` (pgTAP) and `scripts/ago-86-rollback.test.mjs` (apply, roll back, re-apply).
-- Route and proxy tests under `apps/web`.
+## How to extend it
+- New action: add it to `RUN_CONTROL_ACTIONS` in `packages/shared/src/runs/run-control.ts`, a branch in `request_run_control` (new migration), and its handling in `agent-loop.ts` and the sweep.
+- Another control path to guard: extend `isRunControlRoute` so the proxy records the rejection.
+- Budget check: put it between `readRunControl` and the policy hook in `executeToolCall`, and add the four-step ordering test next to `agent-loop.control.test.ts`.
+- Tests: `agent-loop.control.test.ts`, `run-control-sweep.test.ts`, `run-control.integration.test.ts` (live DB, db lock), `supabase/tests/run_control.test.sql`, `scripts/ago-86-rollback.test.mjs`, and the route tests under `apps/web`.

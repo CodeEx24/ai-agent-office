@@ -5,7 +5,7 @@
 - PRs: https://github.com/CodeEx24/ai-agent-office/pull/71
 - Related: AGO-167 (agent tool loop, Done), AGO-82 (workspaces and roles, Done), AGO-30 (pause/resume seams, merged), AGO-58 (human-only guard, merged a761f9d), AGO-40 (budget hard stops, waiting for merge), AGO-84 (kill switch, blocked by this), AGO-178 (right-click controls UI, blocked by this)
 
-Status: In review (built, round 1). Type: Feature. Risk: high (human control, agent loop, auth, migration). Epic EP-06, wave 2.
+Status: In review (built, round 2 approved). Type: Feature. Risk: high (human control, agent loop, auth, migration). Epic EP-06, wave 2.
 
 ## Overview
 As an owner I want to pause, resume or stop any agent so that I can intervene instantly. Today `createRunControl` (AGO-30) has worker-side `requestRunPause` and `resumeRun` seams but no route a person can call, no way to stop a run for good, and the pause flag is checked at step and call boundaries inside the loop rather than at the single policy-check point. This ticket adds the human-only control routes, a final `stop`, and the control-flag check at the one place every tool call goes through.
@@ -63,5 +63,9 @@ Feature guide: `docs/features/control.md`. Run on this branch: worker Vitest (99
 Plan:
 Unit: loop order (control, budget, policy, tool), pause and stop between calls, fail-closed on flag read error, concurrent pause. Route: agent credential 403 plus event, 401, 403, 400, happy paths, resume of a stopped run refused. pgTAP for the function (membership, workspace scope, anon refused) under the db lock. No real model calls.
 
+## Follow-up tasks
+- A narrow window between `markStopped` and the unlocked `run.stopped` write on the moved path (`apps/worker/src/queue/run-stop.ts:69-80`) can write `run.stopped` twice. Fix: route the moved path through `finishStopTail` under the row lock, add a two-worker race test, and correct the "written exactly once" wording. Not linked to a ticket; owner to decide whether it becomes a ticket.
+- The control, budget, policy, tool ordering test is deferred to AGO-40 (see Known limitations).
+
 ## Outcome
-(filled at merge)
+Feature guide: `docs/features/control.md`. Merge pending by design: the PR touches `scripts/` (a human-merge path), so the owner merges.
