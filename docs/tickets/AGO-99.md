@@ -21,7 +21,7 @@ Acceptance criteria (verbatim):
 - Human-only: `requireHumanRequest` / `AgentCredentialRejectedError` (AGO-148, `apps/web/src/lib/auth/human-only.ts`); the agent actions in `features/agents/actions.ts` use `rejectAgentCredentialForEdit`. AGO-58 added the rejection event for approval routes.
 
 ## Implementation details (as built)
-1. **Shared** (`packages/shared/src/agents/`, additive): `AGENT_MODES` (`strict`, `standard`, `relaxed`) and `DEFAULT_AGENT_MODE = "strict"` as the one place the default lives (reused by the wizard, duplicate and, later, pack import AGO-194); `setAgentModeSchema` (strict Zod: `agentId`, `mode`, no other keys); label and error copy.
+1. **Shared** (`packages/shared/src/agents/`, additive): `AGENT_MODES` (`strict`, `standard`, `relaxed`) and no second starting-mode constant: the database (column default plus insert guard) decides, and the existing `NEW_AGENT_MODE` in `agent-limits.ts` stays the one shared name for the value (round 2: the new `DEFAULT_AGENT_MODE` was removed because no creation path can read it, duplicate included); `setAgentModeSchema` (strict Zod: `agentId`, `mode`, no other keys); label and error copy.
 2. **Database:** `supabase/migrations/20261115010001_ago_99_agent_mode_promotion.sql` + `supabase/rollbacks/20261115010001_ago_99_agent_mode_promotion.down.sql`:
    - `agents.mode` CHECK in (`strict`,`standard`,`relaxed`), after a guard that fails the migration if any row holds another value. Default stays `strict`.
    - `public.set_agent_mode(p_workspace_id, p_agent_id, p_mode)`: owner only, same style as the AGO-89 RPCs, refuses an archived agent, refuses a no-op, updates `mode`; the log trigger below writes the row in the same transaction. No grant on `agents.mode` itself.
@@ -40,8 +40,9 @@ Acceptance criteria (verbatim):
 | Q3 | A: any mode to any other, owner only, every change logged with from, to, who, when. The RPC rejects agent tokens and service callers acting for an agent | owner via orchestrator, 2026-11-14 |
 | Q4 | A: owner-only form on `/app/agents/[agentId]` with a confirm step | owner via orchestrator, 2026-11-14 |
 | Q5 | Record accepted (with Q1-Q4 as above) | owner via orchestrator, 2026-11-14 |
-| D6 | Mode values reuse `POLICY_AGENT_MODES` (AGO-43); one new `DEFAULT_AGENT_MODE` constant | worker |
+| D6 | Mode values reuse `POLICY_AGENT_MODES` (AGO-43); no new starting-mode constant (round 2: `DEFAULT_AGENT_MODE` removed, `NEW_AGENT_MODE` stays; the database default and insert guard are the source of truth) | worker |
 | D7 | Server action only, no HTTP route (same as the AGO-89 actions). An agent credential gets the existing human-only error state; no rejection run event, because a web action has no run to attach it to (AGO-58's event is run-scoped) | worker; owner can overrule |
+| D8 | Q4 promised a link to the agent's runs, but no runs route exists in the app. The form copy says "work" instead of "runs" and has no link; adding the link needs a runs view (follow-up) | worker, round 2 (UX review); owner can overrule |
 
 ## Boundaries
 - **Always:** scope by `workspace_id`; owner role checked in the action and the RPC; Zod at the action; the log is append-only and written in the same transaction as the change; unknown mode means strict.
@@ -55,15 +56,15 @@ No HTTP route. One server action (`setAgentModeAction`), human only, owner only.
 One migration (see Implementation details, point 2): `agents_mode_check`, the guard triggers, table `agent_mode_changes` and function `set_agent_mode`. Rollback in `supabase/rollbacks/` (drops the log). pgTAP: `supabase/tests/agent_mode.test.sql`; the catalog tests and two fixtures (`agent_versions*.test.sql`, which inserted modes outside the new allow-list) were updated. Details in `docs/database.md`.
 
 ## Dependencies on other tickets
-AGO-43 (modes; the policy engine reads `agents.mode`), AGO-89 (RPC, trigger and version patterns; duplicate), AGO-58 and AGO-148 (human-only), AGO-192 (audit table precedent), AGO-194 (will reuse `DEFAULT_AGENT_MODE`).
+AGO-43 (modes; the policy engine reads `agents.mode`), AGO-89 (RPC, trigger and version patterns; duplicate), AGO-58 and AGO-148 (human-only), AGO-192 (audit table precedent), AGO-194 (pack import; lands agents in Strict through the database default).
 
 ## Known limitations
-- No "review its runs" gate: the owner decides; the form links to the agent's runs but does not require a review. (A required-review rule is a follow-up.)
+- No "review its runs" gate and no link to runs: the app has no runs view yet, so the form asks the owner to confirm they reviewed the agent's work (deviation D8) and does not require a review. (A runs link and a required-review rule are follow-ups.)
 - The worker already reads `agents.mode` (AGO-43); no worker change here.
 
 ## Testing notes
 Unit: shared schema and default; the action with and without an agent credential; duplicate of a promoted source. pgTAP (under the db lock, after `supabase db reset`): CHECK, owner-only, member/viewer/agent refused, log row per change, log immutable, cross-workspace isolation, every creation path (wizard RPC, duplicate) lands in strict.
 
 ## Follow-up tasks
-- Pack import (AGO-194) must use `DEFAULT_AGENT_MODE`.
+- Pack import (AGO-194) must send no mode (the database lands it in Strict).
 - Optional: require N reviewed runs before a promotion.

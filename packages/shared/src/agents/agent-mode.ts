@@ -5,16 +5,14 @@ import { POLICY_AGENT_MODES, type PolicyAgentMode } from "../policy/policy-engin
 /**
  * Agent mode: the autonomy dial's setting for one agent (AGO-43), and how it changes (AGO-99).
  *
- * Every new agent starts in Strict (`DEFAULT_AGENT_MODE`): the wizard, a template, a duplicate and, later, a
- * pack import (AGO-194) all take the default from here and from the database column default, and none of them
- * can ask for another mode. Only a signed-in workspace owner can change it afterwards (promotion, or demotion
+ * Every new agent starts in Strict. The database is the source of truth: the wizard, a template, a duplicate and,
+ * later, a pack import (AGO-194) send no mode, the `agents.mode` column default is `strict`, and the insert guard
+ * refuses any other mode for a new row. `NEW_AGENT_MODE` in `agent-limits.ts` is the one name for that value in
+ * code; nothing sends it. Only a signed-in workspace owner can change a mode afterwards (promotion, or demotion
  * back towards Strict); an agent can never change its own mode.
  */
 export const AGENT_MODES = POLICY_AGENT_MODES;
 export type AgentMode = PolicyAgentMode;
-
-/** The one place the starting mode lives. Agent packs always land here too (CLAUDE.md). */
-export const DEFAULT_AGENT_MODE: AgentMode = "strict";
 
 export const AGENT_MODE_LABELS: Record<AgentMode, string> = {
   strict: "Strict",
@@ -33,7 +31,7 @@ export const AGENT_MODE_DESCRIPTIONS: Record<AgentMode, string> = {
 export const AGENT_MODE_MESSAGES = {
   modeRequired: "Pick a mode.",
   modeUnknown: "Pick one of the listed modes.",
-  confirmRequired: "Confirm that you reviewed this agent's runs and want to change its mode.",
+  confirmRequired: "Confirm that you reviewed this agent's work and want to change its mode.",
 } as const;
 
 export const agentModeSchema = z.enum(AGENT_MODES, {

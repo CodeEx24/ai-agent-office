@@ -27,11 +27,15 @@ export interface AgentModeEditor {
   setAgentMode(input: SetAgentModeInput): Promise<void>;
 }
 
-/** `done` is set when the mode changed and the change was logged. */
+/**
+ * `done` is set when the mode changed and the change was logged. When a submit is refused, `mode` carries the
+ * allowed mode the owner had picked, so the form can keep the choice instead of resetting it.
+ */
 export interface AgentModeState {
   fieldErrors?: { mode?: string; confirm?: string };
   error?: string;
   done?: boolean;
+  mode?: string;
 }
 
 export const AGENT_CREDENTIAL_MODE_ERROR =
@@ -78,6 +82,6 @@ export async function setAgentModeWith(
     await editor.setAgentMode(input);
     return { done: true };
   } catch (error) {
-    return stateFor(error);
+    return { ...stateFor(error), mode: input.mode };
   }
 }

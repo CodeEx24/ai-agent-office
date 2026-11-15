@@ -6,10 +6,10 @@ import {
   AGENT_MODE_LABELS,
   AGENT_MODE_MESSAGES,
   AGENT_MODES,
-  DEFAULT_AGENT_MODE,
   agentModeSchema,
   setAgentModeSchema,
 } from "./agent-mode.js";
+import { NEW_AGENT_MODE } from "./agent-limits.js";
 
 const IDS = {
   workspaceId: "99000000-0000-4000-8000-0000000000a1",
@@ -18,10 +18,10 @@ const IDS = {
 
 describe("AGO-99 the default mode", () => {
   it("is Strict, and Strict is the safe fallback for anything unknown", () => {
-    expect(DEFAULT_AGENT_MODE).toBe("strict");
-    expect(AGENT_MODES).toContain(DEFAULT_AGENT_MODE);
-    expect(parsePolicyAgentMode("")).toBe(DEFAULT_AGENT_MODE);
-    expect(parsePolicyAgentMode("permissive")).toBe(DEFAULT_AGENT_MODE);
+    expect(NEW_AGENT_MODE).toBe("strict");
+    expect(AGENT_MODES).toContain(NEW_AGENT_MODE);
+    expect(parsePolicyAgentMode("")).toBe(NEW_AGENT_MODE);
+    expect(parsePolicyAgentMode("permissive")).toBe(NEW_AGENT_MODE);
   });
 
   it("has a label and a description for every mode", () => {

@@ -1,15 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  AGENT_TEMPLATES,
-  DEFAULT_AGENT_MODE,
-  NEW_AGENT_MODE,
-  createAgentSchema,
-} from "@ago/shared";
+import { AGENT_TEMPLATES, AGENT_MODES, NEW_AGENT_MODE, createAgentSchema } from "@ago/shared";
 
 // AGO-99 AC1 functional QA: "New agents default to Strict" on the app-side create paths (wizard schema, template).
 // The database default and insert guard are proved in supabase/tests/agent_mode*.test.sql; the wizard's RPC call
 // carries no mode (agent-library.test.ts). Here: no app input can ask for another mode, every template creates
-// an agent whose input names no mode, and the two "starting mode" constants agree.
+// an agent whose input names no mode, and the one starting-mode constant is Strict.
 vi.mock("server-only", () => ({}));
 vi.mock("../../lib/supabase/server", () => ({ createSupabaseServerClient: vi.fn() }));
 vi.mock("../workspaces/workspace-access", () => {
@@ -38,9 +33,9 @@ const VALID_INPUT = {
 };
 
 describe("AC1: the starting mode is Strict everywhere in the app", () => {
-  it("has one agreed starting mode: the shared default and the wizard constant are both strict", () => {
-    expect(DEFAULT_AGENT_MODE).toBe("strict");
-    expect(NEW_AGENT_MODE).toBe(DEFAULT_AGENT_MODE);
+  it("has one starting mode constant, and it is a valid mode: strict", () => {
+    expect(NEW_AGENT_MODE).toBe("strict");
+    expect(AGENT_MODES).toContain(NEW_AGENT_MODE);
   });
 
   it("the wizard schema accepts a valid input that names no mode (control for the refusals below)", () => {

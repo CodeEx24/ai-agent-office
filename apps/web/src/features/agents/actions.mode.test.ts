@@ -106,24 +106,40 @@ describe("AGO-99 setAgentModeAction", () => {
       {},
       form({ ...IDS, mode: "standard", confirm: "on", changedBy: "someone-else" }),
     );
-    expect(result).toEqual({ error: GENERIC_ERROR });
+    expect(result).toEqual({ error: GENERIC_ERROR, mode: "standard" });
     expect(modeEditor.setAgentMode).not.toHaveBeenCalled();
+  });
+
+  it("hands the picked mode back with a refusal so the form can keep it, and never an unlisted one", async () => {
+    const noConfirm = await setAgentModeAction({}, form({ ...IDS, mode: "relaxed" }));
+    expect(noConfirm.mode).toBe("relaxed");
+    const offList = await setAgentModeAction(
+      {},
+      form({ ...IDS, mode: "permissive", confirm: "on" }),
+    );
+    expect(offList.mode).toBeUndefined();
+    modeEditor.setAgentMode.mockResolvedValueOnce(undefined);
+    const done = await setAgentModeAction({}, form({ ...IDS, mode: "standard", confirm: "on" }));
+    expect(done).toEqual({ done: true });
   });
 
   it("maps an owner-only refusal and an unchanged mode to safe messages", async () => {
     modeEditor.setAgentMode.mockRejectedValueOnce(new AgentModeError("forbidden"));
     expect(await setAgentModeAction({}, form({ ...IDS, mode: "relaxed", confirm: "on" }))).toEqual({
       error: OWNER_ONLY_EDIT_ERROR,
+      mode: "relaxed",
     });
 
     modeEditor.setAgentMode.mockRejectedValueOnce(new AgentModeError("unchanged"));
     expect(await setAgentModeAction({}, form({ ...IDS, mode: "strict", confirm: "on" }))).toEqual({
       error: MODE_UNCHANGED_ERROR,
+      mode: "strict",
     });
 
     modeEditor.setAgentMode.mockRejectedValueOnce(new WorkspaceAccessError("forbidden"));
     expect(await setAgentModeAction({}, form({ ...IDS, mode: "relaxed", confirm: "on" }))).toEqual({
       error: OWNER_ONLY_EDIT_ERROR,
+      mode: "relaxed",
     });
     expect(revalidate).not.toHaveBeenCalled();
   });
@@ -131,6 +147,6 @@ describe("AGO-99 setAgentModeAction", () => {
   it("never shows database text for an unexpected failure", async () => {
     modeEditor.setAgentMode.mockRejectedValueOnce(new Error("relation agent_mode_changes missing"));
     const result = await setAgentModeAction({}, form({ ...IDS, mode: "relaxed", confirm: "on" }));
-    expect(result).toEqual({ error: GENERIC_ERROR });
+    expect(result).toEqual({ error: GENERIC_ERROR, mode: "relaxed" });
   });
 });

@@ -21,7 +21,7 @@ test.describe("AGO-99: Strict default and human promotion (local stack)", () => 
   test.skip(!isLiveStack, "needs the local Supabase stack (E2E_SUPABASE=1)");
   test.describe.configure({ mode: "serial", timeout: 180_000 });
 
-  const CONFIRM_ERROR = "Confirm that you reviewed this agent's runs and want to change its mode.";
+  const CONFIRM_ERROR = "Confirm that you reviewed this agent's work and want to change its mode.";
   const shotDir = process.env.E2E_SHOT_DIR;
   let shotNumber = 0;
 

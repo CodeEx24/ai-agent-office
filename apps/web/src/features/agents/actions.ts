@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
   AGENT_TEMPLATE_IDS,
+  agentModeSchema,
   agentRefSchema,
   createAgentSchema,
   duplicateAgentSchema,
@@ -46,13 +47,16 @@ const createFromTemplateSchema = z.strictObject({
 
 const AGENT_CREDENTIAL_ERROR = "Agents cannot create agents. This action is for people only.";
 
-/** AGO-148: creating an agent is a human decision; an agent credential can never call these actions. */
-async function rejectAgentCredential(): Promise<AgentWizardState | null> {
+/**
+ * AGO-148, AGO-89, AGO-99: creating, changing or re-moding an agent is a human decision; an agent credential can
+ * never call these actions. Returns the error state to send back (the caller's own text), or null for a human.
+ */
+async function rejectAgentCredential(message: string): Promise<{ error: string } | null> {
   try {
     await requireHumanRequest();
     return null;
   } catch (error) {
-    if (error instanceof AgentCredentialRejectedError) return { error: AGENT_CREDENTIAL_ERROR };
+    if (error instanceof AgentCredentialRejectedError) return { error: message };
     throw error;
   }
 }
@@ -66,7 +70,7 @@ export async function createAgentAction(
   _prev: AgentWizardState,
   formData: FormData,
 ): Promise<AgentWizardState> {
-  const rejected = await rejectAgentCredential();
+  const rejected = await rejectAgentCredential(AGENT_CREDENTIAL_ERROR);
   if (rejected) return rejected;
 
   const parsed = parseInput(createAgentSchema, agentFormRecord(formData), GENERIC_ERROR);
@@ -88,7 +92,7 @@ export async function createAgentFromTemplateAction(
   _prev: AgentWizardState,
   formData: FormData,
 ): Promise<AgentWizardState> {
-  const rejected = await rejectAgentCredential();
+  const rejected = await rejectAgentCredential(AGENT_CREDENTIAL_ERROR);
   if (rejected) return rejected;
 
   const parsed = parseInput(
@@ -108,19 +112,6 @@ export async function createAgentFromTemplateAction(
   redirect("/app/agents");
 }
 
-/** AGO-89: changing an agent is a human decision; an agent credential can never call these actions. */
-async function rejectAgentCredentialForEdit(): Promise<AgentEditState | null> {
-  try {
-    await requireHumanRequest();
-    return null;
-  } catch (error) {
-    if (error instanceof AgentCredentialRejectedError) {
-      return { error: AGENT_CREDENTIAL_EDIT_ERROR };
-    }
-    throw error;
-  }
-}
-
 function revalidateAgents(agentId: string): void {
   revalidatePath("/app/agents");
   revalidatePath(`/app/agents/${agentId}`);
@@ -135,7 +126,7 @@ export async function updateAgentAction(
   _prev: AgentEditState,
   formData: FormData,
 ): Promise<AgentEditState> {
-  const rejected = await rejectAgentCredentialForEdit();
+  const rejected = await rejectAgentCredential(AGENT_CREDENTIAL_EDIT_ERROR);
   if (rejected) return rejected;
 
   const parsed = parseInput(updateAgentSchema, formDataToRecord(formData), GENERIC_ERROR);
@@ -151,7 +142,7 @@ export async function duplicateAgentAction(
   _prev: AgentEditState,
   formData: FormData,
 ): Promise<AgentEditState> {
-  const rejected = await rejectAgentCredentialForEdit();
+  const rejected = await rejectAgentCredential(AGENT_CREDENTIAL_EDIT_ERROR);
   if (rejected) return rejected;
 
   const parsed = parseInput(duplicateAgentSchema, formDataToRecord(formData), GENERIC_ERROR);
@@ -168,7 +159,7 @@ export async function archiveAgentAction(
   _prev: AgentEditState,
   formData: FormData,
 ): Promise<AgentEditState> {
-  const rejected = await rejectAgentCredentialForEdit();
+  const rejected = await rejectAgentCredential(AGENT_CREDENTIAL_EDIT_ERROR);
   if (rejected) return rejected;
 
   const parsed = parseInput(agentRefSchema, formDataToRecord(formData), GENERIC_ERROR);
@@ -189,14 +180,8 @@ export async function setAgentModeAction(
   _prev: AgentModeState,
   formData: FormData,
 ): Promise<AgentModeState> {
-  try {
-    await requireHumanRequest();
-  } catch (error) {
-    if (error instanceof AgentCredentialRejectedError) {
-      return { error: AGENT_CREDENTIAL_MODE_ERROR };
-    }
-    throw error;
-  }
+  const rejected = await rejectAgentCredential(AGENT_CREDENTIAL_MODE_ERROR);
+  if (rejected) return rejected;
 
   const parsed = parseInput(setAgentModeSchema, formDataToRecord(formData), GENERIC_ERROR);
   if (!parsed.success) {
@@ -205,7 +190,11 @@ export async function setAgentModeAction(
       if (issue.path[0] === "mode") fieldErrors.mode ??= issue.message;
       else if (issue.path[0] === "confirm") fieldErrors.confirm ??= issue.message;
     }
-    return Object.keys(fieldErrors).length > 0 ? { fieldErrors } : { error: GENERIC_ERROR };
+    const picked = agentModeSchema.safeParse(formData.get("mode"));
+    const keep = picked.success ? { mode: picked.data } : {};
+    return Object.keys(fieldErrors).length > 0
+      ? { fieldErrors, ...keep }
+      : { error: GENERIC_ERROR, ...keep };
   }
 
   const result = await setAgentModeWith(agentModeEditor, parsed.data);
@@ -217,7 +206,7 @@ export async function unarchiveAgentAction(
   _prev: AgentEditState,
   formData: FormData,
 ): Promise<AgentEditState> {
-  const rejected = await rejectAgentCredentialForEdit();
+  const rejected = await rejectAgentCredential(AGENT_CREDENTIAL_EDIT_ERROR);
   if (rejected) return rejected;
 
   const parsed = parseInput(agentRefSchema, formDataToRecord(formData), GENERIC_ERROR);

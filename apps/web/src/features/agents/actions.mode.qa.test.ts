@@ -148,7 +148,7 @@ describe("AC2: input is validated before the one write", () => {
         confirm: "on",
       }),
     );
-    expect(result).toEqual({ error: GENERIC_ERROR });
+    expect(result).toEqual({ error: GENERIC_ERROR, mode: "standard" });
     expect(modeEditor.setAgentMode).not.toHaveBeenCalled();
   });
 
@@ -169,7 +169,7 @@ describe("AC2: input is validated before the one write", () => {
         {},
         form({ ...IDS, mode: "standard", confirm: "on", ...extra }),
       );
-      expect(result).toEqual({ error: GENERIC_ERROR });
+      expect(result).toEqual({ error: GENERIC_ERROR, mode: "standard" });
     }
     expect(modeEditor.setAgentMode).not.toHaveBeenCalled();
   });
@@ -177,10 +177,10 @@ describe("AC2: input is validated before the one write", () => {
 
 describe("AC2: every refusal reaches the person as a safe message and leaves pages unrevalidated", () => {
   const cases: [AgentModeErrorCode, Awaited<ReturnType<typeof setAgentModeAction>>][] = [
-    ["not_found", { error: NOT_FOUND_ERROR }],
-    ["archived", { error: ARCHIVED_ERROR }],
-    ["invalid", { fieldErrors: { mode: AGENT_MODE_MESSAGES.modeUnknown } }],
-    ["failed", { error: GENERIC_ERROR }],
+    ["not_found", { error: NOT_FOUND_ERROR, mode: "standard" }],
+    ["archived", { error: ARCHIVED_ERROR, mode: "standard" }],
+    ["invalid", { fieldErrors: { mode: AGENT_MODE_MESSAGES.modeUnknown }, mode: "standard" }],
+    ["failed", { error: GENERIC_ERROR, mode: "standard" }],
   ];
 
   it.each(cases)("maps a %s database refusal for the form", async (code, expected) => {
@@ -193,14 +193,17 @@ describe("AC2: every refusal reaches the person as a safe message and leaves pag
   it("tells a signed-out caller to sign in again instead of saying they are not an owner", async () => {
     modeEditor.setAgentMode.mockRejectedValueOnce(new WorkspaceAccessError("unauthenticated"));
     const result = await setAgentModeAction({}, form({ ...IDS, mode: "standard", confirm: "on" }));
-    expect(result).toEqual({ error: "Your session has expired. Please sign in again." });
+    expect(result).toEqual({
+      error: "Your session has expired. Please sign in again.",
+      mode: "standard",
+    });
     expect(revalidate).not.toHaveBeenCalled();
   });
 
   it("gives a member or viewer (not an owner) the owner-only message", async () => {
     modeEditor.setAgentMode.mockRejectedValueOnce(new WorkspaceAccessError("forbidden"));
     const result = await setAgentModeAction({}, form({ ...IDS, mode: "standard", confirm: "on" }));
-    expect(result).toEqual({ error: OWNER_ONLY_EDIT_ERROR });
+    expect(result).toEqual({ error: OWNER_ONLY_EDIT_ERROR, mode: "standard" });
   });
 
   it("calls the editor exactly once per submit, so one submit is at most one log row", async () => {
@@ -212,7 +215,7 @@ describe("AC2: every refusal reaches the person as a safe message and leaves pag
   it("never throws out of the action for a non-Error rejection", async () => {
     modeEditor.setAgentMode.mockRejectedValueOnce("boom");
     const result = await setAgentModeAction({}, form({ ...IDS, mode: "standard", confirm: "on" }));
-    expect(result).toEqual({ error: GENERIC_ERROR });
+    expect(result).toEqual({ error: GENERIC_ERROR, mode: "standard" });
   });
 });
 
