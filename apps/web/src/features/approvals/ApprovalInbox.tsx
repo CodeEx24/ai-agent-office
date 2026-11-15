@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { flushSync } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 
 import type { ApprovalCardData } from "./approval-card";
@@ -93,8 +94,13 @@ export function ApprovalInbox({
   const [isCoolingDown, setIsCoolingDown] = useState(false);
   const [hasDecisionInFlight, setHasDecisionInFlight] = useState(false);
   const [timedOutFor, setTimedOutFor] = useState<number | null>(null);
-  /** The one live region's text: the outcome of the latest decision, announced to screen readers. */
-  const [announcement, setAnnouncement] = useState("");
+  /**
+   * The one live region's content: the outcome of the latest decision. `key` changes on every decision, so the text
+   * is a new DOM node even when it repeats the last one (a same-text update is not announced).
+   */
+  const [announcement, setAnnouncement] = useState<{ key: number; text: string } | null>(null);
+  const announcementCount = useRef(0);
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
   // The last good page. A failed read keeps it on screen instead of replacing it with nothing.
   const [snapshot, setSnapshot] = useState<Snapshot>({
@@ -182,9 +188,11 @@ export function ApprovalInbox({
       setHasDecisionInFlight(false);
       setStates((current) => ({ ...current, [approvalId]: result }));
       if (result.kind === "decided") {
-        setAnnouncement(
-          `${decision === "approved" ? "Approved" : "Rejected"}: ${card.agentName} wants to run ${card.action}.`,
-        );
+        announcementCount.current += 1;
+        setAnnouncement({
+          key: announcementCount.current,
+          text: `${decision === "approved" ? "Approved" : "Rejected"}: ${card.agentName} wants to run ${card.action}.`,
+        });
         // Keep the card where it is as a receipt, and hold every decide button while the list re-reads.
         setReceipts((current) => ({ ...current, [approvalId]: { card, index } }));
         setIsCoolingDown(true);
@@ -199,17 +207,36 @@ export function ApprovalInbox({
     });
   }
 
+  /**
+   * Removes the receipt, then moves focus somewhere that stays on the page: the next card's Approve when it is
+   * enabled, else the list heading. Focus is moved after the DOM update (flushSync), so the target exists.
+   */
   function dismiss(approvalId: string) {
-    setReceipts(({ [approvalId]: _gone, ...rest }) => rest);
-    setStates(({ [approvalId]: _gone, ...rest }) => rest);
+    const index = displayed.findIndex((candidate) => candidate.id === approvalId);
+    const nextId = displayed[index + 1]?.id ?? null;
+    flushSync(() => {
+      setReceipts(({ [approvalId]: _gone, ...rest }) => rest);
+      setStates(({ [approvalId]: _gone, ...rest }) => rest);
+    });
+    const nextApprove =
+      nextId === null ? null : document.getElementById(`approval-${nextId}-approve`);
+    if (nextApprove instanceof HTMLButtonElement && !nextApprove.disabled) {
+      nextApprove.focus();
+    } else {
+      headingRef.current?.focus();
+    }
   }
 
   return (
     <div className="grid gap-4">
       {/* Mounted before any decision and never unmounted, so a change to its text is announced. */}
       <p role="status" aria-live="polite" className="sr-only" data-testid="approvals-announcer">
-        {announcement}
+        {announcement === null ? null : <span key={announcement.key}>{announcement.text}</span>}
       </p>
+      {/* Focus lands here after a dismiss when no next card can take it, so it must exist even when the list is empty. */}
+      <h2 ref={headingRef} tabIndex={-1} className="text-lg font-semibold focus:outline-none">
+        Pending approvals
+      </h2>
       {isRefreshFailing ? (
         <p
           role="status"

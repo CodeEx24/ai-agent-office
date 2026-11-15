@@ -18,26 +18,39 @@ import { buildApprovalCards, type ApprovalCardData, type StoredEventInput } from
 
 /** The most pending approvals one page loads; the oldest request comes first, so the longest wait is never cut. */
 export const MAX_PENDING_APPROVALS = 50;
-/** Latest non-usage events read per run: enough for the card's recent steps and the policy reason. */
+/**
+ * The reads are batched by event type, so the number of queries is fixed (five) however many approvals are pending.
+ * Each batch has a row cap, and the caps are sized for the page's own maximum so the common case is never cut.
+ */
+/** Recent steps shown per card; the step batch allows this many rows for each pending approval. */
 const EVENTS_PER_RUN = 60;
 /**
- * Usage events summed per run, read oldest first (`seq` ascending, so the same events are always the ones counted).
- * One more row than this is fetched to tell whether the run was cut short; a cut run's cost is marked partial.
+ * The decision events that name a card's call (`approval.requested` and `policy.decision`) are read in one batch, so
+ * a quiet run's reason is never pushed out by another run's steps (they are not in this batch).
  */
-export const MAX_USAGE_EVENTS_PER_RUN = 2_000;
-
+const DECISION_EVENT_TYPES = ["policy.decision", "approval.requested"] as const;
+const DECISION_EVENT_LIMIT = 2_000;
 const STEP_EVENT_TYPES = [
   "step.started",
   "step.completed",
   "tool_call.requested",
   "tool_call.completed",
   "tool_call.failed",
-  "policy.decision",
-  "approval.requested",
   "approval.decided",
   "run.paused",
   "run.resumed",
 ] as const;
+const STEP_EVENT_LIMIT = EVENTS_PER_RUN * MAX_PENDING_APPROVALS;
+/**
+ * Usage events summed per run, read oldest first within each run (`seq` ascending, so the same events are always the
+ * ones counted). One run keeps at most this many; a run with more is cut and its cost is marked partial.
+ */
+export const MAX_USAGE_EVENTS_PER_RUN = 2_000;
+/**
+ * Usage rows fetched in one batch for all pending runs. If the batch is cut, every card's cost is marked partial,
+ * because the cut can leave any run short.
+ */
+export const MAX_USAGE_EVENTS_TOTAL = 5_000;
 
 export class ApprovalInboxError extends Error {
   constructor(cause?: unknown) {
@@ -105,58 +118,71 @@ export async function listPendingApprovals(workspaceId: string): Promise<Approva
     ...new Set(approvals.data.flatMap((row) => (row.run_id === null ? [] : [row.run_id]))),
   ];
 
-  // Each run is read on its own, so one busy run can never push another run's events out of the read (a single
-  // limit across runs would). The reads run in parallel: one step query and one usage query per run.
-  const readRun = async (runId: string) => {
-    const [steps, usage] = await Promise.all([
-      supabase
-        .from("run_events")
-        .select("run_id, seq, type, payload")
-        .eq("workspace_id", access.workspaceId)
-        .eq("run_id", runId)
-        .in("type", [...STEP_EVENT_TYPES])
-        .order("seq", { ascending: false })
-        .limit(EVENTS_PER_RUN),
-      supabase
-        .from("run_events")
-        .select("run_id, seq, type, payload")
-        .eq("workspace_id", access.workspaceId)
-        .eq("run_id", runId)
-        .eq("type", "budget.usage")
-        .order("seq", { ascending: true })
-        .limit(MAX_USAGE_EVENTS_PER_RUN + 1),
-    ]);
-    if (steps.error) throw new ApprovalInboxError(steps.error);
-    if (usage.error) throw new ApprovalInboxError(usage.error);
-    return {
-      runId,
-      steps: steps.data,
-      usage: usage.data.slice(0, MAX_USAGE_EVENTS_PER_RUN),
-      usageTruncated: usage.data.length > MAX_USAGE_EVENTS_PER_RUN,
-    };
+  // Four batches for all pending runs at once: decision events, recent steps and usage, plus the agent names above.
+  // None of them is per run, so the query count does not grow with the number of pending approvals.
+  const runEventsBatch = (types: readonly string[], order: [string, boolean][], limit: number) => {
+    let query = supabase
+      .from("run_events")
+      .select("run_id, seq, type, payload")
+      .eq("workspace_id", access.workspaceId)
+      .in("run_id", runIds)
+      .in("type", [...types]);
+    for (const [column, ascending] of order) {
+      query = query.order(column, { ascending });
+    }
+    return query.limit(limit);
   };
 
-  const [agents, runReads] = await Promise.all([
+  const readRunEvents = async () => {
+    const [decisions, steps, usage] = await Promise.all([
+      runEventsBatch(DECISION_EVENT_TYPES, [["seq", false]], DECISION_EVENT_LIMIT),
+      runEventsBatch(STEP_EVENT_TYPES, [["seq", false]], STEP_EVENT_LIMIT),
+      supabase
+        .from("run_events")
+        .select("run_id, seq, type, payload")
+        .eq("workspace_id", access.workspaceId)
+        .in("run_id", runIds)
+        .eq("type", "budget.usage")
+        .order("run_id", { ascending: true })
+        .order("seq", { ascending: true })
+        .limit(MAX_USAGE_EVENTS_TOTAL + 1),
+    ]);
+    if (decisions.error) throw new ApprovalInboxError(decisions.error);
+    if (steps.error) throw new ApprovalInboxError(steps.error);
+    if (usage.error) throw new ApprovalInboxError(usage.error);
+    return { decisions: decisions.data, steps: steps.data, usage: usage.data };
+  };
+
+  // With no pending run there is nothing to read, so the event batches are not sent at all.
+  const [agents, eventReads] = await Promise.all([
     supabase
       .from("agents")
       .select("id, name")
       .eq("workspace_id", access.workspaceId)
       .in("id", agentIds),
-    Promise.all(runIds.map((runId) => readRun(runId))),
+    runIds.length === 0 ? null : readRunEvents(),
   ]);
   if (agents.error) throw new ApprovalInboxError(agents.error);
+  const { decisions, steps, usage } = eventReads ?? { decisions: [], steps: [], usage: [] };
 
-  const events: StoredEventInput[] = runReads.flatMap((read) =>
-    [...read.steps, ...read.usage].map((row) => ({
-      runId: row.run_id,
-      seq: row.seq,
-      type: row.type,
-      payload: row.payload,
-    })),
-  );
-  const partialCostRunIds = new Set(
-    runReads.filter((read) => read.usageTruncated).map((read) => read.runId),
-  );
+  const usageBatchCut = usage.length > MAX_USAGE_EVENTS_TOTAL;
+  const usageRows = usage.slice(0, MAX_USAGE_EVENTS_TOTAL);
+  const usageByRun = new Map<string, typeof usageRows>();
+  for (const row of usageRows) {
+    usageByRun.set(row.run_id, [...(usageByRun.get(row.run_id) ?? []), row]);
+  }
+  const partialCostRunIds = new Set<string>(usageBatchCut ? runIds : []);
+  const keptUsage = [...usageByRun].flatMap(([runId, rows]) => {
+    if (rows.length > MAX_USAGE_EVENTS_PER_RUN) partialCostRunIds.add(runId);
+    return rows.slice(0, MAX_USAGE_EVENTS_PER_RUN);
+  });
+
+  const events: StoredEventInput[] = [...decisions, ...steps, ...keptUsage].map((row) => ({
+    runId: row.run_id,
+    seq: row.seq,
+    type: row.type,
+    payload: row.payload,
+  }));
 
   return {
     workspaceId: access.workspaceId,

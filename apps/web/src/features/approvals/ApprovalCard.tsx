@@ -54,10 +54,10 @@ export function ApprovalCard({
       className="min-w-0 [&_dd]:[overflow-wrap:anywhere]"
     >
       <CardHeader>
-        <CardTitle id={titleId} className="text-base">
+        <CardTitle id={titleId} className="text-base [overflow-wrap:anywhere]">
           {card.agentName} wants to run {card.action}
         </CardTitle>
-        <CardDescription>
+        <CardDescription className="[overflow-wrap:anywhere]">
           <span data-testid="approval-age">Waiting {formatAge(card.createdAt, nowMs)}</span>
           {" · "}
           <span data-testid="approval-time-left">{formatTimeLeft(card.expiresAt, nowMs)}</span>
@@ -100,7 +100,9 @@ export function ApprovalCard({
           ) : (
             <ol className="grid gap-0.5 text-sm text-muted-foreground" data-testid="approval-steps">
               {card.recentSteps.map((step) => (
-                <li key={step.seq}>{step.label}</li>
+                <li key={step.seq} className="[overflow-wrap:anywhere]">
+                  {step.label}
+                </li>
               ))}
             </ol>
           )}
@@ -128,6 +130,7 @@ export function ApprovalCard({
         {canDecide ? (
           <div className="flex flex-wrap items-center gap-2">
             <Button
+              id={`approval-${card.id}-approve`}
               type="button"
               size="sm"
               disabled={isBusy}

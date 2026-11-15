@@ -416,14 +416,106 @@ describe("ApprovalInbox focus and announcements (AGO-37 round 3)", () => {
       "Rejected: Scout wants to run email.send.",
     );
   });
+
+  it("after Dismiss with no other card, focus moves to the visible heading, never to the page body", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+
+    const heading = screen.getByRole("heading", { name: "Pending approvals", level: 2 });
+    expect(heading).toHaveAttribute("tabindex", "-1");
+    expect(document.activeElement).toBe(heading);
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it("after Dismiss, focus moves to the next card's Approve once that button is enabled", async () => {
+    vi.useFakeTimers();
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
+    const second: ApprovalCardData = {
+      ...card,
+      id: "37000000-0000-4000-8000-0000000000c2",
+      agentName: "Writer",
+      createdAt: "2026-11-14T10:01:00.000Z",
+    };
+    const { rerender } = render(
+      <ApprovalInbox workspaceId={WORKSPACE} cards={[card, second]} canDecide serverNowMs={NOW} />,
+    );
+    fireEvent.click(
+      within(screen.getAllByTestId("approval-card")[0]!).getByRole("button", { name: "Approve" }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    rerender(
+      <ApprovalInbox workspaceId={WORKSPACE} cards={[second]} canDecide serverNowMs={NOW + 1} />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DECISION_LOCK_MS);
+    });
+    const [receipt] = screen.getAllByTestId("approval-card");
+    const nextApprove = within(screen.getAllByTestId("approval-card")[1]!).getByRole("button", {
+      name: "Approve",
+    });
+    expect(nextApprove).toBeEnabled();
+
+    fireEvent.click(within(receipt!).getByRole("button", { name: "Dismiss" }));
+    expect(document.activeElement).toBe(nextApprove);
+  });
+
+  it("announces a repeated identical decision too: the second same-text outcome is a new node", async () => {
+    vi.useFakeTimers();
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
+    const sameAction: ApprovalCardData = { ...card, id: "37000000-0000-4000-8000-0000000000c2" };
+    render(
+      <ApprovalInbox
+        workspaceId={WORKSPACE}
+        cards={[card, sameAction]}
+        canDecide
+        serverNowMs={NOW}
+      />,
+    );
+    const region = screen.getByTestId("approvals-announcer");
+    const [firstCard, secondCard] = screen.getAllByTestId("approval-card");
+
+    fireEvent.click(within(firstCard!).getByRole("button", { name: "Approve" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const firstAnnouncement = region.firstChild;
+    expect(region).toHaveTextContent("Approved: Scout wants to run email.send.");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DECISION_LOCK_MS);
+    });
+    fireEvent.click(within(secondCard!).getByRole("button", { name: "Approve" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(screen.getByTestId("approvals-announcer")).toBe(region);
+    expect(region).toHaveTextContent("Approved: Scout wants to run email.send.");
+    expect(region.firstChild).not.toBe(firstAnnouncement);
+  });
 });
 
 describe("ApprovalCard layout and cost display (AGO-37 round 3)", () => {
-  it("wraps long values only, keeps every label on one line, and says when the cost is partial", () => {
+  it("wraps long values, title, description and steps, keeps every label on one line, and says when the cost is partial", () => {
     setup({ cards: [{ ...card, cost: { ...card.cost, isPartial: true } }] });
     const cardEl = screen.getByTestId("approval-card");
     expect(cardEl.className).toContain("[&_dd]:[overflow-wrap:anywhere]");
     expect(cardEl.className).not.toContain("[&_*]");
+    expect(cardEl.querySelector('[data-slot="card-title"]')).toHaveClass(
+      "[overflow-wrap:anywhere]",
+    );
+    expect(cardEl.querySelector('[data-slot="card-description"]')).toHaveClass(
+      "[overflow-wrap:anywhere]",
+    );
+    const steps = Array.from(cardEl.querySelectorAll("li"));
+    expect(steps.length).toBeGreaterThan(0);
+    for (const step of steps) {
+      expect(step).toHaveClass("[overflow-wrap:anywhere]");
+    }
     const labels = Array.from(cardEl.querySelectorAll("dt"));
     expect(labels).toHaveLength(4);
     for (const label of labels) {

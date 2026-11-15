@@ -125,6 +125,7 @@ import {
   listPendingApprovals,
   MAX_PENDING_APPROVALS,
   MAX_USAGE_EVENTS_PER_RUN,
+  MAX_USAGE_EVENTS_TOTAL,
 } from "./inbox-data";
 import { WorkspaceAccessError } from "../workspaces/workspace-access";
 
@@ -425,35 +426,34 @@ describe("AC3: cards show payload, reason, recent steps and cost", () => {
   it("loader passes the run's step events and usage events through to the card", async () => {
     world.results.approvals = { data: [row()], error: null };
     world.results.agents = { data: [{ id: AGENT, name: "Scout" }], error: null };
-    world.results.run_events = {
-      data: [
-        { run_id: RUN, seq: 3, type: "policy.decision", payload: policy().payload },
-        { run_id: RUN, seq: 4, type: "approval.requested", payload: requested().payload },
-      ],
-      error: null,
-    };
-    world.results.usage = {
-      data: [
-        {
-          run_id: RUN,
-          seq: 5,
-          type: "budget.usage",
-          payload: { version: 1, input_tokens: 7, output_tokens: 3, cost_micros: 2_000 },
-        },
-      ],
-      error: null,
-    };
+    world.runEvents = [
+      { workspace_id: WS, run_id: RUN, seq: 3, type: "policy.decision", payload: policy().payload },
+      {
+        workspace_id: WS,
+        run_id: RUN,
+        seq: 4,
+        type: "approval.requested",
+        payload: requested().payload,
+      },
+      {
+        workspace_id: WS,
+        run_id: RUN,
+        seq: 5,
+        type: "budget.usage",
+        payload: { version: 1, input_tokens: 7, output_tokens: 3, cost_micros: 2_000 },
+      },
+    ];
     const { cards } = await listPendingApprovals(WS);
     expect(cards[0]).toMatchObject({
       reason: "tier_3_needs_human",
       cost: { inputTokens: 7, outputTokens: 3, costMicros: 2_000, isPartial: false },
     });
+    // Three batches (decisions, steps, usage), each scoped to the workspace and to the pending runs.
     const eventCalls = world.calls.filter((c) => c.table === "run_events");
-    expect(eventCalls).toHaveLength(2);
+    expect(eventCalls).toHaveLength(3);
     for (const call of eventCalls) {
       expect(call.ops).toContainEqual(["eq", ["workspace_id", WS]]);
-      // Each run is read on its own (one query for its step events, one for its usage events).
-      expect(call.ops).toContainEqual(["eq", ["run_id", RUN]]);
+      expect(call.ops).toContainEqual(["in", ["run_id", [RUN]]]);
     }
   });
 
@@ -621,5 +621,62 @@ describe("AGO-37 round 3: per-run event reads and partial usage", () => {
       costMicros: null,
       isPartial: false,
     });
+  });
+});
+
+describe("AGO-37 round 4: batched event reads keep the query count fixed", () => {
+  const dbUsage = (runId: string, seq: number) => ({
+    workspace_id: WS,
+    run_id: runId,
+    seq,
+    type: "budget.usage",
+    payload: { version: 1, input_tokens: 1, output_tokens: 0 },
+  });
+  /** `count` pending approvals, each on its own run. */
+  const pendingRuns = (count: number) =>
+    Array.from({ length: count }, (_, index) => {
+      const suffix = String(index).padStart(2, "0");
+      return row({
+        id: `37000000-0000-4000-8000-0000000001${suffix}`,
+        run_id: `37000000-0000-4000-8000-0000000002${suffix}`,
+        created_at: `2026-11-14T10:${suffix}:00.000Z`,
+      });
+    });
+
+  it("reads the same number of event batches however many runs are pending", async () => {
+    const countEventQueries = async (runs: number) => {
+      world.calls.length = 0;
+      world.results.approvals = { data: pendingRuns(runs), error: null };
+      world.runEvents = [];
+      const { cards } = await listPendingApprovals(WS);
+      expect(cards).toHaveLength(runs);
+      return world.calls.filter((c) => c.table === "run_events").length;
+    };
+    const oneRun = await countEventQueries(1);
+    const eightRuns = await countEventQueries(8);
+    expect(eightRuns).toBe(oneRun);
+    expect(oneRun).toBe(3);
+  });
+
+  it("when the usage batch is cut, every card's cost is marked partial, not only the run that was cut", async () => {
+    const QUIET_APPROVAL = "37000000-0000-4000-8000-0000000000c2";
+    world.results.approvals = {
+      data: [
+        row({ id: APPROVAL, run_id: RUN, created_at: "2026-11-14T10:00:00.000Z" }),
+        row({ id: QUIET_APPROVAL, run_id: RUN2, created_at: "2026-11-14T10:01:00.000Z" }),
+      ],
+      error: null,
+    };
+    // RUN's ten events come first (run_id order), then RUN2 fills the batch past its cap.
+    world.runEvents = [
+      ...Array.from({ length: 10 }, (_, index) => dbUsage(RUN, index + 1)),
+      ...Array.from({ length: MAX_USAGE_EVENTS_TOTAL }, (_, index) => dbUsage(RUN2, index + 1)),
+    ];
+    const { cards } = await listPendingApprovals(WS);
+    expect(cards.find((card) => card.id === APPROVAL)?.cost).toMatchObject({
+      inputTokens: 10,
+      isPartial: true,
+    });
+    expect(cards.find((card) => card.id === QUIET_APPROVAL)?.cost.isPartial).toBe(true);
   });
 });
