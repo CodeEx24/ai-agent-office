@@ -29,10 +29,12 @@ insert into public.agents (id, workspace_id, name, role, model, prompt, daily_bu
   ('8a000000-0000-4000-8000-0000000002a3', '8aaaaaaa-0000-4000-8000-000000000001', 'Archived one', 'R', 'claude-haiku-5-5', 'p', 100, 'strict', now()),
   ('8a000000-0000-4000-8000-0000000002a4', '8aaaaaaa-0000-4000-8000-000000000001', 'Task target', 'R', 'claude-haiku-5-5', 'p', 100, 'strict', null),
   ('8a000000-0000-4000-8000-0000000002b1', '8abbbbbb-0000-4000-8000-000000000001', 'B agent', 'R', 'claude-haiku-5-5', 'p', 100, 'strict', null);
--- AGO-99: a mode changes only through set_agent_mode(); the fixture raises the source the way that function does
-select set_config('ago.mode_change', 'on', true);
-update public.agents set mode = 'relaxed' where id = '8a000000-0000-4000-8000-0000000002a1';
-select set_config('ago.mode_change', 'off', true);
+-- AGO-99: a mode changes only through set_agent_mode(); the fixture raises the source by calling that function as the workspace owner
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"8a000000-0000-4000-8000-00000000000a","role":"authenticated"}', true);
+select public.set_agent_mode('8aaaaaaa-0000-4000-8000-000000000001', '8a000000-0000-4000-8000-0000000002a1', 'relaxed');
+reset role;
+select set_config('request.jwt.claims', '', true);
 insert into public.tasks (id, workspace_id, title, agent_id) values
   ('8a000000-0000-4000-8000-0000000006a1', '8aaaaaaa-0000-4000-8000-000000000001', 'Loose', null),
   ('8a000000-0000-4000-8000-0000000006a2', '8aaaaaaa-0000-4000-8000-000000000001', 'Assigned to a4', '8a000000-0000-4000-8000-0000000002a4');

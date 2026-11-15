@@ -1,20 +1,19 @@
--- DRAFT for AGO-99. NOT under supabase/migrations on purpose: AGO-86 holds the schema slot.
--- When the orchestrator says the slot is free (after AGO-86's migration merged): copy this file to
--- supabase/migrations/<fresh timestamp after AGO-86's>_ago_99_agent_mode_promotion.sql, the .down.sql next to it
--- to supabase/rollbacks/<same timestamp>_ago_99_agent_mode_promotion.down.sql, then add the pgTAP file
--- (supabase/tests/agent_mode.test.sql) and update the catalog tests and docs/database.md. Nothing here has been run.
---
 -- AGO-99: new agents start in Strict; only a signed-in workspace owner can promote (or demote) one, and every
--- change is logged. Decisions (record: docs/tickets/AGO-99.md): one append-only table agent_mode_changes written only
--- by set_agent_mode(); any mode to any other, owner only; agent tokens and service callers are refused.
+-- change is logged. Decisions (record: docs/tickets/AGO-99.md): one append-only table agent_mode_changes; any mode to
+-- any other, owner only; agent credentials and service callers are refused.
 --
 -- * agents.mode gets a CHECK (strict, standard, relaxed). The column default stays 'strict'. mode stays out of every
 --   column grant, so the API still cannot write it.
--- * A guard trigger on agents refuses ANY change of mode that does not come through set_agent_mode(), whoever the
---   caller is (service_role included). The function sets a transaction-local flag; nothing else does. So no code
---   path can change a mode without a log row, and a new row must start in 'strict'.
--- * set_agent_mode() is SECURITY DEFINER with an explicit owner check on auth.uid(). An agent credential has no
---   auth.uid() (no member), so it is refused; execute is revoked from service_role, anon and PUBLIC.
+-- * An insert guard (BEFORE INSERT) refuses a new agent in any mode but 'strict', for every role.
+-- * A log trigger (AFTER UPDATE OF mode, SECURITY DEFINER) is the one writer of the log. Whoever changes agents.mode
+--   by whatever route (set_agent_mode(), PostgREST, service_role, a worker connection, the table owner) must be a
+--   signed-in owner of the agent's workspace (auth.uid() is set, owner role), or the update is refused; the row it
+--   writes carries that owner's member id. There is no session flag to forge. Both triggers are ENABLE ALWAYS, so
+--   session_replication_role does not skip them.
+--   Limit: a role that can ALTER TABLE ... DISABLE TRIGGER (the table owner, a superuser) can still turn the triggers
+--   off. That is infrastructure access, outside what this migration can guard.
+-- * set_agent_mode() is the human entry point: SECURITY DEFINER with an explicit owner check on auth.uid(). An agent
+--   credential has no auth.uid() (no member), so it is refused; execute is revoked from service_role, anon and PUBLIC.
 -- * The log holds who (a member id), from, to and when. Never any prompt or run content.
 
 -- 1. The mode allow-list. Fail loudly if a row holds anything else (the app already maps unknown to strict).
@@ -40,7 +39,7 @@ create table public.agent_mode_changes (
   foreign key (workspace_id, changed_by) references public.members (workspace_id, id) on delete no action,
   check (from_mode <> to_mode)
 );
-comment on table public.agent_mode_changes is 'Append-only log of agent mode changes (AGO-99): who moved which agent from which mode to which, and when. Written only by set_agent_mode(). UPDATE and DELETE are blocked for every role.';
+comment on table public.agent_mode_changes is 'Append-only log of agent mode changes (AGO-99): who moved which agent from which mode to which, and when. Written only by the agents mode log trigger. UPDATE and DELETE are blocked for every role.';
 create index agent_mode_changes_workspace_agent_idx on public.agent_mode_changes (workspace_id, agent_id, created_at);
 alter table public.agent_mode_changes enable row level security;
 
@@ -73,7 +72,7 @@ grant select on public.agent_mode_changes to authenticated, service_role; -- the
 create policy agent_mode_changes_select_member on public.agent_mode_changes for select to authenticated
   using (private.is_member(workspace_id));
 
--- 3. The guard: a mode changes only inside set_agent_mode(), and a new agent starts in strict.
+-- 3. The insert guard: a new agent starts in strict, whoever inserts it.
 create function private.agents_guard_mode()
 returns trigger
 language plpgsql
@@ -81,13 +80,8 @@ security invoker
 set search_path = ''
 as $$
 begin
-  if tg_op = 'INSERT' then
-    if new.mode <> 'strict' then
-      raise exception 'a new agent starts in strict mode' using errcode = '42501', hint = 'Promote it afterwards.';
-    end if;
-  elsif new.mode is distinct from old.mode
-        and coalesce(current_setting('ago.mode_change', true), '') <> 'on' then
-    raise exception 'an agent mode changes only through set_agent_mode()' using errcode = '42501';
+  if new.mode <> 'strict' then
+    raise exception 'a new agent starts in strict mode' using errcode = '42501', hint = 'Promote it afterwards.';
   end if;
   return new;
 end;
@@ -95,11 +89,40 @@ $$;
 revoke all on function private.agents_guard_mode() from public, anon, authenticated;
 create trigger agents_guard_mode_insert before insert on public.agents
   for each row execute function private.agents_guard_mode();
-create trigger agents_guard_mode_update before update of mode on public.agents
-  for each row execute function private.agents_guard_mode();
+alter table public.agents enable always trigger agents_guard_mode_insert;
 
--- 4. The one writer. Owners only; returns nothing. Errors (SQLSTATE): 42501 not an owner, 22023 unknown mode,
---    P0002 no such agent in this workspace, 55000 archived agent, AGM01 already in that mode.
+-- 4. The log trigger: the owner check and the log row for ANY change of agents.mode, whatever route it takes.
+--    SQLSTATE 42501 when there is no signed-in owner of the workspace. WHEN keeps an update that leaves the mode as it
+--    is (set mode = mode) out of it.
+create function private.agents_log_mode_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_member_id uuid;
+begin
+  if auth.uid() is null or not private.is_member(new.workspace_id, 'owner') then
+    raise exception 'an agent mode can only be changed by a signed-in owner of the workspace' using errcode = '42501';
+  end if;
+  v_member_id := private.current_member_id(new.workspace_id);
+  if v_member_id is null then
+    raise exception 'an agent mode can only be changed by a signed-in owner of the workspace' using errcode = '42501';
+  end if;
+  insert into public.agent_mode_changes (workspace_id, agent_id, from_mode, to_mode, changed_by)
+  values (new.workspace_id, new.id, old.mode, new.mode, v_member_id);
+  return null;
+end;
+$$;
+revoke all on function private.agents_log_mode_change() from public, anon, authenticated;
+create trigger agents_log_mode_change after update of mode on public.agents
+  for each row when (old.mode is distinct from new.mode) execute function private.agents_log_mode_change();
+alter table public.agents enable always trigger agents_log_mode_change;
+
+-- 5. The human entry point. Owners only; returns nothing. The trigger above writes the log row. Errors (SQLSTATE):
+--    42501 not an owner, 22023 unknown mode, P0002 no such agent in this workspace, 55000 archived agent, AGM01 already
+--    in that mode.
 create function public.set_agent_mode(p_workspace_id uuid, p_agent_id uuid, p_mode text)
 returns void
 language plpgsql
@@ -107,15 +130,10 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_member_id uuid;
   v_from text;
   v_archived timestamptz;
 begin
   if auth.uid() is null or not private.is_member(p_workspace_id, 'owner') then
-    raise exception 'only workspace owners can change an agent mode' using errcode = '42501';
-  end if;
-  v_member_id := private.current_member_id(p_workspace_id);
-  if v_member_id is null then
     raise exception 'only workspace owners can change an agent mode' using errcode = '42501';
   end if;
   if p_mode is null or p_mode not in ('strict', 'standard', 'relaxed') then
@@ -135,13 +153,9 @@ begin
     raise exception 'the agent is already in that mode' using errcode = 'AGM01';
   end if;
 
-  perform set_config('ago.mode_change', 'on', true);
   update public.agents set mode = p_mode where workspace_id = p_workspace_id and id = p_agent_id;
-  perform set_config('ago.mode_change', 'off', true);
-  insert into public.agent_mode_changes (workspace_id, agent_id, from_mode, to_mode, changed_by)
-  values (p_workspace_id, p_agent_id, v_from, p_mode, v_member_id);
 end;
 $$;
-comment on function public.set_agent_mode(uuid, uuid, text) is 'Owners change an agent mode (AGO-99); the change and its log row are one transaction. Agent credentials and service_role cannot call it.';
+comment on function public.set_agent_mode(uuid, uuid, text) is 'Owners change an agent mode (AGO-99); the log trigger on agents writes the log row in the same transaction. Agent credentials and service_role cannot call it.';
 revoke all on function public.set_agent_mode(uuid, uuid, text) from public, anon, authenticated, service_role;
 grant execute on function public.set_agent_mode(uuid, uuid, text) to authenticated;

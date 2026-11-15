@@ -31,10 +31,12 @@ insert into public.agents (id, workspace_id, name, role, model, prompt, daily_bu
   ('89000000-0000-4000-8000-0000000002a3', '89aaaaaa-0000-4000-8000-000000000001', 'Worker touched', 'Ops', 'claude-haiku-5-5', 'Run.', 200, 'strict'),
   ('89000000-0000-4000-8000-0000000002a4', '89aaaaaa-0000-4000-8000-000000000001', 'Scratch', 'Temp', 'claude-haiku-5-5', 'Temp.', 100, 'strict'),
   ('89000000-0000-4000-8000-0000000002b1', '89bbbbbb-0000-4000-8000-000000000001', 'B agent', 'Other', 'claude-haiku-5-5', 'Other.', 100, 'strict');
--- AGO-99: an agent is born strict and a mode changes only through set_agent_mode(); the fixture raises the source the way that function does
-select set_config('ago.mode_change', 'on', true);
-update public.agents set mode = 'relaxed' where id = '89000000-0000-4000-8000-0000000002a1';
-select set_config('ago.mode_change', 'off', true);
+-- AGO-99: an agent is born strict and a mode changes only through set_agent_mode(); the fixture raises the source by calling that function as the workspace owner
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"89000000-0000-4000-8000-00000000000a","role":"authenticated"}', true);
+select public.set_agent_mode('89aaaaaa-0000-4000-8000-000000000001', '89000000-0000-4000-8000-0000000002a1', 'relaxed');
+reset role;
+select set_config('request.jwt.claims', '', true);
 insert into public.skills (id, workspace_id, name, body) values
   ('89000000-0000-4000-8000-0000000003a1', '89aaaaaa-0000-4000-8000-000000000001', 'skill-a', 'one');
 insert into public.agent_skills (workspace_id, agent_id, skill_id) values

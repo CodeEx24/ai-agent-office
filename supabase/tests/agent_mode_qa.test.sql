@@ -105,6 +105,7 @@ select set_config('request.jwt.claims', '{"sub":"99200000-0000-4000-8000-0000000
 select throws_ok($$update public.agents set mode = 'strict' where id = '99200000-0000-4000-8000-0000000002a3'$$,
   '42501', null, 'AC2: an owner cannot demote Gamma by updating the column directly');
 reset role;
+select set_config('request.jwt.claims', '', true); -- the owner's claims must not leak into the service_role cases
 set local role service_role;
 select throws_ok($$update public.agents set mode = 'strict' where id = '99200000-0000-4000-8000-0000000002a3'$$,
   '42501', null, 'AC2: service_role cannot demote an agent directly');

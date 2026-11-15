@@ -4,14 +4,15 @@
 --   AC1 default: an agent row starts in strict; a row cannot be inserted in another mode (even by the table owner)
 --   AC2 human-only and logged: owners change a mode (any mode to any other) and one log row is written with the
 --     caller's own member id; members, viewers, non-members, signed-out callers (no auth.uid(), which is every agent
---     credential) and service_role are refused and leave no row; no other path changes a mode (API update, table owner)
+--     credential) and service_role are refused and leave no row; no other path changes a mode without an owner and a
+--     log row (API update, service_role, table owner, a forged session flag); both triggers are ENABLE ALWAYS
 --   rules: unknown mode, same mode, unknown or foreign agent and archived agent are refused with their own error codes
 --   log: append-only (UPDATE, DELETE, TRUNCATE refused for the table owner and every API role); members and viewers of
 --     the workspace read it, another workspace reads none; deleting an agent removes its log rows
 -- Run: pnpm exec supabase test db (inside the db lock).
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(46);
+select plan(55);
 
 insert into auth.users (id, instance_id, aud, role, email) values
   ('99100000-0000-4000-8000-00000000000a', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'ago99-o@example.test'),
@@ -71,7 +72,10 @@ select is((select from_mode || '>' || to_mode from public.agent_mode_changes whe
   'strict>standard', 'the row records from and to');
 select is((select changed_by from public.agent_mode_changes where agent_id = '99100000-0000-4000-8000-0000000002a1'),
   '99100000-0000-4000-8000-0000000001a1'::uuid, 'the row records the caller''s own member id');
-select is(current_setting('ago.mode_change', true), 'off', 'the transaction flag is switched off again after the change');
+select is((select count(*)::int from pg_proc where pronamespace in ('public'::regnamespace, 'private'::regnamespace)
+            and proname in ('set_agent_mode', 'agents_log_mode_change', 'agents_guard_mode')
+            and pg_get_functiondef(oid) like '%ago.mode_change%'),
+  0, 'no function relies on a session flag any more');
 
 -- 4. Any mode to any other: Standard to Relaxed, Relaxed back to Strict.
 select lives_ok($$select public.set_agent_mode('99aaaaaa-0000-4000-8000-000000000001', '99100000-0000-4000-8000-0000000002a1', 'relaxed')$$,
@@ -128,8 +132,9 @@ select set_config('request.jwt.claims', '{"sub":"99100000-0000-4000-8000-0000000
 select throws_ok($$update public.agents set mode = 'relaxed' where id = '99100000-0000-4000-8000-0000000002a1'$$,
   '42501', null, 'AC2: an owner cannot update agents.mode directly');
 reset role;
+select set_config('request.jwt.claims', '', true);
 select throws_ok($$update public.agents set mode = 'relaxed' where id = '99100000-0000-4000-8000-0000000002a1'$$,
-  '42501', null, 'AC2: the table owner cannot change a mode outside set_agent_mode either');
+  '42501', null, 'AC2: the table owner with no signed-in user cannot change a mode');
 select lives_ok($$update public.agents set name = 'Alpha 2' where id = '99100000-0000-4000-8000-0000000002a1'$$, 'other columns are not affected by the guard');
 
 -- 8. The log: members and viewers read it; another workspace reads none; nobody writes it.
@@ -152,6 +157,31 @@ select lives_ok($$select public.set_agent_mode('99aaaaaa-0000-4000-8000-00000000
 reset role;
 select lives_ok($$delete from public.agents where id = '99100000-0000-4000-8000-0000000002a2'$$, 'an agent can be deleted');
 select is((select count(*)::int from public.agent_mode_changes where agent_id = '99100000-0000-4000-8000-0000000002a2'), 0, 'its log rows went with it');
+
+-- 10. No forged flag, no unlogged path: a direct UPDATE of agents.mode needs a signed-in owner and writes the log row.
+select set_config('request.jwt.claims', '', true);
+select is((select count(*)::int from pg_trigger where tgrelid = 'public.agents'::regclass
+            and tgname in ('agents_guard_mode_insert', 'agents_log_mode_change') and tgenabled = 'A'),
+  2, 'the insert guard and the log trigger are ENABLE ALWAYS');
+select set_config('ago.mode_change', 'on', true); -- the old session flag: it must not open anything
+select throws_ok($$update public.agents set mode = 'relaxed' where id = '99100000-0000-4000-8000-0000000002a1'$$,
+  '42501', 'an agent mode can only be changed by a signed-in owner of the workspace', 'table owner with the old flag set: refused');
+set local role service_role;
+select throws_ok($$update public.agents set mode = 'relaxed' where id = '99100000-0000-4000-8000-0000000002a1'$$,
+  '42501', null, 'service_role with the old flag set: refused (here already by a privilege wall on agents, whichever stops it first)');
+reset role;
+select is((select mode from public.agents where id = '99100000-0000-4000-8000-0000000002a1'), 'strict', 'the refused direct updates left the mode alone');
+select set_config('request.jwt.claims', '{"sub":"99100000-0000-4000-8000-00000000000c","role":"authenticated"}', true);
+select throws_ok($$update public.agents set mode = 'relaxed' where id = '99100000-0000-4000-8000-0000000002a1'$$,
+  '42501', 'an agent mode can only be changed by a signed-in owner of the workspace', 'a direct update in a member session: refused');
+select set_config('request.jwt.claims', '{"sub":"99100000-0000-4000-8000-00000000000a","role":"authenticated"}', true);
+select lives_ok($$update public.agents set mode = 'relaxed' where id = '99100000-0000-4000-8000-0000000002a1'$$,
+  'a direct update in an owner session goes through ...');
+select is((select count(*)::int from public.agent_mode_changes where agent_id = '99100000-0000-4000-8000-0000000002a1' and from_mode = 'strict' and to_mode = 'relaxed'
+            and changed_by = '99100000-0000-4000-8000-0000000001a1'),
+  1, '... and writes a log row with that owner as the actor');
+select lives_ok($$update public.agents set mode = mode where id = '99100000-0000-4000-8000-0000000002a1'$$, 'an update that keeps the mode is not a change');
+select is((select count(*)::int from public.agent_mode_changes where agent_id = '99100000-0000-4000-8000-0000000002a1'), 4, 'and writes no log row');
 
 select * from finish();
 rollback;
