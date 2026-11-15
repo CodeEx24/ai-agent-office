@@ -1,4 +1,5 @@
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from "@ago/ui";
+import { useEffect, useRef } from "react";
 
 import type { ApprovalCardData } from "./approval-card";
 import { formatAge, formatCostMicros, formatTimeLeft } from "./approval-format";
@@ -37,13 +38,20 @@ export function ApprovalCard({
 }) {
   const isBusy = state.kind === "sending" || state.kind === "decided" || isLocked;
   const titleId = `approval-${card.id}-title`;
+  const dismissRef = useRef<HTMLButtonElement>(null);
+
+  // Approve or Reject unmounts with the decision (it is disabled, so focus would fall to the page body). Focus moves
+  // to this card's Dismiss control, which is the receipt's one action, so the next Tab stays in the card.
+  useEffect(() => {
+    if (state.kind === "decided") dismissRef.current?.focus();
+  }, [state.kind]);
 
   return (
     <Card
       role="listitem"
       aria-labelledby={titleId}
       data-testid="approval-card"
-      className="min-w-0 [&_*]:[overflow-wrap:anywhere]"
+      className="min-w-0 [&_dd]:[overflow-wrap:anywhere]"
     >
       <CardHeader>
         <CardTitle id={titleId} className="text-base">
@@ -59,15 +67,15 @@ export function ApprovalCard({
       <CardContent className="grid gap-4">
         <dl className="grid gap-1 text-sm">
           <div className="flex gap-2">
-            <dt className="font-medium">Why it stopped</dt>
+            <dt className="shrink-0 font-medium whitespace-nowrap">Why it stopped</dt>
             <dd data-testid="approval-reason">{card.reason ?? "Not recorded"}</dd>
           </div>
           <div className="flex gap-2">
-            <dt className="font-medium">Tool</dt>
+            <dt className="shrink-0 font-medium whitespace-nowrap">Tool</dt>
             <dd>{card.action}</dd>
           </div>
           <div className="flex gap-2">
-            <dt className="font-medium">Call details</dt>
+            <dt className="shrink-0 font-medium whitespace-nowrap">Call details</dt>
             <dd data-testid="approval-payload">
               Not shown yet: the full call details are not stored yet.{" "}
               <span className="text-xs text-muted-foreground">
@@ -76,10 +84,11 @@ export function ApprovalCard({
             </dd>
           </div>
           <div className="flex gap-2">
-            <dt className="font-medium">Cost so far</dt>
+            <dt className="shrink-0 font-medium whitespace-nowrap">Cost so far</dt>
             <dd data-testid="approval-cost">
               {formatCostMicros(card.cost.costMicros)} ·{" "}
               {(card.cost.inputTokens + card.cost.outputTokens).toLocaleString("en-US")} tokens
+              {card.cost.isPartial ? " (partial: some usage is not counted)" : null}
             </dd>
           </div>
         </dl>
@@ -97,8 +106,9 @@ export function ApprovalCard({
           )}
         </section>
 
+        {/* The outcome is announced once, by the inbox's live region, so this text carries no live role. */}
         {state.kind === "decided" ? (
-          <p role="status" className="text-sm font-medium" data-testid="approval-result">
+          <p className="text-sm font-medium" data-testid="approval-result">
             {state.decision === "approved" ? "Approved" : "Rejected"}
           </p>
         ) : null}
@@ -146,6 +156,7 @@ export function ApprovalCard({
             </Button>
             {state.kind === "decided" ? (
               <Button
+                ref={dismissRef}
                 type="button"
                 size="sm"
                 variant="ghost"

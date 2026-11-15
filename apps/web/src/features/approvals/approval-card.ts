@@ -54,7 +54,19 @@ export interface ApprovalCardData {
     readonly outputTokens: number;
     /** Millionths of a dollar; null when the run reported no cost figure. */
     readonly costMicros: number | null;
+    /** True when the run has more usage events than were read, so the totals are a lower bound. */
+    readonly isPartial: boolean;
   };
+}
+
+/** One cent in micros (millionths of a dollar). The worker reports `cost_cents` (AGO-40), so that is converted. */
+const MICROS_PER_CENT = 10_000;
+
+/** A usage event's cost in micros: `cost_micros` when present, else `cost_cents` converted. Each event counts once. */
+function costMicrosOf(payload: { cost_micros?: number; cost_cents?: number }): number | null {
+  if (payload.cost_micros !== undefined) return payload.cost_micros;
+  if (payload.cost_cents !== undefined) return payload.cost_cents * MICROS_PER_CENT;
+  return null;
 }
 
 function stepLabel(event: RunEvent): string | null {
@@ -123,7 +135,7 @@ function reasonFor(
   };
 }
 
-function costFor(events: readonly ParsedEvent[]): ApprovalCardData["cost"] {
+function costFor(events: readonly ParsedEvent[], isPartial: boolean): ApprovalCardData["cost"] {
   let inputTokens = 0;
   let outputTokens = 0;
   let costMicros: number | null = null;
@@ -131,11 +143,12 @@ function costFor(events: readonly ParsedEvent[]): ApprovalCardData["cost"] {
     if (event.type !== "budget.usage") continue;
     inputTokens += event.payload.input_tokens;
     outputTokens += event.payload.output_tokens;
-    if (event.payload.cost_micros !== undefined) {
-      costMicros = (costMicros ?? 0) + event.payload.cost_micros;
+    const eventMicros = costMicrosOf(event.payload);
+    if (eventMicros !== null) {
+      costMicros = (costMicros ?? 0) + eventMicros;
     }
   }
-  return { inputTokens, outputTokens, costMicros };
+  return { inputTokens, outputTokens, costMicros, isPartial };
 }
 
 function recentStepsFor(events: readonly ParsedEvent[]): ApprovalStep[] {
@@ -155,6 +168,8 @@ export function buildApprovalCards(input: {
   readonly approvals: readonly ApprovalRowInput[];
   readonly agentNames: ReadonlyMap<string, string>;
   readonly events: readonly StoredEventInput[];
+  /** Runs whose usage events were cut short when read: their cost is marked partial. */
+  readonly partialCostRunIds?: ReadonlySet<string>;
 }): ApprovalCardData[] {
   const byRun = parseEvents(input.events);
   return [...input.approvals]
@@ -162,6 +177,8 @@ export function buildApprovalCards(input: {
     .map((approval) => {
       const events = approval.runId ? (byRun.get(approval.runId) ?? []) : [];
       const { reason, tier } = reasonFor(approval.id, events);
+      const isPartial =
+        approval.runId !== null && (input.partialCostRunIds?.has(approval.runId) ?? false);
       return {
         id: approval.id,
         agentId: approval.agentId,
@@ -174,7 +191,7 @@ export function buildApprovalCards(input: {
         createdAt: approval.createdAt,
         expiresAt: approval.expiresAt,
         recentSteps: recentStepsFor(events),
-        cost: costFor(events),
+        cost: costFor(events, isPartial),
       };
     });
 }

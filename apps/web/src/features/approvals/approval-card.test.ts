@@ -65,7 +65,7 @@ describe("buildApprovalCards", () => {
       payloadHash: HASH,
       tier: 3,
       reason: "tier_3_needs_human",
-      cost: { inputTokens: 1500, outputTokens: 300, costMicros: 17_345 },
+      cost: { inputTokens: 1500, outputTokens: 300, costMicros: 17_345, isPartial: false },
     });
     // Newest first.
     expect(card?.recentSteps[0]?.label).toBe("Approval requested");
@@ -111,12 +111,22 @@ describe("buildApprovalCards", () => {
       events,
     });
     expect(card).toMatchObject({ reason: null, tier: null, recentSteps: [] });
-    expect(card?.cost).toEqual({ inputTokens: 0, outputTokens: 0, costMicros: null });
+    expect(card?.cost).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      costMicros: null,
+      isPartial: false,
+    });
   });
 
   it("reports no cost figure when usage events carry none", () => {
     const [card] = build([ev(1, "budget.usage", { input_tokens: 5, output_tokens: 6 })]);
-    expect(card?.cost).toEqual({ inputTokens: 5, outputTokens: 6, costMicros: null });
+    expect(card?.cost).toEqual({
+      inputTokens: 5,
+      outputTokens: 6,
+      costMicros: null,
+      isPartial: false,
+    });
   });
 
   it("limits the recent steps", () => {
@@ -147,5 +157,76 @@ describe("approval formatting", () => {
     expect(formatCostMicros(0)).toBe("$0.00");
     expect(formatCostMicros(4)).toBe("< $0.01");
     expect(formatCostMicros(1_234_567)).toBe("$1.23");
+  });
+});
+
+describe("buildApprovalCards cost (AGO-37 round 3)", () => {
+  // Exactly the payload the worker stores for a call's usage (apps/worker/src/agent/agent-loop.ts): token counts and
+  // `cost_cents`, with no `cost_micros`. The stored payload also carries the event version, as every stored row does.
+  it("reads the worker's cost_cents and converts it to micros, so a real run shows its cost", () => {
+    const [card] = buildApprovalCards({
+      approvals: [approval],
+      agentNames: new Map([[AGENT, "Scout"]]),
+      events: [
+        {
+          runId: RUN,
+          seq: 5,
+          type: "budget.usage",
+          payload: { version: 1, input_tokens: 1200, output_tokens: 300, cost_cents: 7 },
+        },
+        {
+          runId: RUN,
+          seq: 6,
+          type: "budget.usage",
+          payload: { version: 1, input_tokens: 100, output_tokens: 20, cost_cents: 1 },
+        },
+      ],
+    });
+    expect(card?.cost).toEqual({
+      inputTokens: 1300,
+      outputTokens: 320,
+      costMicros: 80_000,
+      isPartial: false,
+    });
+    expect(formatCostMicros(card?.cost.costMicros ?? null)).toBe("$0.08");
+  });
+
+  it("counts each event once: cost_micros when present, cost_cents otherwise", () => {
+    const [card] = buildApprovalCards({
+      approvals: [approval],
+      agentNames: new Map([[AGENT, "Scout"]]),
+      events: [
+        {
+          runId: RUN,
+          seq: 5,
+          type: "budget.usage",
+          payload: { version: 1, input_tokens: 10, output_tokens: 1, cost_micros: 12_345 },
+        },
+        {
+          runId: RUN,
+          seq: 6,
+          type: "budget.usage",
+          payload: { version: 1, input_tokens: 10, output_tokens: 1, cost_cents: 3 },
+        },
+      ],
+    });
+    expect(card?.cost.costMicros).toBe(12_345 + 3 * 10_000);
+  });
+
+  it("marks the cost partial for a run whose usage was cut short, and only that run", () => {
+    const cards = buildApprovalCards({
+      approvals: [
+        approval,
+        {
+          ...approval,
+          id: "37000000-0000-4000-8000-0000000000c9",
+          runId: "37000000-0000-4000-8000-0000000000a9",
+        },
+      ],
+      agentNames: new Map([[AGENT, "Scout"]]),
+      events: [],
+      partialCostRunIds: new Set([RUN]),
+    });
+    expect(cards.map((card) => card.cost.isPartial)).toEqual([true, false]);
   });
 });

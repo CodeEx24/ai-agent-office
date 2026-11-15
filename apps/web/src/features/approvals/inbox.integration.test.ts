@@ -231,7 +231,12 @@ describe.skipIf(!isLive)("approvals inbox, live (AGO-37)", () => {
     expect(card?.action).toBe("email.send");
     expect(card?.reason).toBe("tier_3_needs_human");
     expect(card?.tier).toBe(3);
-    expect(card?.cost).toEqual({ inputTokens: 1000, outputTokens: 200, costMicros: 12_345 });
+    expect(card?.cost).toEqual({
+      inputTokens: 1000,
+      outputTokens: 200,
+      costMicros: 12_345,
+      isPartial: false,
+    });
     expect(card?.recentSteps.map((s) => s.label)).toContain("Approval requested");
     expect(Date.parse(card?.createdAt ?? "")).toBeLessThanOrEqual(Date.now());
   });

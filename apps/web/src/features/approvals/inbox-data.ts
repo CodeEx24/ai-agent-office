@@ -20,8 +20,11 @@ import { buildApprovalCards, type ApprovalCardData, type StoredEventInput } from
 export const MAX_PENDING_APPROVALS = 50;
 /** Latest non-usage events read per run: enough for the card's recent steps and the policy reason. */
 const EVENTS_PER_RUN = 60;
-/** Usage events are summed, so they are read separately and in full (bounded). */
-const MAX_USAGE_EVENTS = 2_000;
+/**
+ * Usage events summed per run, read oldest first (`seq` ascending, so the same events are always the ones counted).
+ * One more row than this is fetched to tell whether the run was cut short; a cut run's cost is marked partial.
+ */
+export const MAX_USAGE_EVENTS_PER_RUN = 2_000;
 
 const STEP_EVENT_TYPES = [
   "step.started",
@@ -102,42 +105,58 @@ export async function listPendingApprovals(workspaceId: string): Promise<Approva
     ...new Set(approvals.data.flatMap((row) => (row.run_id === null ? [] : [row.run_id]))),
   ];
 
-  const [agents, steps, usage] = await Promise.all([
+  // Each run is read on its own, so one busy run can never push another run's events out of the read (a single
+  // limit across runs would). The reads run in parallel: one step query and one usage query per run.
+  const readRun = async (runId: string) => {
+    const [steps, usage] = await Promise.all([
+      supabase
+        .from("run_events")
+        .select("run_id, seq, type, payload")
+        .eq("workspace_id", access.workspaceId)
+        .eq("run_id", runId)
+        .in("type", [...STEP_EVENT_TYPES])
+        .order("seq", { ascending: false })
+        .limit(EVENTS_PER_RUN),
+      supabase
+        .from("run_events")
+        .select("run_id, seq, type, payload")
+        .eq("workspace_id", access.workspaceId)
+        .eq("run_id", runId)
+        .eq("type", "budget.usage")
+        .order("seq", { ascending: true })
+        .limit(MAX_USAGE_EVENTS_PER_RUN + 1),
+    ]);
+    if (steps.error) throw new ApprovalInboxError(steps.error);
+    if (usage.error) throw new ApprovalInboxError(usage.error);
+    return {
+      runId,
+      steps: steps.data,
+      usage: usage.data.slice(0, MAX_USAGE_EVENTS_PER_RUN),
+      usageTruncated: usage.data.length > MAX_USAGE_EVENTS_PER_RUN,
+    };
+  };
+
+  const [agents, runReads] = await Promise.all([
     supabase
       .from("agents")
       .select("id, name")
       .eq("workspace_id", access.workspaceId)
       .in("id", agentIds),
-    runIds.length === 0
-      ? Promise.resolve({ data: [], error: null })
-      : supabase
-          .from("run_events")
-          .select("run_id, seq, type, payload")
-          .eq("workspace_id", access.workspaceId)
-          .in("run_id", runIds)
-          .in("type", [...STEP_EVENT_TYPES])
-          .order("seq", { ascending: false })
-          .limit(runIds.length * EVENTS_PER_RUN),
-    runIds.length === 0
-      ? Promise.resolve({ data: [], error: null })
-      : supabase
-          .from("run_events")
-          .select("run_id, seq, type, payload")
-          .eq("workspace_id", access.workspaceId)
-          .in("run_id", runIds)
-          .eq("type", "budget.usage")
-          .limit(MAX_USAGE_EVENTS),
+    Promise.all(runIds.map((runId) => readRun(runId))),
   ]);
   if (agents.error) throw new ApprovalInboxError(agents.error);
-  if (steps.error) throw new ApprovalInboxError(steps.error);
-  if (usage.error) throw new ApprovalInboxError(usage.error);
 
-  const events: StoredEventInput[] = [...steps.data, ...usage.data].map((row) => ({
-    runId: row.run_id,
-    seq: row.seq,
-    type: row.type,
-    payload: row.payload,
-  }));
+  const events: StoredEventInput[] = runReads.flatMap((read) =>
+    [...read.steps, ...read.usage].map((row) => ({
+      runId: row.run_id,
+      seq: row.seq,
+      type: row.type,
+      payload: row.payload,
+    })),
+  );
+  const partialCostRunIds = new Set(
+    runReads.filter((read) => read.usageTruncated).map((read) => read.runId),
+  );
 
   return {
     workspaceId: access.workspaceId,
@@ -155,6 +174,7 @@ export async function listPendingApprovals(workspaceId: string): Promise<Approva
       })),
       agentNames: new Map(agents.data.map((agent) => [agent.id, agent.name])),
       events,
+      partialCostRunIds,
     }),
   };
 }

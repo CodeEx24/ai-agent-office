@@ -93,6 +93,8 @@ export function ApprovalInbox({
   const [isCoolingDown, setIsCoolingDown] = useState(false);
   const [hasDecisionInFlight, setHasDecisionInFlight] = useState(false);
   const [timedOutFor, setTimedOutFor] = useState<number | null>(null);
+  /** The one live region's text: the outcome of the latest decision, announced to screen readers. */
+  const [announcement, setAnnouncement] = useState("");
 
   // The last good page. A failed read keeps it on screen instead of replacing it with nothing.
   const [snapshot, setSnapshot] = useState<Snapshot>({
@@ -180,6 +182,9 @@ export function ApprovalInbox({
       setHasDecisionInFlight(false);
       setStates((current) => ({ ...current, [approvalId]: result }));
       if (result.kind === "decided") {
+        setAnnouncement(
+          `${decision === "approved" ? "Approved" : "Rejected"}: ${card.agentName} wants to run ${card.action}.`,
+        );
         // Keep the card where it is as a receipt, and hold every decide button while the list re-reads.
         setReceipts((current) => ({ ...current, [approvalId]: { card, index } }));
         setIsCoolingDown(true);
@@ -201,6 +206,10 @@ export function ApprovalInbox({
 
   return (
     <div className="grid gap-4">
+      {/* Mounted before any decision and never unmounted, so a change to its text is announced. */}
+      <p role="status" aria-live="polite" className="sr-only" data-testid="approvals-announcer">
+        {announcement}
+      </p>
       {isRefreshFailing ? (
         <p
           role="status"

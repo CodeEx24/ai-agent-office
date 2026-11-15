@@ -26,7 +26,7 @@ function makeCard(n: number, overrides: Partial<ApprovalCardData> = {}): Approva
     createdAt: "2026-11-14T10:00:00.000Z",
     expiresAt: "2026-11-14T11:00:00.000Z",
     recentSteps: [{ seq: 1, label: "Approval requested" }],
-    cost: { inputTokens: 0, outputTokens: 0, costMicros: null },
+    cost: { inputTokens: 0, outputTokens: 0, costMicros: null, isPartial: false },
     ...overrides,
   };
 }

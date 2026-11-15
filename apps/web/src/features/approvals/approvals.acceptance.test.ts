@@ -23,6 +23,8 @@ const world = vi.hoisted(() => {
     accessError: Error | null;
     user: { id: string } | null;
     activeWorkspace: { id: string; name: string } | null;
+    /** Rows for run_events when a test answers queries from data; null keeps the keyed `results` path. */
+    runEvents: Record<string, unknown>[] | null;
   } = {
     calls: [],
     results: {},
@@ -30,9 +32,36 @@ const world = vi.hoisted(() => {
     accessError: null,
     user: { id: "u1" },
     activeWorkspace: { id: "ws-1", name: "WS" },
+    runEvents: null,
   };
   return state;
 });
+
+/** Applies one recorded run_events query to in-memory rows: eq/in filters, then the order, then the limit. */
+function queryRunEvents(call: Call, rows: Record<string, unknown>[]) {
+  let matched = rows;
+  const orders: [string, { ascending?: boolean } | undefined][] = [];
+  let limit = Number.POSITIVE_INFINITY;
+  for (const [op, args] of call.ops) {
+    if (op === "eq") matched = matched.filter((r) => r[args[0] as string] === args[1]);
+    if (op === "in") {
+      matched = matched.filter((r) => (args[1] as unknown[]).includes(r[args[0] as string]));
+    }
+    if (op === "order") orders.push([args[0] as string, args[1] as { ascending?: boolean }]);
+    if (op === "limit") limit = args[0] as number;
+  }
+  const sorted = [...matched].sort((a, b) => {
+    for (const [column, options] of orders) {
+      const left = a[column] as number;
+      const right = b[column] as number;
+      if (left === right) continue;
+      const direction = options?.ascending === false ? -1 : 1;
+      return left < right ? -direction : direction;
+    }
+    return 0;
+  });
+  return { data: sorted.slice(0, limit), error: null };
+}
 
 vi.mock("../../lib/supabase/server", () => ({
   createSupabaseServerClient: () =>
@@ -48,6 +77,12 @@ vi.mock("../../lib/supabase/server", () => ({
           };
         }
         chain.then = (resolve: (value: unknown) => void) => {
+          // `world.runEvents` set: run_events is answered from rows, applying the query's filters, order and limit
+          // the way the database would. Otherwise the keyed results above are used.
+          if (table === "run_events" && world.runEvents !== null) {
+            resolve(queryRunEvents(call, world.runEvents));
+            return;
+          }
           const isUsage = call.ops.some(([op, args]) => op === "eq" && args[1] === "budget.usage");
           const key = isUsage ? "usage" : table;
           resolve(world.results[key] ?? { data: [], error: null });
@@ -85,7 +120,12 @@ vi.mock("next/navigation", () => ({
 
 import { buildApprovalCards, RECENT_STEPS_LIMIT, type StoredEventInput } from "./approval-card";
 import { formatAge, formatCostMicros, formatTimeLeft } from "./approval-format";
-import { ApprovalInboxError, listPendingApprovals, MAX_PENDING_APPROVALS } from "./inbox-data";
+import {
+  ApprovalInboxError,
+  listPendingApprovals,
+  MAX_PENDING_APPROVALS,
+  MAX_USAGE_EVENTS_PER_RUN,
+} from "./inbox-data";
 import { WorkspaceAccessError } from "../workspaces/workspace-access";
 
 const WS = "37000000-0000-4000-8000-0000000000f1";
@@ -129,6 +169,7 @@ const policy = (runId = RUN, seq = 3, callId = "c1", reason = "tier_3_needs_huma
 beforeEach(() => {
   world.calls.length = 0;
   world.results = {};
+  world.runEvents = null;
   world.role = "member";
   world.accessError = null;
   world.user = { id: "u1" };
@@ -283,7 +324,12 @@ describe("AC3: cards show payload, reason, recent steps and cost", () => {
       ev(RUN, 1, "step.started", { step: 7 }),
     ]);
     expect(card?.recentSteps.map((s) => s.label)).toEqual(["Step 7 started"]);
-    expect(card?.cost).toEqual({ inputTokens: 0, outputTokens: 0, costMicros: null });
+    expect(card?.cost).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      costMicros: null,
+      isPartial: false,
+    });
   });
 
   it("orders steps newest first even when events arrive out of order", () => {
@@ -345,7 +391,12 @@ describe("AC3: cards show payload, reason, recent steps and cost", () => {
 
   it("shows zero tokens and 'not reported' cost when the run has no cost events", () => {
     const card = build([ev(RUN, 1, "step.started", { step: 1 })]);
-    expect(card?.cost).toEqual({ inputTokens: 0, outputTokens: 0, costMicros: null });
+    expect(card?.cost).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      costMicros: null,
+      isPartial: false,
+    });
     expect(formatCostMicros(card?.cost.costMicros ?? null)).toBe("not reported");
   });
 
@@ -355,7 +406,12 @@ describe("AC3: cards show payload, reason, recent steps and cost", () => {
       ev(RUN, 2, "budget.usage", { input_tokens: 20, output_tokens: 2 }),
       ev(RUN, 3, "budget.usage", { input_tokens: 30, output_tokens: 3, cost_micros: 400 }),
     ]);
-    expect(card?.cost).toEqual({ inputTokens: 60, outputTokens: 6, costMicros: 500 });
+    expect(card?.cost).toEqual({
+      inputTokens: 60,
+      outputTokens: 6,
+      costMicros: 500,
+      isPartial: false,
+    });
   });
 
   it("formats a zero cost, a sub-cent cost and a large cost distinctly", () => {
@@ -390,13 +446,14 @@ describe("AC3: cards show payload, reason, recent steps and cost", () => {
     const { cards } = await listPendingApprovals(WS);
     expect(cards[0]).toMatchObject({
       reason: "tier_3_needs_human",
-      cost: { inputTokens: 7, outputTokens: 3, costMicros: 2_000 },
+      cost: { inputTokens: 7, outputTokens: 3, costMicros: 2_000, isPartial: false },
     });
     const eventCalls = world.calls.filter((c) => c.table === "run_events");
     expect(eventCalls).toHaveLength(2);
     for (const call of eventCalls) {
       expect(call.ops).toContainEqual(["eq", ["workspace_id", WS]]);
-      expect(call.ops).toContainEqual(["in", ["run_id", [RUN]]]);
+      // Each run is read on its own (one query for its step events, one for its usage events).
+      expect(call.ops).toContainEqual(["eq", ["run_id", RUN]]);
     }
   });
 
@@ -473,5 +530,96 @@ describe("AC4 edge cases: access, failures, page", () => {
     expect(text).toContain('"canDecide":true');
     expect(text).toContain("Approvals");
     expect(text).toContain("serverNowMs");
+  });
+});
+
+// AGO-37 round 3: the loader reads each run on its own, so a busy run cannot push out another run's events, and a
+// run whose usage is cut short is marked partial. These run against in-memory run_events rows (see queryRunEvents).
+describe("AGO-37 round 3: per-run event reads and partial usage", () => {
+  const QUIET_APPROVAL = "37000000-0000-4000-8000-0000000000c2";
+  const dbRow = (runId: string, seq: number, type: string, payload: Record<string, unknown>) => ({
+    workspace_id: WS,
+    run_id: runId,
+    seq,
+    type,
+    payload: { version: 1, ...payload },
+  });
+
+  beforeEach(() => {
+    world.results.agents = { data: [{ id: AGENT, name: "Scout" }], error: null };
+    world.results.approvals = {
+      data: [
+        // The quiet run's request is older, so it sorts first and is never the one cut by a limit.
+        row({ id: QUIET_APPROVAL, run_id: RUN2, created_at: "2026-11-14T09:00:00.000Z" }),
+        row({ id: APPROVAL, run_id: RUN, created_at: "2026-11-14T10:00:00.000Z" }),
+      ],
+      error: null,
+    };
+  });
+
+  it("keeps a quiet run's approval reason when another run has far more events", async () => {
+    const busy = Array.from({ length: 200 }, (_, index) =>
+      dbRow(RUN, index + 1, "step.started", { step: index + 1 }),
+    );
+    world.runEvents = [
+      ...busy,
+      dbRow(RUN2, 3, "policy.decision", {
+        call_id: "c2",
+        decision: "needs_approval",
+        tier: 3,
+        reason_code: "tier_3_needs_human",
+      }),
+      dbRow(RUN2, 4, "approval.requested", {
+        approval_id: QUIET_APPROVAL,
+        call_id: "c2",
+        payload_hash: HASH,
+        tier: 3,
+        expires_at: "2099-01-01T00:00:00.000Z",
+      }),
+    ];
+    const { cards } = await listPendingApprovals(WS);
+    const quiet = cards.find((card) => card.id === QUIET_APPROVAL);
+    expect(quiet).toMatchObject({ reason: "tier_3_needs_human", tier: 3 });
+    expect(cards.find((card) => card.id === APPROVAL)?.recentSteps).toHaveLength(
+      RECENT_STEPS_LIMIT,
+    );
+  });
+
+  it("sums the first usage events per run in seq order and marks a cut run's cost partial", async () => {
+    const usage = (runId: string, count: number, costCents: number) =>
+      Array.from({ length: count }, (_, index) =>
+        dbRow(runId, index + 1, "budget.usage", {
+          input_tokens: 1,
+          output_tokens: 0,
+          cost_cents: costCents,
+        }),
+      );
+    world.runEvents = [...usage(RUN, MAX_USAGE_EVENTS_PER_RUN + 1, 1), ...usage(RUN2, 3, 2)];
+    const { cards } = await listPendingApprovals(WS);
+    expect(cards.find((card) => card.id === APPROVAL)?.cost).toEqual({
+      inputTokens: MAX_USAGE_EVENTS_PER_RUN,
+      outputTokens: 0,
+      costMicros: MAX_USAGE_EVENTS_PER_RUN * 10_000,
+      isPartial: true,
+    });
+    expect(cards.find((card) => card.id === QUIET_APPROVAL)?.cost).toEqual({
+      inputTokens: 3,
+      outputTokens: 0,
+      costMicros: 3 * 2 * 10_000,
+      isPartial: false,
+    });
+  });
+
+  it("is not partial when a run has exactly the cap of usage events", async () => {
+    world.runEvents = Array.from({ length: MAX_USAGE_EVENTS_PER_RUN }, (_, index) =>
+      dbRow(RUN, index + 1, "budget.usage", { input_tokens: 1, output_tokens: 0 }),
+    );
+    const { cards } = await listPendingApprovals(WS);
+    expect(cards.find((card) => card.id === APPROVAL)?.cost).toEqual({
+      inputTokens: MAX_USAGE_EVENTS_PER_RUN,
+      outputTokens: 0,
+      costMicros: null,
+      isPartial: false,
+    });
   });
 });

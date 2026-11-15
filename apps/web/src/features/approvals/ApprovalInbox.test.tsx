@@ -33,7 +33,7 @@ const card: ApprovalCardData = {
     { seq: 4, label: "Approval requested" },
     { seq: 2, label: "Requested email.send (tier 3)" },
   ],
-  cost: { inputTokens: 1500, outputTokens: 300, costMicros: 17_345 },
+  cost: { inputTokens: 1500, outputTokens: 300, costMicros: 17_345, isPartial: false },
 };
 
 const fetchMock = vi.fn();
@@ -387,5 +387,48 @@ describe("ApprovalInbox after a decision (the next card must never land under th
       finish(new Response(null, { status: 200 }));
       await Promise.resolve();
     });
+  });
+});
+
+describe("ApprovalInbox focus and announcements (AGO-37 round 3)", () => {
+  it("mounts one live region before any decision and announces the outcome in that same node", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
+    setup();
+    const region = screen.getByTestId("approvals-announcer");
+    expect(region).toHaveAttribute("aria-live", "polite");
+    expect(region).toHaveTextContent(/^$/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() =>
+      expect(region).toHaveTextContent("Approved: Scout wants to run email.send."),
+    );
+    expect(screen.getByTestId("approvals-announcer")).toBe(region);
+  });
+
+  it("moves focus to the card's Dismiss control after a decision, so focus is not lost to the page", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+
+    const dismiss = await screen.findByRole("button", { name: "Dismiss" });
+    expect(dismiss).toHaveFocus();
+    expect(screen.getByTestId("approvals-announcer")).toHaveTextContent(
+      "Rejected: Scout wants to run email.send.",
+    );
+  });
+});
+
+describe("ApprovalCard layout and cost display (AGO-37 round 3)", () => {
+  it("wraps long values only, keeps every label on one line, and says when the cost is partial", () => {
+    setup({ cards: [{ ...card, cost: { ...card.cost, isPartial: true } }] });
+    const cardEl = screen.getByTestId("approval-card");
+    expect(cardEl.className).toContain("[&_dd]:[overflow-wrap:anywhere]");
+    expect(cardEl.className).not.toContain("[&_*]");
+    const labels = Array.from(cardEl.querySelectorAll("dt"));
+    expect(labels).toHaveLength(4);
+    for (const label of labels) {
+      expect(label).toHaveClass("shrink-0", "whitespace-nowrap");
+    }
+    expect(screen.getByTestId("approval-cost")).toHaveTextContent("partial");
   });
 });
