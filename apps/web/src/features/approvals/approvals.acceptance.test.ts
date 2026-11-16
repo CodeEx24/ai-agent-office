@@ -122,6 +122,8 @@ import { buildApprovalCards, RECENT_STEPS_LIMIT, type StoredEventInput } from ".
 import { formatAge, formatCostMicros, formatTimeLeft } from "./approval-format";
 import {
   ApprovalInboxError,
+  DECISION_EVENT_LIMIT,
+  STEP_EVENT_LIMIT,
   listPendingApprovals,
   MAX_PENDING_APPROVALS,
   MAX_USAGE_EVENTS_PER_RUN,
@@ -580,6 +582,47 @@ describe("AGO-37 round 3: per-run event reads and partial usage", () => {
     const { cards } = await listPendingApprovals(WS);
     const quiet = cards.find((card) => card.id === QUIET_APPROVAL);
     expect(quiet).toMatchObject({ reason: "tier_3_needs_human", tier: 3 });
+    expect(cards.find((card) => card.id === APPROVAL)?.recentSteps).toHaveLength(
+      RECENT_STEPS_LIMIT,
+    );
+  });
+
+  it("keeps a quiet run's reason, tier and steps when busy runs fill both batch windows", async () => {
+    // Enough rows in the busy run to fill each batch window (seq is per run, so they outrank the quiet run's rows).
+    const noisyDecisions = Array.from({ length: DECISION_EVENT_LIMIT + 50 }, (_, index) =>
+      dbRow(RUN, index + 10, "policy.decision", {
+        call_id: `n${String(index)}`,
+        decision: "allow",
+        tier: 1,
+      }),
+    );
+    const noisySteps = Array.from({ length: STEP_EVENT_LIMIT + 50 }, (_, index) =>
+      dbRow(RUN, index + 10, "step.started", { step: index + 1 }),
+    );
+    world.runEvents = [
+      ...noisyDecisions,
+      ...noisySteps,
+      dbRow(RUN2, 1, "step.started", { step: 1 }),
+      dbRow(RUN2, 2, "step.completed", { step: 1 }),
+      dbRow(RUN2, 3, "policy.decision", {
+        call_id: "c2",
+        decision: "needs_approval",
+        tier: 3,
+        reason_code: "tier_3_needs_human",
+      }),
+      dbRow(RUN2, 4, "approval.requested", {
+        approval_id: QUIET_APPROVAL,
+        call_id: "c2",
+        payload_hash: HASH,
+        tier: 3,
+        expires_at: "2099-01-01T00:00:00.000Z",
+      }),
+    ];
+    const { cards } = await listPendingApprovals(WS);
+    const quiet = cards.find((card) => card.id === QUIET_APPROVAL);
+    expect(quiet).toMatchObject({ reason: "tier_3_needs_human", tier: 3 });
+    // Its two steps and its own approval request, not "No steps recorded".
+    expect(quiet?.recentSteps).toHaveLength(3);
     expect(cards.find((card) => card.id === APPROVAL)?.recentSteps).toHaveLength(
       RECENT_STEPS_LIMIT,
     );

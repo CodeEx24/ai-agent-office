@@ -230,7 +230,25 @@ describe("ApprovalInbox freshness (decisions show within 2 seconds)", () => {
       vi.advanceTimersByTime(INBOX_REFRESH_MS * 2);
     });
     expect(refresh).toHaveBeenCalledTimes(1);
-    expect(screen.queryByTestId("approvals-refresh-failed")).not.toBeInTheDocument();
+    expect(screen.getByTestId("approvals-refresh-failed")).toBeEmptyDOMElement();
+  });
+
+  it("keeps the refresh-failure live region mounted and only fills in its text", () => {
+    const props = { workspaceId: WORKSPACE, canDecide: false, serverNowMs: NOW } as const;
+    const { rerender } = render(<ApprovalInbox {...props} cards={[]} />);
+    const region = screen.getByTestId("approvals-refresh-failed");
+    expect(region).toHaveAttribute("role", "status");
+    expect(region).toBeEmptyDOMElement();
+    rerender(<ApprovalInbox {...props} cards={[]} loadFailed />);
+    expect(screen.getByTestId("approvals-refresh-failed")).toBe(region);
+    expect(region).toHaveTextContent("retrying");
+  });
+
+  it("gives the heading that receives focus after a dismiss a visible focus style", () => {
+    render(page(NOW));
+    const heading = screen.getByRole("heading", { name: "Pending approvals" });
+    expect(heading.className).toContain("focus-visible:ring");
+    expect(heading.className).not.toContain("focus:outline-none");
   });
 
   it("shows an inline 'couldn't refresh, retrying' line when a read never returns, keeps the list, and retries with backoff", () => {

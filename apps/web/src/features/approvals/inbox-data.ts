@@ -25,11 +25,13 @@ export const MAX_PENDING_APPROVALS = 50;
 /** Recent steps shown per card; the step batch allows this many rows for each pending approval. */
 const EVENTS_PER_RUN = 60;
 /**
- * The decision events that name a card's call (`approval.requested` and `policy.decision`) are read in one batch, so
- * a quiet run's reason is never pushed out by another run's steps (they are not in this batch).
+ * The decision events that name a card's call (`approval.requested` and `policy.decision`) are read apart from the
+ * steps, so steps never push them out. Other runs' decision rows can, so a full batch falls back to per-run reads
+ * (see `readNewestPerRun`), which keep this many newest decision rows for each pending run.
  */
 const DECISION_EVENT_TYPES = ["policy.decision", "approval.requested"] as const;
-const DECISION_EVENT_LIMIT = 2_000;
+export const DECISION_EVENT_LIMIT = 2_000;
+const DECISION_EVENTS_PER_RUN = 100;
 const STEP_EVENT_TYPES = [
   "step.started",
   "step.completed",
@@ -40,7 +42,7 @@ const STEP_EVENT_TYPES = [
   "run.paused",
   "run.resumed",
 ] as const;
-const STEP_EVENT_LIMIT = EVENTS_PER_RUN * MAX_PENDING_APPROVALS;
+export const STEP_EVENT_LIMIT = EVENTS_PER_RUN * MAX_PENDING_APPROVALS;
 /**
  * Usage events summed per run, read oldest first within each run (`seq` ascending, so the same events are always the
  * ones counted). One run keeps at most this many; a run with more is cut and its cost is marked partial.
@@ -120,23 +122,40 @@ export async function listPendingApprovals(workspaceId: string): Promise<Approva
 
   // Four batches for all pending runs at once: decision events, recent steps and usage, plus the agent names above.
   // None of them is per run, so the query count does not grow with the number of pending approvals.
-  const runEventsBatch = (types: readonly string[], order: [string, boolean][], limit: number) => {
-    let query = supabase
+  // `seq` is per run, so a row window shared by several runs can be filled by one busy run. Each read below is
+  // therefore either one batch over all runs (when it is not cut) or one bounded read per run (when it is).
+  const newestEvents = (ids: string[], types: readonly string[], limit: number) =>
+    supabase
       .from("run_events")
       .select("run_id, seq, type, payload")
       .eq("workspace_id", access.workspaceId)
-      .in("run_id", runIds)
-      .in("type", [...types]);
-    for (const [column, ascending] of order) {
-      query = query.order(column, { ascending });
-    }
-    return query.limit(limit);
+      .in("run_id", ids)
+      .in("type", [...types])
+      .order("seq", { ascending: false })
+      .limit(limit);
+
+  /**
+   * Newest events of the given types. One query for all runs; if it came back full it may have been filled by a few
+   * busy runs, so every run is read on its own with a per-run cap and each card keeps its own reason and steps.
+   * The per-run reads only happen when the batch was cut, so the common poll stays at five queries.
+   */
+  const readNewestPerRun = async (
+    types: readonly string[],
+    batchLimit: number,
+    perRunLimit: number,
+  ) => {
+    const batch = await newestEvents(runIds, types, batchLimit);
+    if (batch.error || batch.data.length < batchLimit) return batch;
+    const perRun = await Promise.all(runIds.map((id) => newestEvents([id], types, perRunLimit)));
+    const failed = perRun.find((result) => result.error);
+    if (failed?.error) return { data: null, error: failed.error };
+    return { data: perRun.flatMap((result) => result.data ?? []), error: null };
   };
 
   const readRunEvents = async () => {
     const [decisions, steps, usage] = await Promise.all([
-      runEventsBatch(DECISION_EVENT_TYPES, [["seq", false]], DECISION_EVENT_LIMIT),
-      runEventsBatch(STEP_EVENT_TYPES, [["seq", false]], STEP_EVENT_LIMIT),
+      readNewestPerRun(DECISION_EVENT_TYPES, DECISION_EVENT_LIMIT, DECISION_EVENTS_PER_RUN),
+      readNewestPerRun(STEP_EVENT_TYPES, STEP_EVENT_LIMIT, EVENTS_PER_RUN),
       supabase
         .from("run_events")
         .select("run_id, seq, type, payload")

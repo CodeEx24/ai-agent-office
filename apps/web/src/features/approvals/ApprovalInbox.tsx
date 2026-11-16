@@ -234,19 +234,24 @@ export function ApprovalInbox({
         {announcement === null ? null : <span key={announcement.key}>{announcement.text}</span>}
       </p>
       {/* Focus lands here after a dismiss when no next card can take it, so it must exist even when the list is empty. */}
-      <h2 ref={headingRef} tabIndex={-1} className="text-lg font-semibold focus:outline-none">
+      <h2
+        ref={headingRef}
+        tabIndex={-1}
+        className="rounded-sm text-lg font-semibold outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      >
         Pending approvals
       </h2>
-      {isRefreshFailing ? (
-        <p
-          role="status"
-          className="text-sm text-destructive"
-          data-testid="approvals-refresh-failed"
-        >
-          Couldn&apos;t refresh the list, retrying…
-          {snapshot.hasData ? " What you see may be out of date." : ""}
-        </p>
-      ) : null}
+      {/* Always mounted, so a failure that fills it in is announced; only its text changes. */}
+      <p
+        role="status"
+        aria-live="polite"
+        className={isRefreshFailing ? "text-sm text-destructive" : undefined}
+        data-testid="approvals-refresh-failed"
+      >
+        {isRefreshFailing
+          ? `Couldn't refresh the list, retrying…${snapshot.hasData ? " What you see may be out of date." : ""}`
+          : null}
+      </p>
       {displayed.length === 0 ? (
         snapshot.hasData ? (
           <p className="text-muted-foreground" data-testid="approvals-empty">
