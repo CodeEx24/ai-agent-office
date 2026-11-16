@@ -70,7 +70,9 @@ export function ApprovalCard({
             <dt className="shrink-0 font-medium whitespace-nowrap">Why it stopped</dt>
             <dd data-testid="approval-reason">
               {card.reason ??
-                (card.isHistoryIncomplete ? "Not read (may be incomplete)" : "Not recorded")}
+                (card.isHistoryIncomplete
+                  ? "Not loaded. This run has more history than the inbox reads at once."
+                  : "Not recorded")}
             </dd>
           </div>
           <div className="flex gap-2">
@@ -101,7 +103,7 @@ export function ApprovalCard({
           {card.recentSteps.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               {card.isHistoryIncomplete
-                ? "Steps not read (may be incomplete)."
+                ? "Not loaded. This run has more history than the inbox reads at once."
                 : "No steps recorded."}
             </p>
           ) : (

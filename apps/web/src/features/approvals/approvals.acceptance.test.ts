@@ -40,6 +40,29 @@ const world = vi.hoisted(() => {
 /** `max_rows` in supabase/config.toml: the most rows one API request returns. */
 const API_MAX_ROWS = 1_000;
 
+/** One PostgREST condition such as `seq.lt.5` or `run_id.gt.abc`, for the operators the keyset reads use. */
+function matchesCondition(condition: string, row: Record<string, unknown>): boolean {
+  const [, column, operator, value] = /^(\w+)\.(lt|gt|eq)\.(.+)$/.exec(condition) ?? [];
+  if (column === undefined || operator === undefined || value === undefined) {
+    throw new Error(`mock does not understand the filter ${condition}`);
+  }
+  const actual = row[column] as number | string;
+  const wanted = typeof actual === "number" ? Number(value) : value;
+  if (operator === "eq") return actual === wanted;
+  return operator === "lt" ? actual < wanted : actual > wanted;
+}
+
+/** `a,and(b,c)`: the shape of the keyset reads' `.or()` filter (a OR (b AND c)). */
+function matchesOr(filter: string, row: Record<string, unknown>): boolean {
+  const [, first, second, third] = /^([^,]+),and\(([^,]+),([^)]+)\)$/.exec(filter) ?? [];
+  if (first === undefined || second === undefined || third === undefined) {
+    throw new Error(`mock does not understand the or filter ${filter}`);
+  }
+  return (
+    matchesCondition(first, row) || (matchesCondition(second, row) && matchesCondition(third, row))
+  );
+}
+
 /** Applies one recorded run_events query to in-memory rows: eq/in filters, then the order, then the limit. */
 function queryRunEvents(call: Call, rows: Record<string, unknown>[]) {
   let matched = rows;
@@ -51,6 +74,7 @@ function queryRunEvents(call: Call, rows: Record<string, unknown>[]) {
     if (op === "in") {
       matched = matched.filter((r) => (args[1] as unknown[]).includes(r[args[0] as string]));
     }
+    if (op === "or") matched = matched.filter((r) => matchesOr(args[0] as string, r));
     if (op === "order") orders.push([args[0] as string, args[1] as { ascending?: boolean }]);
     if (op === "limit") limit = args[0] as number;
     if (op === "range") {
@@ -79,7 +103,7 @@ vi.mock("../../lib/supabase/server", () => ({
         const call: Call = { table, ops: [] };
         world.calls.push(call);
         const chain: Record<string, unknown> = {};
-        for (const op of ["select", "eq", "is", "gt", "in", "order", "limit", "range"]) {
+        for (const op of ["select", "eq", "is", "gt", "in", "order", "limit", "range", "or"]) {
           chain[op] = (...args: unknown[]) => {
             call.ops.push([op, args]);
             return chain;
@@ -137,6 +161,7 @@ import {
   ApprovalInboxError,
   DECISION_EVENT_LIMIT,
   EVENT_PAGE_SIZE,
+  readEventPages,
   STEP_EVENT_LIMIT,
   listPendingApprovals,
   MAX_PENDING_APPROVALS,
@@ -464,9 +489,10 @@ describe("AC3: cards show payload, reason, recent steps and cost", () => {
       reason: "tier_3_needs_human",
       cost: { inputTokens: 7, outputTokens: 3, costMicros: 2_000, isPartial: false },
     });
-    // Three batches (decisions, steps, usage), each scoped to the workspace and to the pending runs.
+    // Three reads (decisions, steps, usage), each scoped to the workspace and to the pending runs. A read ends on an
+    // empty page, so the two with rows take one more query: 2 (decisions) + 1 (steps, empty) + 2 (usage).
     const eventCalls = world.calls.filter((c) => c.table === "run_events");
-    expect(eventCalls).toHaveLength(3);
+    expect(eventCalls).toHaveLength(5);
     for (const call of eventCalls) {
       expect(call.ops).toContainEqual(["eq", ["workspace_id", WS]]);
       expect(call.ops).toContainEqual(["in", ["run_id", [RUN]]]);
@@ -787,5 +813,62 @@ describe("AGO-37 round 4: batched event reads keep the query count fixed", () =>
       isPartial: true,
     });
     expect(cards.find((card) => card.id === QUIET_APPROVAL)?.cost.isPartial).toBe(true);
+  });
+});
+
+describe("AGO-37 round 8: keyset paging over an insert-only table", () => {
+  interface Fake {
+    run_id: string;
+    seq: number;
+    type: string;
+    payload: unknown;
+  }
+  const fake = (seq: number): Fake => ({ run_id: RUN, seq, type: "step.started", payload: {} });
+  /** A page function over `table`, newest first, starting strictly after the cursor; `afterPage` runs once per page. */
+  const pagesOver = (table: Fake[], afterPage: (pageNumber: number) => void, serverMax = 1_000) => {
+    let pageNumber = 0;
+    return (after: { run_id: string; seq: number } | null, size: number) => {
+      const rows = [...table]
+        .sort((a, b) => b.seq - a.seq)
+        .filter((r) => after === null || r.seq < after.seq)
+        .slice(0, Math.min(size, serverMax));
+      pageNumber += 1;
+      afterPage(pageNumber);
+      return Promise.resolve({ data: rows, error: null });
+    };
+  };
+
+  it("does not repeat or skip a row when rows are inserted between page calls", async () => {
+    const table = Array.from({ length: 1_500 }, (_, index) => fake(index + 1));
+    const read = await readEventPages(
+      pagesOver(table, (page) => {
+        if (page === 1) for (let seq = 1_501; seq <= 1_510; seq += 1) table.push(fake(seq));
+      }),
+      2_000,
+    );
+    const seqs = read.rows.map((r) => r.seq);
+    expect(new Set(seqs).size).toBe(seqs.length);
+    // Rows 1..1,500 are all read once, the ten newer rows arrived after page 1 and are not double counted.
+    expect(seqs).toHaveLength(1_500);
+    expect(read.isCut).toBe(false);
+  });
+
+  it("keeps reading after a short page, so a lower server max_rows does not silently truncate", async () => {
+    const table = Array.from({ length: 1_200 }, (_, index) => fake(index + 1));
+    const read = await readEventPages(
+      pagesOver(table, () => undefined, 400),
+      2_000,
+    );
+    expect(read.rows).toHaveLength(1_200);
+    expect(read.isCut).toBe(false);
+  });
+
+  it("drops a row the server returns twice (safety net on the unique key)", async () => {
+    const duplicate = fake(5);
+    const read = await readEventPages(
+      () => Promise.resolve({ data: [duplicate, duplicate], error: null }),
+      10,
+    );
+    expect(read.rows).toHaveLength(1);
   });
 });

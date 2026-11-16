@@ -254,8 +254,12 @@ describe("ApprovalInbox freshness (decisions show within 2 seconds)", () => {
         serverNowMs={NOW}
       />,
     );
-    expect(screen.getByTestId("approval-reason")).toHaveTextContent("may be incomplete");
-    expect(screen.getByText(/Steps not read \(may be incomplete\)/)).toBeInTheDocument();
+    expect(screen.getByTestId("approval-reason")).toHaveTextContent(
+      "Not loaded. This run has more history",
+    );
+    expect(
+      screen.getByText(/Not loaded\. This run has more history/, { selector: "p" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("No steps recorded.")).not.toBeInTheDocument();
   });
 

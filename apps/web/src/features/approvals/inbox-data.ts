@@ -71,26 +71,45 @@ interface EventRead {
   readonly isCut: boolean;
 }
 
+/** Where the last page ended: the next page starts strictly after this row in the read's sort order. */
+export interface EventCursor {
+  readonly run_id: string;
+  readonly seq: number;
+}
+
 /**
- * Reads up to `maxRows` rows page by page, plus one extra row to learn whether anything lies beyond the budget.
- * A page shorter than `EVENT_PAGE_SIZE` is the last one.
+ * Reads up to `maxRows` rows page by page (keyset paging: each page starts after the last row of the one before,
+ * so rows inserted between pages cannot shift a later page or repeat a boundary row), plus one extra row to learn
+ * whether anything lies beyond the budget. The read stops on an empty page, never on a short one: the server may
+ * return fewer rows than asked (a lower `max_rows`) without being at the end. Rows are deduplicated by
+ * (run_id, seq), the table's unique key, as a safety net.
  */
-async function readEventPages(
+export async function readEventPages(
   page: (
-    from: number,
-    to: number,
+    after: EventCursor | null,
+    size: number,
   ) => PromiseLike<{ data: readonly EventRow[] | null; error: unknown }>,
   maxRows: number,
 ): Promise<EventRead> {
   const wanted = maxRows + 1;
   const rows: EventRow[] = [];
+  const seen = new Set<string>();
+  let after: EventCursor | null = null;
   while (rows.length < wanted) {
-    const from = rows.length;
-    const to = Math.min(from + EVENT_PAGE_SIZE, wanted) - 1;
-    const result = await page(from, to);
+    const result = await page(after, Math.min(EVENT_PAGE_SIZE, wanted - rows.length));
     if (result.error || result.data === null) throw new ApprovalInboxError(result.error);
-    rows.push(...result.data);
-    if (result.data.length < to - from + 1) break;
+    const last = result.data.at(-1);
+    if (last === undefined) break;
+    after = { run_id: last.run_id, seq: last.seq };
+    const before = rows.length;
+    for (const row of result.data) {
+      const key = `${row.run_id}:${String(row.seq)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push(row);
+    }
+    // A page of nothing but rows already read means the cursor is not moving: stop rather than loop.
+    if (rows.length === before) break;
   }
   return { rows: rows.slice(0, maxRows), isCut: rows.length > maxRows };
 }
@@ -165,21 +184,31 @@ export async function listPendingApprovals(workspaceId: string): Promise<Approva
   // None of them is per run, so the query count does not grow with the number of pending approvals. Each read is
   // paged in `EVENT_PAGE_SIZE` rows, because the API returns at most that many rows per request, and a read that
   // reaches its row budget reports `isCut` instead of passing a short list off as the whole history.
-  // The pages are ordered by a total order (the sort columns, then `run_id`, then `seq`), so no row is skipped or
-  // repeated between pages.
+  // The pages use keyset paging on the unique key (run_id, seq): "newest" reads (seq desc, run_id asc) and "usage"
+  // reads (run_id asc, seq asc), each next page starting strictly after the last row read. run_events is insert-only,
+  // so rows added between pages never shift a later page or repeat a boundary row.
   const eventPages =
-    (types: readonly string[], order: "newest" | "usage") => (from: number, to: number) => {
-      const query = supabase
+    (types: readonly string[], order: "newest" | "usage") =>
+    (after: EventCursor | null, size: number) => {
+      let query = supabase
         .from("run_events")
         .select("run_id, seq, type, payload")
         .eq("workspace_id", access.workspaceId)
         .in("run_id", runIds)
         .in("type", [...types]);
+      if (after !== null) {
+        const { run_id: runId, seq } = after;
+        query = query.or(
+          order === "newest"
+            ? `seq.lt.${String(seq)},and(seq.eq.${String(seq)},run_id.gt.${runId})`
+            : `run_id.gt.${runId},and(run_id.eq.${runId},seq.gt.${String(seq)})`,
+        );
+      }
       const ordered =
         order === "newest"
           ? query.order("seq", { ascending: false }).order("run_id", { ascending: true })
           : query.order("run_id", { ascending: true }).order("seq", { ascending: true });
-      return ordered.range(from, to);
+      return ordered.limit(size);
     };
 
   const readRunEvents = async () => {
