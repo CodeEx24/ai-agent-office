@@ -53,6 +53,17 @@ flowchart LR
 - Resume bypasses nothing: it only moves `paused` to `queued`; the loop re-reads approvals, budgets and policy.
 - A `running` run whose worker died is only stopped when a retry reclaims it.
 
+## Kill switch (AGO-84)
+One owner action contains a whole workspace or one agent. Routes: `POST /api/control/kill` and `POST /api/control/kill/release`, body `{ workspace_id, scope: "workspace" | "agent", agent_id? }` (an agent scope needs `agent_id`; a workspace scope must not carry one). Answers 200 `{ scope, status: "active" | "released", runs_stopped, credentials_revoked }`; 400 bad input; 401 not signed in; 403 agent credential or not an owner; 500 `kill_switch_unavailable`. Agent credentials are refused first (the AGO-58 guard and its audit event, reused). The UI control is `KillSwitchControl` (`apps/web/src/features/control`): two steps, a confirmation that says what will happen, then the call.
+
+What activating does: (1) latches the scope in `private.kill_switches`; (2) flags every queued, running or paused run in scope for a stop (the AGO-86 flag), which the loop obeys before its next tool call and the control sweep applies to runs with no loop; (3) revokes every live credential in scope. While latched: no credential is issued (`KillSwitchActiveError`), and a run picked up in scope is stopped before its first tool call (the loop reads the latch in the same place as the pause and stop flags, `readRunControl`; a failed read fails closed). Releasing the latch lets new work start; stopped runs stay stopped.
+
+State is preserved: nothing is deleted. Credential rows stay (revoked), run rows and run events stay, each stopped run gets one `run.stopped`, and the latch row records who and when.
+
+The drill: `apps/worker/src/kill-switch/kill-switch.drill.test.ts` runs the real loop, issuer, verifier, stop finalizer and sweep on an in-memory office (workspace kill mid-step, agent kill, release, fail closed, repeat). It runs in CI with `pnpm test`; the database function is proven by pgTAP under the db lock.
+
+Status: the worker guard, loop and issuer wiring, routes, UI and drill are in. The migration (table, the two functions, the issuance guard) waits for the schema slot, so the pg guard is not wired in `wire.ts` yet and the routes answer 500 until then.
+
 ## How to extend it
 - New action: add it to `RUN_CONTROL_ACTIONS` in `packages/shared/src/runs/run-control.ts`, a branch in `request_run_control` (new migration), and its handling in `agent-loop.ts` and the sweep.
 - Another control path to guard: extend `isRunControlRoute` so the proxy records the rejection.

@@ -41,6 +41,7 @@ import {
 } from "./checkpoint-store.js";
 import { ModelProviderError, type ModelProvider, type ModelToolCall } from "./model-provider.js";
 import type { BudgetGuard, Reservation } from "../budget/index.js";
+import type { KillSwitchGuard } from "../kill-switch/index.js";
 import type { ModelRouter } from "./model-routing.js";
 import type { PolicyDecision, PolicyHook } from "./policy-hook.js";
 import type { RunLimitsResolver } from "./run-limits.js";
@@ -138,6 +139,12 @@ export interface AgentLoopDeps {
    * starting over. Omitted: nothing is saved and a retried run starts from step 1, as before.
    */
   readonly checkpoints?: CheckpointStore;
+  /**
+   * The kill switch latch (AGO-84), read together with the human pause and stop flags before every tool call and at
+   * every step boundary: a latched workspace or agent scope stops the run (a stop, so it is final). Omitted: no
+   * latch (tests); production wires it in `wire.ts`.
+   */
+  readonly killSwitch?: KillSwitchGuard;
   /**
    * Where approval requests are kept (AGO-21). A call that needs approval gets a `pending` row here before the
    * run pauses. Omitted: no row is made, and a resumed call is denied (nothing can ever approve it).
@@ -274,10 +281,29 @@ function abortable<T>(
 async function readRunControl(
   checkpoints: CheckpointStore,
   ref: CheckpointRef,
+  killSwitch?: { readonly guard: KillSwitchGuard; readonly agentId: string },
 ): Promise<"none" | "pause" | "stop"> {
   const flags = await checkpoints.readControl(ref);
   if (flags.stopRequested) return "stop";
+  // AGO-84: a latched kill switch for this run's workspace or agent is a stop, whether or not this run's own flag
+  // was set (a run created after the switch was activated has none). A failed read throws: fail closed.
+  if (
+    killSwitch !== undefined &&
+    (await killSwitch.guard.isKilled({
+      workspaceId: ref.workspaceId,
+      agentId: killSwitch.agentId,
+    }))
+  ) {
+    return "stop";
+  }
   return flags.pauseRequested ? "pause" : "none";
+}
+
+function killSwitchFor(
+  deps: Pick<AgentLoopDeps, "killSwitch">,
+  agentId: string,
+): { readonly guard: KillSwitchGuard; readonly agentId: string } | undefined {
+  return deps.killSwitch === undefined ? undefined : { guard: deps.killSwitch, agentId };
 }
 
 interface ToolRecord {
@@ -399,10 +425,11 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
     // AGO-86: the human control flag is read before ANYTHING else a call does, so a paused or stopped agent starts no
     // further call: not the policy hook, not the approval consume, not the tool. Order: control flag, policy, tool.
     // A stop wins over a pause. A read that fails throws: the attempt fails and is retried, never run through.
-    const control = await readRunControl(deps.checkpoints ?? noopCheckpointStore, {
-      workspaceId: ctx.workspaceId,
-      runId: ctx.runId,
-    });
+    const control = await readRunControl(
+      deps.checkpoints ?? noopCheckpointStore,
+      { workspaceId: ctx.workspaceId, runId: ctx.runId },
+      killSwitchFor(deps, ctx.agentId),
+    );
     if (control !== "none") return { kind: "interrupted", control };
     const callId = VALID_CALL_ID.test(call.id) ? call.id : `call_${String(step)}_${String(index)}`;
     const tool = deps.tools.get(call.name);
@@ -816,7 +843,7 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
         control === "stop" ? stopForStop() : stopForPause();
       /** The step-boundary check: a stop first, then a pause. Null when nobody asked for anything. */
       const controlBoundary = async (): Promise<RunOutcome | null> => {
-        const control = await readRunControl(checkpoints, ref);
+        const control = await readRunControl(checkpoints, ref, killSwitchFor(deps, ctx.agentId));
         return control === "none" ? null : stopForControl(control);
       };
 
