@@ -3,7 +3,8 @@
 -- any other, owner only; agent credentials and service callers are refused.
 --
 -- * agents.mode gets a CHECK (strict, standard, relaxed). The column default stays 'strict'. mode stays out of every
---   column grant, so the API still cannot write it.
+--   column grant of authenticated or anon, so they cannot write it. service_role has UPDATE on agents and is refused
+--   only by the log trigger below (its token has no sub, so auth.uid() is null).
 -- * An insert guard (BEFORE INSERT) refuses a new agent in any mode but 'strict', for every role.
 -- * A log trigger (AFTER UPDATE OF mode, SECURITY DEFINER) is the one writer of the log. Whoever changes agents.mode
 --   by whatever route (set_agent_mode(), PostgREST, service_role, a worker connection, the table owner) must be a

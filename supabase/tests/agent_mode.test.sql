@@ -168,7 +168,7 @@ select throws_ok($$update public.agents set mode = 'relaxed' where id = '9910000
   '42501', 'an agent mode can only be changed by a signed-in owner of the workspace', 'table owner with the old flag set: refused');
 set local role service_role;
 select throws_ok($$update public.agents set mode = 'relaxed' where id = '99100000-0000-4000-8000-0000000002a1'$$,
-  '42501', null, 'service_role with the old flag set: refused (by the privilege wall on agents; the trigger''s own refusal is pinned by the table-owner case above)');
+  '42501', null, 'service_role with the old flag set: refused (service_role can UPDATE agents, so the log trigger refuses: its token has no sub)');
 reset role;
 select is((select mode from public.agents where id = '99100000-0000-4000-8000-0000000002a1'), 'strict', 'the refused direct updates left the mode alone');
 select set_config('request.jwt.claims', '{"sub":"99100000-0000-4000-8000-00000000000c","role":"authenticated"}', true);
