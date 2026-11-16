@@ -21,7 +21,7 @@ test.describe("AGO-99: Strict default and human promotion (local stack)", () => 
   test.skip(!isLiveStack, "needs the local Supabase stack (E2E_SUPABASE=1)");
   test.describe.configure({ mode: "serial", timeout: 180_000 });
 
-  const CONFIRM_ERROR = "Confirm that you reviewed this agent's work and want to change its mode.";
+  const CONFIRM_ERROR = "Tick the box to confirm you want to change this agent's mode.";
   const shotDir = process.env.E2E_SHOT_DIR;
   let shotNumber = 0;
 
@@ -152,7 +152,7 @@ test.describe("AGO-99: Strict default and human promotion (local stack)", () => 
     const MODE_LABEL = { standard: "Standard", relaxed: "Relaxed", strict: "Strict" } as const;
     const change = async (mode: keyof typeof MODE_LABEL, label: string) => {
       await form.getByLabel("New mode").selectOption(mode);
-      await form.getByLabel(/I reviewed this agent/).check();
+      await form.getByLabel(/I have decided to change/).check();
       await shot(page, `ac2-before-${label}`);
       await form.getByRole("button", { name: "Change mode" }).click();
       await expect(page.getByRole("status")).toContainText("Mode changed. The change is logged.");
@@ -201,7 +201,7 @@ test.describe("AGO-99: Strict default and human promotion (local stack)", () => 
       select.add(new Option("Permissive", "permissive"));
       select.value = "permissive";
     });
-    await form.getByLabel(/I reviewed this agent/).check();
+    await form.getByLabel(/I have decided to change/).check();
     await form.getByRole("button", { name: "Change mode" }).click();
     await expect(form.getByText("Pick one of the listed modes.")).toBeVisible();
     await shot(page, "ac2-forged-mode-permissive-refused");
@@ -220,7 +220,7 @@ test.describe("AGO-99: Strict default and human promotion (local stack)", () => 
       formEl.append(input);
     }, "00000000-0000-4000-8000-000000000000");
     await page.getByLabel("New mode").selectOption("relaxed");
-    await page.getByLabel(/I reviewed this agent/).check();
+    await page.getByLabel(/I have decided to change/).check();
     await page.getByRole("button", { name: "Change mode" }).click();
     await expect(page.getByRole("alert").filter({ hasText: /\S/ }).first()).toBeVisible();
     await shot(page, "ac2-forged-changedby-refused");

@@ -31,7 +31,7 @@ export const AGENT_MODE_DESCRIPTIONS: Record<AgentMode, string> = {
 export const AGENT_MODE_MESSAGES = {
   modeRequired: "Pick a mode.",
   modeUnknown: "Pick one of the listed modes.",
-  confirmRequired: "Confirm that you reviewed this agent's work and want to change its mode.",
+  confirmRequired: "Tick the box to confirm you want to change this agent's mode.",
 } as const;
 
 export const agentModeSchema = z.enum(AGENT_MODES, {

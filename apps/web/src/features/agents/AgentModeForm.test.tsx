@@ -59,7 +59,7 @@ describe("AgentModeForm", () => {
   it("has an unticked confirm box and sends only the ids it needs as hidden fields", () => {
     setup("standard");
     const form = screen.getByRole("form", { name: "Change mode" });
-    expect(within(form).getByLabelText(/I reviewed this agent/)).not.toBeChecked();
+    expect(within(form).getByLabelText(/I have decided to change/)).not.toBeChecked();
     const hidden = Array.from(form.querySelectorAll<HTMLInputElement>("input[type=hidden]")).map(
       (input) => [input.name, input.value],
     );
@@ -94,7 +94,7 @@ describe("AgentModeForm", () => {
     fireEvent.change(screen.getByLabelText("New mode"), { target: { value: "standard" } });
     await submitWith({
       fieldErrors: {
-        confirm: "Confirm that you reviewed this agent's work and want to change its mode.",
+        confirm: "Tick the box to confirm you want to change this agent's mode.",
       },
       mode: "standard",
     });
@@ -107,22 +107,23 @@ describe("AgentModeForm", () => {
   it("drops the confirm error as soon as the box is ticked (UX 3)", async () => {
     setup("strict");
     await submitWith({
-      fieldErrors: { confirm: "Confirm that you reviewed this agent's work." },
+      fieldErrors: { confirm: "Tick the box to confirm you want to change this agent's mode." },
       mode: "strict",
     });
     expect(
-      await screen.findByText("Confirm that you reviewed this agent's work."),
+      await screen.findByText("Tick the box to confirm you want to change this agent's mode."),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText(/I reviewed this agent/));
+    fireEvent.click(screen.getByLabelText(/I have decided to change/));
     expect(
-      screen.queryByText("Confirm that you reviewed this agent's work."),
+      screen.queryByText("Tick the box to confirm you want to change this agent's mode."),
     ).not.toBeInTheDocument();
   });
 
-  it("does not point to runs the owner cannot reach (UX 2)", () => {
+  it("does not ask for a review of work the page cannot show (UX 2)", () => {
     setup("strict");
     expect(screen.queryByText(/runs/i)).not.toBeInTheDocument();
-    expect(screen.getByLabelText(/I reviewed this agent's work/)).toBeInTheDocument();
+    expect(screen.queryByText(/look over|reviewed/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/I have decided to change this agent's mode/)).toBeInTheDocument();
   });
 
   it("falls back to Strict in the label for an unknown stored mode", () => {

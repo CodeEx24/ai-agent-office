@@ -63,8 +63,8 @@ export function AgentModeForm({
         Current mode: <strong>{current?.label ?? "Strict"}</strong>
       </p>
       <p className="text-sm text-muted-foreground">
-        New agents start in Strict. Look over the work this agent has done before you promote it.
-        Actions at Tier 3 and 4 always need your approval, in every mode.
+        New agents start in Strict. Each mode sets what this agent may do without asking. Actions at
+        Tier 3 and 4 always need your approval, in every mode.
       </p>
       {isArchived ? (
         <p className="text-sm text-muted-foreground">
@@ -121,7 +121,7 @@ export function AgentModeForm({
                 aria-invalid={Boolean(confirmError)}
                 aria-describedby={confirmError ? "agent-mode-confirm-error" : undefined}
               />
-              <span>I reviewed this agent&apos;s work and want to change its mode.</span>
+              <span>I have decided to change this agent&apos;s mode.</span>
             </label>
             {confirmError ? (
               <p id="agent-mode-confirm-error" role="alert" className="text-sm text-destructive">

@@ -42,7 +42,9 @@ Acceptance criteria (verbatim):
 | Q5 | Record accepted (with Q1-Q4 as above) | owner via orchestrator, 2026-11-14 |
 | D6 | Mode values reuse `POLICY_AGENT_MODES` (AGO-43); no new starting-mode constant (round 2: `DEFAULT_AGENT_MODE` removed, `NEW_AGENT_MODE` stays; the database default and insert guard are the source of truth) | worker |
 | D7 | Server action only, no HTTP route (same as the AGO-89 actions). An agent credential gets the existing human-only error state; no rejection run event, because a web action has no run to attach it to (AGO-58's event is run-scoped) | worker; owner can overrule |
-| D8 | Q4 promised a link to the agent's runs, but no runs route exists in the app. The form copy says "work" instead of "runs" and has no link; adding the link needs a runs view (follow-up) | worker, round 2 (UX review); owner can overrule |
+| D8 | Q4 promised a link to the agent's runs, but no runs route exists in the app. The form has no link, and (round 3) the copy no longer asks the owner to look over work the page cannot show: the checkbox reads "I have decided to change this agent's mode." Adding the link and a review step needs a runs view (follow-up). Owner to confirm D8 before merge | worker, rounds 2 and 3 (UX review); owner can overrule |
+| D9 | The refusal states of `setAgentModeAction` now echo the picked `mode`, so the dropdown keeps the owner's choice after a refusal (round 1 UX finding 1). Tests pin the new key | worker, round 2 |
+| D10 | Residual risk, security review round 2 finding 1: the owner check and the log's `changed_by` rest on `auth.uid()`, which Supabase reads from the `request.jwt.claims` setting. A session that can run arbitrary SQL (the worker's `postgres` connection, the table owner) can set that claim to an owner's id and pass the trigger and `set_agent_mode`. PostgREST roles (`authenticated`, `anon`, `service_role`) cannot: they have no `set_config` route and no write grant on `agents.mode`. The same infrastructure-level actor can also disable the triggers (existing limit). Closing it needs the worker to connect as a role that cannot do either; that is an infra change outside this ticket. Exception requested, pending owner acceptance | worker, round 3; owner to accept or ask for the infra change |
 
 ## Boundaries
 - **Always:** scope by `workspace_id`; owner role checked in the action and the RPC; Zod at the action; the log is append-only and written in the same transaction as the change; unknown mode means strict.
@@ -59,7 +61,7 @@ One migration (see Implementation details, point 2): `agents_mode_check`, the gu
 AGO-43 (modes; the policy engine reads `agents.mode`), AGO-89 (RPC, trigger and version patterns; duplicate), AGO-58 and AGO-148 (human-only), AGO-192 (audit table precedent), AGO-194 (pack import; lands agents in Strict through the database default).
 
 ## Known limitations
-- No "review its runs" gate and no link to runs: the app has no runs view yet, so the form asks the owner to confirm they reviewed the agent's work (deviation D8) and does not require a review. (A runs link and a required-review rule are follow-ups.)
+- No "review its runs" gate and no link to runs: the app has no runs view yet, so the form only asks the owner to tick that they have decided to change the mode (deviation D8) and does not require a review. (A runs link and a required-review rule are follow-ups.)
 - The worker already reads `agents.mode` (AGO-43); no worker change here.
 
 ## Testing notes
@@ -67,4 +69,7 @@ Unit: shared schema and default; the action with and without an agent credential
 
 ## Follow-up tasks
 - Pack import (AGO-194) must send no mode (the database lands it in Strict).
-- Optional: require N reviewed runs before a promotion.
+- Optional: require N reviewed runs before a promotion, and a runs link on the form (D8).
+- Security review nits, not fixed: owner hard-delete erases an agent's mode history by cascade (a pgTAP case asserts it); refused agent attempts leave no record (D7); the worker connects as a role that can set the JWT claim setting and disable triggers (D10), so a least-privilege runtime role is the real fix.
+- Code review nits: `NEW_AGENT_MODE` has no product reader today (the database default is the source of truth, D6); whether a workspace cascade reaches `agents` before `agent_mode_changes` is untested (same pattern as `agent_versions`).
+- Test gap (UX note): no component test for the action result arriving before the revalidated `currentMode` prop.
