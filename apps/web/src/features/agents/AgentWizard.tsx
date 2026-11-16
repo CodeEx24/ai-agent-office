@@ -5,6 +5,8 @@ import {
   AGENT_DAILY_BUDGET_DEFAULT_CENTS,
   AGENT_DAILY_BUDGET_MAX_CENTS,
   AGENT_FIELD_LABELS,
+  AGENT_MAX_TOKENS_MAX,
+  AGENT_MAX_TOKENS_MIN,
   AGENT_MODELS,
   AGENT_NAME_MAX_LENGTH,
   AGENT_PROMPT_MAX_LENGTH,
@@ -12,6 +14,7 @@ import {
   AGENT_WIZARD_STEPS,
   checkAgentDraft,
   parseDailyBudget,
+  parseMaxTokens,
   type AgentField,
   type AgentFieldErrors,
 } from "@ago/shared/agent-limits";
@@ -48,6 +51,8 @@ interface Draft {
   model: string;
   prompt: string;
   dailyBudget: string;
+  /** Optional; "" means no override (the worker default applies). */
+  maxTokens: string;
   skillIds: string[];
   capabilities: Record<string, CapabilityMode>;
 }
@@ -58,6 +63,7 @@ const EMPTY_DRAFT: Draft = {
   model: "",
   prompt: "",
   dailyBudget: (AGENT_DAILY_BUDGET_DEFAULT_CENTS / 100).toFixed(2),
+  maxTokens: "",
   skillIds: [],
   capabilities: {},
 };
@@ -220,6 +226,7 @@ export function AgentWizard({
       ? `${fieldId(field)}-error`
       : undefined;
   const budget = parseDailyBudget(draft.dailyBudget);
+  const maxTokens = parseMaxTokens(draft.maxTokens);
   const grants = Object.entries(draft.capabilities);
 
   return (
@@ -236,6 +243,7 @@ export function AgentWizard({
       <input type="hidden" name="model" value={draft.model} />
       <input type="hidden" name="prompt" value={draft.prompt} />
       <input type="hidden" name="dailyBudget" value={draft.dailyBudget} />
+      <input type="hidden" name="maxTokens" value={draft.maxTokens} />
       <input type="hidden" name="skillIds" value={JSON.stringify(draft.skillIds)} />
       <input
         type="hidden"
@@ -500,6 +508,28 @@ export function AgentWizard({
             {(AGENT_DAILY_BUDGET_MAX_CENTS / 100).toFixed(2)}.
           </p>
           <FieldError field="dailyBudget" message={errors.dailyBudget} />
+
+          <Label htmlFor={fieldId("maxTokens")}>{AGENT_FIELD_LABELS.maxTokens} (optional)</Label>
+          <Input
+            id={fieldId("maxTokens")}
+            value={draft.maxTokens}
+            inputMode="numeric"
+            onChange={(event) => {
+              update({ maxTokens: event.target.value });
+            }}
+            aria-invalid={Boolean(errors.maxTokens)}
+            aria-describedby={[`${fieldId("maxTokens")}-hint`, describedBy("maxTokens")]
+              .filter(Boolean)
+              .join(" ")}
+            autoComplete="off"
+          />
+          <p id={`${fieldId("maxTokens")}-hint`} className="text-sm text-muted-foreground">
+            A token is a small piece of text, roughly three quarters of a word. This caps how much
+            text the agent may read and write in one run. Leave empty to use the default. Between{" "}
+            {AGENT_MAX_TOKENS_MIN.toLocaleString("en-US")} and{" "}
+            {AGENT_MAX_TOKENS_MAX.toLocaleString("en-US")}.
+          </p>
+          <FieldError field="maxTokens" message={errors.maxTokens} />
         </div>
       ) : null}
 
@@ -545,6 +575,16 @@ export function AgentWizard({
             <ReviewRow
               label="Daily budget"
               value={budget.ok ? `$${(budget.cents / 100).toFixed(2)}` : draft.dailyBudget}
+            />
+            <ReviewRow
+              label="Max tokens per run"
+              value={
+                maxTokens.ok && maxTokens.tokens !== null
+                  ? maxTokens.tokens.toLocaleString("en-US")
+                  : maxTokens.ok
+                    ? "Not set (default)"
+                    : draft.maxTokens
+              }
             />
             <ReviewRow label="Mode" value="Strict" />
           </dl>

@@ -58,7 +58,7 @@ const VALID: Record<string, Record<string, unknown>> = {
     payload_hash: HASH,
   },
   "budget.usage": { input_tokens: 10, output_tokens: 5 },
-  "budget.exceeded": { scope: "run", limit: 100, used: 120 },
+  "budget.exceeded": { scope: "run", reason: "run_token_limit_reached", limit: 100, used: 120 },
   "handoff.created": { handoff_id: "h1", to_agent_id: UUID, reason: "needs reviewer" },
   "handoff.accepted": { handoff_id: "h1", by_agent_id: UUID },
   "error.raised": { code: "internal", message: "oops", retryable: false },
