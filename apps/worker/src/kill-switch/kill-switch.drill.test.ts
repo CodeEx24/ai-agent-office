@@ -46,7 +46,7 @@ const AGENT_A = "84000000-0000-4000-8000-0000000000a1";
 const AGENT_B = "84000000-0000-4000-8000-0000000000a2";
 const OTHER_AGENT = "84000000-0000-4000-8000-0000000000a3";
 const HUMAN = "84000000-0000-4000-8000-0000000000d1";
-const SECRET = "drill-signing-secret-that-is-long-enough-1234";
+const TEST_ONLY_SIGNING_SECRET = "test-only-not-a-real-secret-for-the-kill-switch-drill";
 const CAPS = ["vault.read"];
 
 interface DrillRun {
@@ -102,8 +102,12 @@ function office() {
       return Promise.resolve(count);
     },
   };
-  const issuer = createCredentialIssuer({ store, secret: SECRET, killSwitch: latch });
-  const verifier = createCredentialVerifier({ store, secret: SECRET });
+  const issuer = createCredentialIssuer({
+    store,
+    secret: TEST_ONLY_SIGNING_SECRET,
+    killSwitch: latch,
+  });
+  const verifier = createCredentialVerifier({ store, secret: TEST_ONLY_SIGNING_SECRET });
 
   const refOf = (r: DrillRun) => ({ workspaceId: r.workspaceId, runId: r.id });
   const add = (r: DrillRun): DrillRun => {
@@ -303,11 +307,14 @@ describe("AGO-84 drill: workspace kill switch pulled while an office is working"
     }
 
     // The switch is pulled while the first run is inside its first tool call.
+    // The result is captured here and asserted after the loop returns: the loop catches anything a
+    // tool throws, so an expect inside the callback could never fail the test.
+    let activation: unknown;
     const end = await o.execute(running, async () => {
-      const result = await o.activate(WS, "workspace");
-      expect(result).toEqual({ runsStopped: 3, credentialsRevoked: 3 });
+      activation = await o.activate(WS, "workspace");
     });
     await o.sweep();
+    expect(activation).toEqual({ runsStopped: 3, credentialsRevoked: 3 });
 
     // AC1: runs halt. The running one finished its current call and started none after it.
     expect(end).toBe("stopped");
