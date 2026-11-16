@@ -2,7 +2,7 @@
 
 ## Links
 - Ticket: https://stratyge.atlassian.net/browse/AGO-84
-- PRs: (pending)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/74
 - Related: AGO-86 (pause/resume/stop, merged), AGO-148 (credentials, merged), AGO-58 (human-only guard, merged), AGO-40 (budget hard stops), AGO-99 (holds the schema slot), AGO-139 (incident view, blocked by this)
 
 Status: In progress. Type: Feature. Risk: high (human control, credentials, agent loop, auth, migration). Epic EP-06, wave 2.
