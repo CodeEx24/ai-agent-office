@@ -21,6 +21,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   addMember,
+  asServiceRole,
   asUser,
   createUser,
   onboard,
@@ -287,4 +288,50 @@ describe.skipIf(!isLive)("approvals inbox, live (AGO-37)", () => {
     const own = await listPendingApprovals(otherWorkspace);
     expect(own.cards).toEqual([]);
   });
+
+  it("finds a quiet run's reason when a busy run's newer events fill the API's first 1,000-row page", async () => {
+    // The quiet run's events are written first, then a busy pending run adds 1,100 newer decision rows. The API
+    // returns at most 1,000 rows per request, so the quiet run's rows sit on the second page of the read.
+    const quietApprovalId = await seedPendingApproval(world);
+    const agent = await hireAgent(world.owner, world.workspaceId);
+    const task = await seedTask(world.workspaceId, agent.id as string);
+    const busyRun = await svcInsert("runs", {
+      workspace_id: world.workspaceId,
+      task_id: task.id,
+      agent_id: agent.id,
+    });
+    await svcInsert("approvals", {
+      workspace_id: world.workspaceId,
+      run_id: busyRun.id,
+      agent_id: agent.id,
+      action: "email.send",
+      payload_hash: hex64(),
+      expires_at: inAnHour(),
+    });
+    const bulk = await asServiceRole("/rest/v1/run_events", {
+      method: "POST",
+      body: Array.from({ length: 1_100 }, (_, index) => ({
+        workspace_id: world.workspaceId,
+        run_id: busyRun.id,
+        type: "policy.decision",
+        payload: {
+          version: 1,
+          call_id: `busy-${String(index)}`,
+          decision: "allow",
+          tier: 1,
+          reason_code: "allowed_by_policy",
+        },
+      })),
+    });
+    expect(bulk.status).toBe(201);
+
+    request.jar = world.memberJar;
+    const inbox = await listPendingApprovals(world.workspaceId);
+    const quiet = inbox.cards.find((c) => c.id === quietApprovalId);
+    expect(quiet).toMatchObject({
+      reason: "tier_3_needs_human",
+      tier: 3,
+      isHistoryIncomplete: false,
+    });
+  }, 60_000);
 });

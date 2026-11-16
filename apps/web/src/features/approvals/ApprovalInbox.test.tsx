@@ -33,6 +33,7 @@ const card: ApprovalCardData = {
     { seq: 4, label: "Approval requested" },
     { seq: 2, label: "Requested email.send (tier 3)" },
   ],
+  isHistoryIncomplete: false,
   cost: { inputTokens: 1500, outputTokens: 300, costMicros: 17_345, isPartial: false },
 };
 
@@ -242,6 +243,20 @@ describe("ApprovalInbox freshness (decisions show within 2 seconds)", () => {
     rerender(<ApprovalInbox {...props} cards={[]} loadFailed />);
     expect(screen.getByTestId("approvals-refresh-failed")).toBe(region);
     expect(region).toHaveTextContent("retrying");
+  });
+
+  it("says 'may be incomplete' instead of 'Not recorded' when the history was only partly read", () => {
+    render(
+      <ApprovalInbox
+        workspaceId={WORKSPACE}
+        cards={[{ ...card, reason: null, recentSteps: [], isHistoryIncomplete: true }]}
+        canDecide
+        serverNowMs={NOW}
+      />,
+    );
+    expect(screen.getByTestId("approval-reason")).toHaveTextContent("may be incomplete");
+    expect(screen.getByText(/Steps not read \(may be incomplete\)/)).toBeInTheDocument();
+    expect(screen.queryByText("No steps recorded.")).not.toBeInTheDocument();
   });
 
   it("gives the heading that receives focus after a dismiss a visible focus style", () => {

@@ -68,7 +68,10 @@ export function ApprovalCard({
         <dl className="grid gap-1 text-sm">
           <div className="flex gap-2">
             <dt className="shrink-0 font-medium whitespace-nowrap">Why it stopped</dt>
-            <dd data-testid="approval-reason">{card.reason ?? "Not recorded"}</dd>
+            <dd data-testid="approval-reason">
+              {card.reason ??
+                (card.isHistoryIncomplete ? "Not read (may be incomplete)" : "Not recorded")}
+            </dd>
           </div>
           <div className="flex gap-2">
             <dt className="shrink-0 font-medium whitespace-nowrap">Tool</dt>
@@ -96,7 +99,11 @@ export function ApprovalCard({
         <section aria-label="Recent steps" className="grid gap-1">
           <h3 className="text-sm font-medium">Recent steps</h3>
           {card.recentSteps.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No steps recorded.</p>
+            <p className="text-sm text-muted-foreground">
+              {card.isHistoryIncomplete
+                ? "Steps not read (may be incomplete)."
+                : "No steps recorded."}
+            </p>
           ) : (
             <ol className="grid gap-0.5 text-sm text-muted-foreground" data-testid="approval-steps">
               {card.recentSteps.map((step) => (

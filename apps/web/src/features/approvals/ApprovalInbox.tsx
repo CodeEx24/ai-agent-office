@@ -245,7 +245,7 @@ export function ApprovalInbox({
       <p
         role="status"
         aria-live="polite"
-        className={isRefreshFailing ? "text-sm text-destructive" : undefined}
+        className={isRefreshFailing ? "text-sm text-destructive" : "sr-only"}
         data-testid="approvals-refresh-failed"
       >
         {isRefreshFailing

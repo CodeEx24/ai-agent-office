@@ -37,11 +37,15 @@ const world = vi.hoisted(() => {
   return state;
 });
 
+/** `max_rows` in supabase/config.toml: the most rows one API request returns. */
+const API_MAX_ROWS = 1_000;
+
 /** Applies one recorded run_events query to in-memory rows: eq/in filters, then the order, then the limit. */
 function queryRunEvents(call: Call, rows: Record<string, unknown>[]) {
   let matched = rows;
   const orders: [string, { ascending?: boolean } | undefined][] = [];
   let limit = Number.POSITIVE_INFINITY;
+  let offset = 0;
   for (const [op, args] of call.ops) {
     if (op === "eq") matched = matched.filter((r) => r[args[0] as string] === args[1]);
     if (op === "in") {
@@ -49,6 +53,10 @@ function queryRunEvents(call: Call, rows: Record<string, unknown>[]) {
     }
     if (op === "order") orders.push([args[0] as string, args[1] as { ascending?: boolean }]);
     if (op === "limit") limit = args[0] as number;
+    if (op === "range") {
+      offset = args[0] as number;
+      limit = (args[1] as number) - offset + 1;
+    }
   }
   const sorted = [...matched].sort((a, b) => {
     for (const [column, options] of orders) {
@@ -60,7 +68,8 @@ function queryRunEvents(call: Call, rows: Record<string, unknown>[]) {
     }
     return 0;
   });
-  return { data: sorted.slice(0, limit), error: null };
+  // The API never returns more than `max_rows` (supabase/config.toml) rows for one request, whatever was asked.
+  return { data: sorted.slice(offset, offset + Math.min(limit, API_MAX_ROWS)), error: null };
 }
 
 vi.mock("../../lib/supabase/server", () => ({
@@ -70,7 +79,7 @@ vi.mock("../../lib/supabase/server", () => ({
         const call: Call = { table, ops: [] };
         world.calls.push(call);
         const chain: Record<string, unknown> = {};
-        for (const op of ["select", "eq", "is", "gt", "in", "order", "limit"]) {
+        for (const op of ["select", "eq", "is", "gt", "in", "order", "limit", "range"]) {
           chain[op] = (...args: unknown[]) => {
             call.ops.push([op, args]);
             return chain;
@@ -83,7 +92,11 @@ vi.mock("../../lib/supabase/server", () => ({
             resolve(queryRunEvents(call, world.runEvents));
             return;
           }
-          const isUsage = call.ops.some(([op, args]) => op === "eq" && args[1] === "budget.usage");
+          const isUsage = call.ops.some(
+            ([op, args]) =>
+              (op === "eq" && args[1] === "budget.usage") ||
+              (op === "in" && (args[1] as unknown[]).includes("budget.usage")),
+          );
           const key = isUsage ? "usage" : table;
           resolve(world.results[key] ?? { data: [], error: null });
         };
@@ -123,6 +136,7 @@ import { formatAge, formatCostMicros, formatTimeLeft } from "./approval-format";
 import {
   ApprovalInboxError,
   DECISION_EVENT_LIMIT,
+  EVENT_PAGE_SIZE,
   STEP_EVENT_LIMIT,
   listPendingApprovals,
   MAX_PENDING_APPROVALS,
@@ -619,13 +633,65 @@ describe("AGO-37 round 3: per-run event reads and partial usage", () => {
       }),
     ];
     const { cards } = await listPendingApprovals(WS);
+    // The API returns 1,000 rows per request, so the reads were paged and each hit its budget: the quiet run's rows
+    // are not read, and its card says so instead of "Not recorded" / "No steps recorded".
+    const decisionPages = world.calls.filter(
+      (c) =>
+        c.table === "run_events" &&
+        c.ops.some(
+          ([op, args]) => op === "in" && (args[1] as unknown[]).includes("approval.requested"),
+        ),
+    );
+    expect(decisionPages).toHaveLength(Math.ceil((DECISION_EVENT_LIMIT + 1) / EVENT_PAGE_SIZE));
     const quiet = cards.find((card) => card.id === QUIET_APPROVAL);
-    expect(quiet).toMatchObject({ reason: "tier_3_needs_human", tier: 3 });
-    // Its two steps and its own approval request, not "No steps recorded".
-    expect(quiet?.recentSteps).toHaveLength(3);
+    expect(quiet).toMatchObject({ reason: null, isHistoryIncomplete: true });
+    // The busy run's newest rows are all there, so it still shows its latest steps.
     expect(cards.find((card) => card.id === APPROVAL)?.recentSteps).toHaveLength(
       RECENT_STEPS_LIMIT,
     );
+  });
+
+  it("reads a quiet run's reason past the first 1,000 rows when the budget allows", async () => {
+    // 1,200 newer rows in the busy run push the quiet run beyond the API's first page; the second page finds it.
+    world.runEvents = [
+      ...Array.from({ length: 1_200 }, (_, index) =>
+        dbRow(RUN, index + 10, "policy.decision", {
+          call_id: `n${String(index)}`,
+          decision: "allow",
+          tier: 1,
+        }),
+      ),
+      dbRow(RUN2, 3, "policy.decision", {
+        call_id: "c2",
+        decision: "needs_approval",
+        tier: 3,
+        reason_code: "tier_3_needs_human",
+      }),
+      dbRow(RUN2, 4, "approval.requested", {
+        approval_id: QUIET_APPROVAL,
+        call_id: "c2",
+        payload_hash: HASH,
+        tier: 3,
+        expires_at: "2099-01-01T00:00:00.000Z",
+      }),
+    ];
+    const { cards } = await listPendingApprovals(WS);
+    expect(cards.find((card) => card.id === QUIET_APPROVAL)).toMatchObject({
+      reason: "tier_3_needs_human",
+      tier: 3,
+      isHistoryIncomplete: false,
+    });
+  });
+
+  it("sums a run's usage across API pages and does not call it partial when nothing was cut", async () => {
+    world.runEvents = Array.from({ length: 1_200 }, (_, index) =>
+      dbRow(RUN, index + 1, "budget.usage", { input_tokens: 1, output_tokens: 0 }),
+    );
+    const { cards } = await listPendingApprovals(WS);
+    expect(cards.find((card) => card.id === APPROVAL)?.cost).toMatchObject({
+      inputTokens: 1_200,
+      isPartial: false,
+    });
   });
 
   it("sums the first usage events per run in seq order and marks a cut run's cost partial", async () => {

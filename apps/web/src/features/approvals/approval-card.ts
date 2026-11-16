@@ -49,6 +49,11 @@ export interface ApprovalCardData {
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly recentSteps: readonly ApprovalStep[];
+  /**
+   * True when the events were read only in part and this card has no reason or no steps: they may exist but were not
+   * read. The card then says "may be incomplete" instead of "Not recorded" / "No steps recorded".
+   */
+  readonly isHistoryIncomplete: boolean;
   readonly cost: {
     readonly inputTokens: number;
     readonly outputTokens: number;
@@ -170,6 +175,8 @@ export function buildApprovalCards(input: {
   readonly events: readonly StoredEventInput[];
   /** Runs whose usage events were cut short when read: their cost is marked partial. */
   readonly partialCostRunIds?: ReadonlySet<string>;
+  /** True when the decision or step reads were cut short, so a missing reason or step list may just be unread. */
+  readonly isHistoryCut?: boolean;
 }): ApprovalCardData[] {
   const byRun = parseEvents(input.events);
   return [...input.approvals]
@@ -177,6 +184,7 @@ export function buildApprovalCards(input: {
     .map((approval) => {
       const events = approval.runId ? (byRun.get(approval.runId) ?? []) : [];
       const { reason, tier } = reasonFor(approval.id, events);
+      const recentSteps = recentStepsFor(events);
       const isPartial =
         approval.runId !== null && (input.partialCostRunIds?.has(approval.runId) ?? false);
       return {
@@ -190,7 +198,9 @@ export function buildApprovalCards(input: {
         reason,
         createdAt: approval.createdAt,
         expiresAt: approval.expiresAt,
-        recentSteps: recentStepsFor(events),
+        recentSteps,
+        isHistoryIncomplete:
+          (input.isHistoryCut ?? false) && (reason === null || recentSteps.length === 0),
         cost: costFor(events, isPartial),
       };
     });
