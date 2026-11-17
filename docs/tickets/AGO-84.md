@@ -5,7 +5,7 @@
 - PRs: https://github.com/CodeEx24/ai-agent-office/pull/74
 - Related: AGO-86 (pause/resume/stop, merged), AGO-148 (credentials, merged), AGO-58 (human-only guard, merged), AGO-40 (budget hard stops), AGO-99 (holds the schema slot), AGO-139 (incident view, blocked by this)
 
-Status: In progress. Type: Feature. Risk: high (human control, credentials, agent loop, auth, migration). Epic EP-06, wave 2.
+Status: In review (round 3, migration round built). Type: Feature. Risk: high (human control, credentials, agent loop, auth, migration). Epic EP-06, wave 2.
 
 ## Overview
 As an owner I want a kill switch that revokes credentials and preserves state so that I can contain an agent fast. AGO-86 gave a human-only stop for one run. The kill switch is the workspace-wide (or one-agent) version: one human action stops every live run in scope, revokes every credential in scope, keeps the scope latched so nothing new starts, and leaves all state readable for review. A drill test proves it, and runs in CI.
@@ -48,10 +48,17 @@ One migration `<timestamp>_ago_84_kill_switch.sql` with a down script:
 | D1 | Record accepted; scope is workspace plus single agent | owner (Jocarl Basco) via orchestrator | 2026-11-16 |
 | D2 | Wait for the schema slot (AGO-99 merges first). Build everything that needs no migration now; the migration is drafted below and is NOT under `supabase/migrations/` until the owner says the slot is ours | owner via orchestrator | 2026-11-16 |
 | D3 | Use the real Jira AC (revoke credentials and halt runs, state preserved, drill in CI); the AGO-86 AC in the brief were a copy error | owner via orchestrator | 2026-11-16 |
-| D4 | The latch is read in `readRunControl` (same read as pause/stop) and in the credential issuer; the pg guard is NOT wired in `wire.ts` until the table exists | worker | 2026-11-16 |
+| D4 | The latch is read in `readRunControl` (same read as pause/stop) and in the credential issuer; the pg guard is wired in `wire.ts` in the migration round (round 3), now that the table exists | worker | 2026-11-16 |
 | D5 | Killed runs reuse the AGO-86 stop path and its `run.stopped` event (`stopped_by_human`); the latch row (who, when) is the kill audit | worker | 2026-11-16 |
+| D6 | Audit reason for latch-caused stops stays `stopped_by_human` (checklist item 9). The stop is a human act, the flag path is identical to AGO-86, and the latch row (who, when, scope) is the kill audit. A distinct `kill_switch` reason would need a run-event schema change in `packages/shared`; offered as an optional follow-up for the owner, not done here | worker (migration round) | 2026-11-17 |
+| D7 | The DB issuance latch is a separate trigger (`check_kill_switch_on_credential_issue`) instead of an edit to AGO-148's `check_agent_credential_issue`, so the merged function stays untouched and the down script is a clean drop | worker (migration round) | 2026-11-17 |
 
-## Draft migration (not applied; to be added as `supabase/migrations/<timestamp>_ago_84_kill_switch.sql` when the slot is ours)
+Deviation (checklist item 5): `supabase/tests/rls_every_table_qa.test.sql` lists the public functions executable by `authenticated`; it now has twelve entries, adding `activate_kill_switch` and `release_kill_switch`. Both are definer functions guarded by a human-session and owner check.
+
+## Migration (applied in round 3)
+The draft that stood here is now the real migration: `supabase/migrations/20261117010001_ago_84_kill_switch.sql`, down script `supabase/rollbacks/20261117010001_ago_84_kill_switch.down.sql`, pgTAP `supabase/tests/kill_switch.test.sql`, rollback test `scripts/ago-84-rollback.test.mjs`. The original sketch is kept below for the design intent.
+
+### Original sketch
 ```sql
 create table private.kill_switches (
   id uuid primary key default gen_random_uuid(),
@@ -87,9 +94,11 @@ create unique index kill_switches_live_idx on private.kill_switches
 pgTAP (under the db lock): owner only (member, anon, agent claim refused), workspace isolation, agent scope covers one agent, credentials revoked and none deleted, latch blocks issuance, release re-allows issuance and keeps runs stopped, RLS-every-table allow-list widened by two definer functions.
 
 ## What the drill proves (and what it does not)
-The CI drill (`apps/worker/src/kill-switch/kill-switch.drill.test.ts`) runs the real agent loop, credential issuer and verifier, `finalizeStop` and `sweepControlRequests` over an in-memory office. Its `activate` is a hand-written copy of the SQL semantics, so it proves the **worker side** (how the loop, issuer and sweep react to a latch and a stop flag), **not the SQL**. That `activate_kill_switch` revokes the right rows is proved only by the live pgTAP drill in the migration round, so AC1 ("credentials revoked") stays partial until then. This PR must not merge until the migration round (migration + guard wiring + live pgTAP drill) passes.
+The CI drill (`apps/worker/src/kill-switch/kill-switch.drill.test.ts`) runs the real agent loop, credential issuer and verifier, `finalizeStop` and `sweepControlRequests` over an in-memory office. Its `activate` is a hand-written copy of the SQL semantics, so it proves the **worker side** (how the loop, issuer and sweep react to a latch and a stop flag), **not the SQL**. That `activate_kill_switch` revokes the right rows is proved only by the live pgTAP drill in the migration round, so AC1 ("credentials revoked") needed the live pgTAP drill, which `supabase/tests/kill_switch.test.sql` now provides (the migration round). The merge condition (migration + guard wiring + live pgTAP drill passing) is checked in the Outcome below.
 
-## Migration-round checklist (do all of it in the SAME change as the migration; none of it now)
+## Migration-round checklist (round 3 status; all items done in the same change as the migration unless noted)
+Status: items 1-9 and 11 done (11 as a note only), 10 left as an optional follow-up. Item 1: the loop is wired in `wire.ts`. No production credential issuer exists yet (grep: `createCredentialIssuer` has no non-test call site), so there was nothing to wire there; whichever change first constructs it must pass `killSwitch: createPgKillSwitchGuard(pool)`. Item 4: done as the separate trigger in D7. Item 6: `KillSwitchControl` has no release button yet, only the release route; an owner release UI is a follow-up. Original wording follows.
+
 1. Wire `createPgKillSwitchGuard(pool)` into `apps/worker/src/agent/wire.ts` (the loop's `killSwitch`) AND into the production credential issuer, in the same change as the migration. `createCredentialIssuer` (`apps/worker/src/identity/credential-service.ts:79`) has no production call site today (only tests build it): wherever the production issuer is first constructed, it must take `killSwitch: createPgKillSwitchGuard(pool)`; that change owns the wiring, and the migration round checks it with a grep for the call site. Not before: without the table the guard fails closed and would stop every run.
 2. `enable row level security` on `private.kill_switches`, deny-all for web roles (in the draft above).
 3. `activate_kill_switch` and `release_kill_switch` check `auth.uid()` is not null, no agent claims (agent_id, run_id, agent_credential) and the owner role.
@@ -122,4 +131,9 @@ Unit with fakes (loop halt, sweep, issuance refusal), route tests (403 agent, 40
 - Incident view (AGO-139) reads the kill events.
 
 ## Outcome
-(pending)
+Round 3 (2026-11-17), under the db lock after `supabase db reset` (local Docker stack only):
+- Live pgTAP drill: `supabase test db` PASS, 30 files, 1052 tests; `kill_switch.test.sql` (48 assertions) ok. It proves owner-only (member, owner of another workspace, agent claim, no user and anon refused), workspace isolation, agent scope vs workspace scope counts, live credentials revoked and none deleted, runs flagged for stop, no `run_events` written, a repeat activation returns zero counts, the issuance latch blocks and (after release) allows, release never un-stops a run or un-revokes a credential, and the widened rejection event function.
+- Rollback: `scripts/ago-84-rollback.test.mjs` with `RUN_DB_TESTS=1` (apply, roll back, re-apply, schema dump identical): 6 passed.
+- `pnpm db:types`: the diff is only the two new functions. The `as unknown as` client cast in `request-kill-switch.ts` is gone and the call is fully typed: both functions declare `p_agent_id uuid default null`, so the generated type is optional and a workspace scope simply omits it. The mounted client component imports the schema from the new additive subpath `@ago/shared/kill-switch`, because the `@ago/shared` barrel pulls server-only env names into a client chunk and fails `pnpm build`.
+- Wiring: `createPgKillSwitchGuard(pool)` is in the production loop (`wire.ts`). `KillSwitchControl` is mounted on the workspace home page for owners only. The routes now reach the real functions: owner gets 200, an agent credential gets 403 (the guard order is unchanged and covered by the route and handler tests).
+- Open for the owner: D6 (the stop reason stays `stopped_by_human`), the missing release button, and wiring the guard into the production credential issuer when that issuer is first built.

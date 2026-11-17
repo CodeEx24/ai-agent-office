@@ -23,28 +23,17 @@ export class KillSwitchError extends Error {
   }
 }
 
-/**
- * The one shape of database call this module makes. The generated database types learn the two functions when the
- * kill switch migration lands (`pnpm db:types`); until then the call is typed here, narrowly, so nothing else is
- * loosened.
- */
-interface KillSwitchRpcClient {
-  rpc(
-    fn: "activate_kill_switch" | "release_kill_switch",
-    args: { p_workspace_id: string; p_scope: string; p_agent_id: string | null },
-  ): PromiseLike<{ data: unknown; error: unknown }>;
-}
-
 async function callKillSwitch(
   fn: "activate_kill_switch" | "release_kill_switch",
   input: KillSwitchBody,
 ): Promise<KillSwitchResult> {
   const { workspaceId } = await requireWorkspaceRole(input.workspace_id, "owner");
-  const supabase = (await createSupabaseServerClient()) as unknown as KillSwitchRpcClient;
+  const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.rpc(fn, {
     p_workspace_id: workspaceId,
     p_scope: input.scope,
-    p_agent_id: input.agent_id ?? null,
+    // Omitted for a workspace scope: the SQL parameter defaults to null.
+    p_agent_id: input.agent_id,
   });
   if (error) throw new KillSwitchError(error);
   const parsed = killSwitchResultSchema.safeParse(data);

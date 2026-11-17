@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { killSwitchResponseSchema } from "@ago/shared";
+import { killSwitchResponseSchema } from "@ago/shared/kill-switch";
 import { Button } from "@ago/ui";
 
 type Phase =
@@ -17,11 +17,8 @@ const FAILURE_MESSAGES: Readonly<Record<number, string>> = {
 };
 
 /**
- * The kill switch button (AGO-84). Owners only: the page that mounts it must render it for owners and the route
- * checks the role again. It is NOT mounted yet on purpose: the routes answer 500 until the kill switch migration
- * lands, and a visible button that cannot work is worse than none. The migration round mounts it on the owner page
- * (see the migration-round checklist in docs/tickets/AGO-84.md).
- * It never fires on one click: the first click asks for a confirmation that says exactly what will happen, the
+ * The kill switch button (AGO-84). Owners only: the workspace home page (`app/app/page.tsx`) renders it for owners
+ * only, and the route and the database check the role again. It never fires on one click: the first click asks for a confirmation that says exactly what will happen, the
  * second one calls `POST /api/control/kill`. With an `agent` it covers that agent only; without one, the whole
  * workspace. It does not undo anything: releasing the switch is a separate owner action and never revives a run.
  */

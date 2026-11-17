@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { getCurrentUser } from "../../features/auth/current-user";
+import { KillSwitchControl } from "../../features/control/KillSwitchControl";
 import { OnboardingForm } from "../../features/workspaces/OnboardingForm";
 import { getActiveWorkspace } from "../../features/workspaces/workspace-access";
 
@@ -39,6 +40,8 @@ export default async function WorkspaceHomePage() {
               Skills
             </Link>
           </p>
+          {/* AGO-84: only an owner sees the kill switch; the route and the database check the role again. */}
+          {workspace.role === "owner" ? <KillSwitchControl workspaceId={workspace.id} /> : null}
         </section>
       ) : (
         <section className="grid gap-3" aria-label="Set up your workspace">

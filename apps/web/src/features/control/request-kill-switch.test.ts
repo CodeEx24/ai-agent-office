@@ -36,7 +36,7 @@ describe("request-kill-switch", () => {
     expect(rpc).toHaveBeenCalledWith("activate_kill_switch", {
       p_workspace_id: WORKSPACE_ID,
       p_scope: "workspace",
-      p_agent_id: null,
+      p_agent_id: undefined,
     });
   });
 
