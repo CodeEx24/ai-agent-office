@@ -73,7 +73,11 @@ AGO-145 (context builder, done). AGO-167 (tool results as retrieved items). Unbl
 | Boundary id strength | - | at least 96 bits of crypto randomness per prompt, never derived from content or run ids; not in logs or run_events beyond what is already stored for the prompt | owner build note, 2026-11-17 |
 
 ## Known limitations
+Visible look-alikes that NFKD does not fold (Cyrillic letters in the tag name, a different bracket) are not escaped; accepted in review round 1 because they read as another word, carry no valid id and the boundary rule still holds.
 A fake model cannot prove a real model's obedience; AGO-129 covers that. AGO-24 / AGO-187 are not built yet, so `web` and `email` kinds are exercised by tests only.
+
+## Review round 1 fix (2026-11-17)
+Security review found the tag gap pattern missed invisible characters outside `p{Cf}` (variation selectors, Hangul fillers, CGJ, tag characters, combining marks). Fix: detection runs on the NFKD form with a gap class of whitespace, `_`, `-`, `p{Cf}`, `p{Default_Ignorable_Code_Point}`, `p{Mn}` and `p{Me}` in the lead-in and between letters (also for the half-tag at a cut), then NFC recomposes the result (equal to NFKC for text with no look-alike). Corpus gained hidden-tag samples; `untrusted.test.ts` has per-character tests that failed before the fix (32 failures).
 
 ## Follow-up tasks
 AGO-129 live-model injection red team.

@@ -58,13 +58,17 @@ export function untrustedDataRules(boundaryId: string): string {
 const MAX_SOURCE_LENGTH = 200;
 
 /**
- * Matches a `<` that starts something readable as our tag name: optional `/`, then `untrusted_data`
- * with any whitespace, `_`, `-` or invisible format characters (zero-width space, joiner, soft hyphen,
- * bidi marks) between the letters. Case-insensitive.
+ * Characters that can sit between the letters of our tag name, or between `<`, `/` and the name,
+ * without changing how a reader sees it: whitespace, `_` and `-`, and every invisible or combining
+ * character (format characters, Default_Ignorable_Code_Point such as variation selectors, Hangul
+ * fillers, the combining grapheme joiner and tag characters, and combining marks). Detection runs on
+ * the NFKD form, so a precomposed letter with an accent is a letter plus a mark that this class skips.
  */
-const GAP = String.raw`[\s\p{Cf}_-]*`;
+const HIDDEN = String.raw`\p{Cf}\p{Default_Ignorable_Code_Point}\p{Mn}\p{Me}`;
+const LEAD = String.raw`[\s${HIDDEN}]*`;
+const GAP = String.raw`[\s${HIDDEN}_-]*`;
 const TAG_LOOKALIKE = new RegExp(
-  String.raw`<(?=[\s\p{Cf}]*/?[\s\p{Cf}]*${UNTRUSTED_TAG.replace("_", "").split("").join(GAP)})`,
+  String.raw`<(?=${LEAD}/?${LEAD}${UNTRUSTED_TAG.replace("_", "").split("").join(GAP)})`,
   "giu",
 );
 
@@ -75,7 +79,7 @@ const PARTIAL_TAG_TAIL = (() => {
   for (let i = letters.length - 1; i >= 0; i -= 1) {
     rest = i === letters.length - 1 ? (letters[i] ?? "") : `${letters[i] ?? ""}(?:${GAP}${rest})?`;
   }
-  return new RegExp(String.raw`<[\s\p{Cf}]*/?[\s\p{Cf}]*(?:${rest})?${GAP}$`, "iu");
+  return new RegExp(String.raw`<${LEAD}/?${LEAD}(?:${rest})?${GAP}$`, "iu");
 })();
 
 /**
@@ -83,16 +87,19 @@ const PARTIAL_TAG_TAIL = (() => {
  * dangling in front of our own closing tag.
  */
 export function stripPartialDelimiter(text: string): string {
-  return text.replace(PARTIAL_TAG_TAIL, "");
+  const decomposed = text.normalize("NFKD");
+  const stripped = decomposed.replace(PARTIAL_TAG_TAIL, "");
+  return stripped === decomposed ? text : stripped.normalize("NFC");
 }
 
 /**
- * Make `text` unable to forge or close one of our blocks. NFKC first, so fullwidth and other
- * compatibility forms of `<` become a plain `<` and are then escaped. Text without a look-alike is
- * unchanged apart from NFKC.
+ * Make `text` unable to forge or close one of our blocks. Matching runs on the NFKD form, so fullwidth
+ * and other compatibility forms of `<` become a plain `<` and are escaped, and accents are marks the
+ * gap class skips. The result is recomposed with NFC, which makes it equal to NFKC for any text that
+ * has no look-alike.
  */
 export function neutraliseDelimiters(text: string, boundaryId?: string): string {
-  const escaped = text.normalize("NFKC").replace(TAG_LOOKALIKE, "&lt;");
+  const escaped = text.normalize("NFKD").replace(TAG_LOOKALIKE, "&lt;").normalize("NFC");
   // The id is random, so content cannot know it; if it ever appears, it is removed rather than trusted.
   return boundaryId === undefined ? escaped : escaped.split(boundaryId).join("[boundary]");
 }
