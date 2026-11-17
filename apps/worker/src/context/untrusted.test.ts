@@ -180,3 +180,44 @@ describe("hidden characters inside the tag (AGO-23 review r1)", () => {
     expect(neutraliseDelimiters(text)).toBe(text.normalize("NFKC"));
   });
 });
+
+describe("linear time on hostile input (AGO-23 round 3)", () => {
+  const MARK = "\u0301";
+  const FILLER = "\u3164";
+  const VS = "\uFE0F";
+  const SHAPES: Record<string, (n: number) => string> = {
+    "less-than then combining marks": (n) => `<${MARK.repeat(n)}x`,
+    "less-than, fillers, slash, selectors, then a letter": (n) =>
+      `<${FILLER.repeat(n)}/${VS.repeat(n)}u`,
+    "repeated less-than with marks": (n) => `<${MARK}`.repeat(n),
+    "mixed marks and less-than": (n) => `<${MARK}${FILLER}${VS}</`.repeat(n / 4),
+    "near-miss name with long gaps": (n) => `</untrusted${MARK.repeat(n)}_${FILLER.repeat(n)}x`,
+    "partial tail with long gaps": (n) =>
+      `text <${FILLER.repeat(n)}/u${MARK.repeat(n)}n${VS.repeat(n)}`,
+  };
+
+  function timeOf(fn: () => unknown): number {
+    const start = performance.now();
+    fn();
+    return performance.now() - start;
+  }
+
+  for (const [name, make] of Object.entries(SHAPES)) {
+    it(`neutraliseDelimiters is fast on ${name}`, () => {
+      expect(timeOf(() => neutraliseDelimiters(make(100_000), ID))).toBeLessThan(200);
+    });
+
+    it(`stripPartialDelimiter is fast on ${name}`, () => {
+      expect(timeOf(() => stripPartialDelimiter(make(100_000)))).toBeLessThan(200);
+    });
+  }
+
+  it("grows roughly linearly when the input doubles", () => {
+    const small = Math.max(
+      timeOf(() => neutraliseDelimiters(`<${MARK.repeat(50_000)}x`)),
+      1,
+    );
+    const large = timeOf(() => neutraliseDelimiters(`<${MARK.repeat(200_000)}x`));
+    expect(large).toBeLessThan(small * 12);
+  });
+});

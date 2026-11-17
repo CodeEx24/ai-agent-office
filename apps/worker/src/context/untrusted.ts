@@ -64,32 +64,87 @@ const MAX_SOURCE_LENGTH = 200;
  * fillers, the combining grapheme joiner and tag characters, and combining marks). Detection runs on
  * the NFKD form, so a precomposed letter with an accent is a letter plus a mark that this class skips.
  */
-const HIDDEN = String.raw`\p{Cf}\p{Default_Ignorable_Code_Point}\p{Mn}\p{Me}`;
-const LEAD = String.raw`[\s${HIDDEN}]*`;
-const GAP = String.raw`[\s${HIDDEN}_-]*`;
-const TAG_LOOKALIKE = new RegExp(
-  String.raw`<(?=${LEAD}/?${LEAD}${UNTRUSTED_TAG.replace("_", "").split("").join(GAP)})`,
-  "giu",
-);
+const HIDDEN_CHAR = /^[\p{Cf}\p{Default_Ignorable_Code_Point}\p{Mn}\p{Me}]$/u;
+const SPACE_CHAR = /^\s$/u;
+/** The tag name without its underscore: letters only, compared case-insensitively. */
+const TAG_LETTERS = UNTRUSTED_TAG.replace("_", "");
 
-/** A `<` at the very end, optionally followed by the start of our tag name (what a cut can leave behind). */
-const PARTIAL_TAG_TAIL = (() => {
-  const letters = UNTRUSTED_TAG.replace("_", "").split("");
-  let rest = "";
-  for (let i = letters.length - 1; i >= 0; i -= 1) {
-    rest = i === letters.length - 1 ? (letters[i] ?? "") : `${letters[i] ?? ""}(?:${GAP}${rest})?`;
+/** Whitespace or an invisible/combining character: may sit between `<`, `/` and the name. */
+function isHidden(ch: string): boolean {
+  return HIDDEN_CHAR.test(ch) || SPACE_CHAR.test(ch);
+}
+
+/** Everything `isHidden` accepts, plus `_` and `-`: may sit between the letters of the name. */
+function isGap(ch: string): boolean {
+  return ch === "_" || ch === "-" || isHidden(ch);
+}
+
+/** The code point at `index` as a string (one or two UTF-16 units). */
+function charAt(text: string, index: number): string {
+  return String.fromCodePoint(text.codePointAt(index) ?? 0);
+}
+
+/** First index at or after `from` whose character fails `accept`. One pass over the run. */
+function skipWhile(text: string, from: number, accept: (ch: string) => boolean): number {
+  let i = from;
+  while (i < text.length) {
+    const ch = charAt(text, i);
+    if (!accept(ch)) break;
+    i += ch.length;
   }
-  return new RegExp(String.raw`<${LEAD}/?${LEAD}(?:${rest})?${GAP}$`, "iu");
-})();
+  return i;
+}
+
+/** Index where the tag name should start after the `<` at `lt`: skips hidden characters, one `/`, hidden characters. */
+function nameStart(text: string, lt: number): number {
+  let i = skipWhile(text, lt + 1, isHidden);
+  if (text[i] === "/") i = skipWhile(text, i + 1, isHidden);
+  return i;
+}
+
+/** True when the `<` at `lt` starts something readable as our opening or closing tag. */
+function isTagStart(text: string, lt: number): boolean {
+  let i = nameStart(text, lt);
+  for (let k = 0; k < TAG_LETTERS.length; k += 1) {
+    if (k > 0) i = skipWhile(text, i, isGap);
+    if (i >= text.length) return false;
+    const ch = charAt(text, i);
+    if (ch.toLowerCase() !== TAG_LETTERS[k]) return false;
+    i += ch.length;
+  }
+  return true;
+}
+
+/** True when everything after the `<` at `lt` is the start (or all) of our tag name, up to the end of the text. */
+function isPartialTail(text: string, lt: number): boolean {
+  let i = nameStart(text, lt);
+  let k = 0;
+  while (i < text.length) {
+    const ch = charAt(text, i);
+    if (k < TAG_LETTERS.length && ch.toLowerCase() === TAG_LETTERS[k]) {
+      k += 1;
+    } else if (!isGap(ch)) {
+      return false;
+    } else if (k === 0) {
+      // Before the first letter only the lead characters may sit; `_` or `-` here must run to the end.
+      return skipWhile(text, i, isGap) === text.length;
+    }
+    i += ch.length;
+  }
+  return true;
+}
 
 /**
  * Remove a half-cut tag from the end of a truncated text, so a cut can never leave `</untrusted`
- * dangling in front of our own closing tag.
+ * dangling in front of our own closing tag. One pass: a scan from a `<` stops at the next `<`, so the
+ * work is linear in the text however many hidden characters it holds.
  */
 export function stripPartialDelimiter(text: string): string {
   const decomposed = text.normalize("NFKD");
-  const stripped = decomposed.replace(PARTIAL_TAG_TAIL, "");
-  return stripped === decomposed ? text : stripped.normalize("NFC");
+  for (let lt = decomposed.indexOf("<"); lt !== -1; lt = decomposed.indexOf("<", lt + 1)) {
+    if (isPartialTail(decomposed, lt)) return decomposed.slice(0, lt).normalize("NFC");
+  }
+  return text;
 }
 
 /**
@@ -99,7 +154,15 @@ export function stripPartialDelimiter(text: string): string {
  * has no look-alike.
  */
 export function neutraliseDelimiters(text: string, boundaryId?: string): string {
-  const escaped = text.normalize("NFKD").replace(TAG_LOOKALIKE, "&lt;").normalize("NFC");
+  const decomposed = text.normalize("NFKD");
+  let out = "";
+  let last = 0;
+  for (let lt = decomposed.indexOf("<"); lt !== -1; lt = decomposed.indexOf("<", lt + 1)) {
+    if (!isTagStart(decomposed, lt)) continue;
+    out += `${decomposed.slice(last, lt)}&lt;`;
+    last = lt + 1;
+  }
+  const escaped = (out + decomposed.slice(last)).normalize("NFC");
   // The id is random, so content cannot know it; if it ever appears, it is removed rather than trusted.
   return boundaryId === undefined ? escaped : escaped.split(boundaryId).join("[boundary]");
 }

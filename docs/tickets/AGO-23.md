@@ -79,6 +79,9 @@ A fake model cannot prove a real model's obedience; AGO-129 covers that. AGO-24 
 ## Review round 1 fix (2026-11-17)
 Security review found the tag gap pattern missed invisible characters outside `p{Cf}` (variation selectors, Hangul fillers, CGJ, tag characters, combining marks). Fix: detection runs on the NFKD form with a gap class of whitespace, `_`, `-`, `p{Cf}`, `p{Default_Ignorable_Code_Point}`, `p{Mn}` and `p{Me}` in the lead-in and between letters (also for the half-tag at a cut), then NFC recomposes the result (equal to NFKC for text with no look-alike). Corpus gained hidden-tag samples; `untrusted.test.ts` has per-character tests that failed before the fix (32 failures).
 
+## Review round 2 fix (2026-11-17)
+The tester found the round 1 regexes backtracked (quadratic to n^2.7 on a `<` followed by a long run of combining marks, hitting `stripPartialDelimiter` on every truncated item). The regexes are replaced by a single-pass scanner over the NFKD copy: set-lookup predicates (`isHidden`, `isGap`), a small matcher for the tag name, and a scan from each `<` that stops at the next `<`, so work is linear. Behaviour is unchanged (all earlier normalisation and injection tests pass untouched); output is still built from the NFKD copy and recomposed with NFC, so no offset mapping back to the original is needed. New time-bound tests (100k characters, under 200 ms, both functions, six hostile shapes, plus a doubling check).
+
 ## Follow-up tasks
 AGO-129 live-model injection red team.
 
