@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database, OfficeState } from "@ago/shared";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createSupabaseOfficeSource } from "./supabase-office-source";
 import { createOfficeRealtime } from "./office-realtime";
@@ -20,6 +20,8 @@ import { createOfficeRealtime } from "./office-realtime";
 const run = promisify(execFile);
 const DB_CONTAINER = process.env.SUPABASE_DB_CONTAINER ?? "supabase_db_agent-office";
 const enabled = process.env.RUN_DB_TESTS === "1";
+// The stack is shared and can be slow right after heavy runs: give the live tests a roomy file-level timeout.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 async function psql(sql: string): Promise<string> {
   const { stdout } = await run("docker", [

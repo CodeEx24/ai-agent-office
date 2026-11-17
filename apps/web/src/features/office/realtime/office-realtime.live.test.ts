@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database, OfficeState } from "@ago/shared";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createSupabaseOfficeSource } from "./supabase-office-source";
 import { createOfficeRealtime } from "./office-realtime";
@@ -20,6 +20,8 @@ import { createOfficeRealtime } from "./office-realtime";
 const run = promisify(execFile);
 const DB_CONTAINER = process.env.SUPABASE_DB_CONTAINER ?? "supabase_db_agent-office";
 const enabled = process.env.RUN_DB_TESTS === "1";
+// The stack is shared and can be slow right after heavy runs: give the live tests a roomy file-level timeout.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 async function psql(sql: string): Promise<string> {
   const { stdout } = await run("docker", [
@@ -46,7 +48,8 @@ function localStackEnv(): { url: string; serviceKey: string; anonKey: string } {
   return { url: read("API_URL"), serviceKey: read("SERVICE_ROLE_KEY"), anonKey: read("ANON_KEY") };
 }
 
-async function waitFor(check: () => boolean, ms = 20_000): Promise<void> {
+// 50 s, inside the 60 s file-level timeout: Realtime can need a while right after a `supabase db reset`.
+async function waitFor(check: () => boolean, ms = 50_000): Promise<void> {
   const end = Date.now() + ms;
   while (!check()) {
     if (Date.now() > end) throw new Error("timed out waiting for the condition");
@@ -61,6 +64,10 @@ describe.skipIf(!enabled)("AGO-126 realtime delivery (live)", () => {
   const agentB = randomUUID();
   const runA = randomUUID();
   const runB = randomUUID();
+  // A third workspace only used to warm Realtime up (see warmUpRealtime); never part of any assertion.
+  const wsW = randomUUID();
+  const agentW = randomUUID();
+  const runW = randomUUID();
   const password = ["pw", randomUUID()].join("-");
   const stack = enabled ? localStackEnv() : { url: "", serviceKey: "", anonKey: "" };
   const userIds: string[] = [];
@@ -94,22 +101,54 @@ describe.skipIf(!enabled)("AGO-126 realtime delivery (live)", () => {
   beforeAll(async () => {
     const userA = await createUser("a");
     await psql(`
-      insert into public.workspaces (id, name) values ('${wsA}', 'AGO-126 A'), ('${wsB}', 'AGO-126 B');
-      insert into public.members (workspace_id, user_id, role) values ('${wsA}', '${userA.id}', 'member');
-      insert into public.agents (id, workspace_id, name) values ('${agentA}', '${wsA}', 'a'), ('${agentB}', '${wsB}', 'b');
-      insert into public.runs (id, workspace_id, agent_id) values ('${runA}', '${wsA}', '${agentA}'), ('${runB}', '${wsB}', '${agentB}')`);
+      insert into public.workspaces (id, name) values ('${wsA}', 'AGO-126 A'), ('${wsB}', 'AGO-126 B'), ('${wsW}', 'AGO-126 warm-up');
+      insert into public.members (workspace_id, user_id, role) values ('${wsA}', '${userA.id}', 'member'), ('${wsW}', '${userA.id}', 'member');
+      insert into public.agents (id, workspace_id, name) values ('${agentA}', '${wsA}', 'a'), ('${agentB}', '${wsB}', 'b'), ('${agentW}', '${wsW}', 'w');
+      insert into public.runs (id, workspace_id, agent_id) values ('${runA}', '${wsA}', '${agentA}'), ('${runB}', '${wsB}', '${agentB}'), ('${runW}', '${wsW}', '${agentW}')`);
     clientA = createClient<Database>(stack.url, stack.anonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
     const { error } = await clientA.auth.signInWithPassword({ email: userA.email, password });
     if (error) throw new Error("test sign-in failed");
+    await warmUpRealtime();
   });
+
+  /**
+   * Right after `supabase db reset` Realtime reports SUBSCRIBED before it delivers events, so the first live insert
+   * can be lost. Insert probe rows in the separate warm-up workspace until a bare channel receives one.
+   */
+  async function warmUpRealtime(): Promise<void> {
+    const probe = { received: false };
+    const channel = clientA
+      .channel(`ago126-warmup-${wsW}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "run_events",
+          filter: `workspace_id=eq.${wsW}`,
+        },
+        () => {
+          probe.received = true;
+        },
+      )
+      .subscribe();
+    let seq = 0;
+    const end = Date.now() + 45_000;
+    while (!probe.received && Date.now() < end) {
+      seq += 1;
+      await insertEvent(wsW, runW, agentW, seq);
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    await clientA.removeChannel(channel);
+  }
 
   afterAll(async () => {
     if (!enabled) return;
     await clientA.removeAllChannels();
     await clientA.realtime.disconnect();
-    const ids = `'${wsA}', '${wsB}'`;
+    const ids = `'${wsA}', '${wsB}', '${wsW}'`;
     // Test-only teardown (run_events is append-only): see scripts/run-events-teardown.mjs.
     await psql(`
       begin;
