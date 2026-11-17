@@ -8,6 +8,7 @@ const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
 import type { ApprovalCardData } from "./approval-card";
+import { summarizeConsequence } from "./consequence-summary";
 import { ApprovalInbox, INBOX_REFRESH_MS } from "./ApprovalInbox";
 
 const WORKSPACE = "37000000-0000-4000-8000-0000000000f1";
@@ -25,6 +26,8 @@ function makeCard(n: number, overrides: Partial<ApprovalCardData> = {}): Approva
     reason: "tier_3_needs_human",
     createdAt: "2026-11-14T10:00:00.000Z",
     expiresAt: "2026-11-14T11:00:00.000Z",
+    consequence: summarizeConsequence("email.send", 3, { kind: "unavailable" }),
+    payload: { kind: "unavailable" },
     recentSteps: [{ seq: 1, label: "Approval requested" }],
     isHistoryIncomplete: false,
     cost: { inputTokens: 0, outputTokens: 0, costMicros: null, isPartial: false },
@@ -257,7 +260,14 @@ describe("AC4 edge cases: failure states, viewer, hostile text", () => {
   });
 
   it("says 'Not recorded' when the reason is unknown and 'No steps recorded.' when there are none", () => {
-    setup([makeCard(1, { reason: null, tier: null, recentSteps: [] })]);
+    setup([
+      makeCard(1, {
+        reason: null,
+        tier: null,
+        recentSteps: [],
+        consequence: summarizeConsequence("email.send", null, { kind: "unavailable" }),
+      }),
+    ]);
     expect(screen.getByTestId("approval-reason")).toHaveTextContent("Not recorded");
     expect(screen.getByText("No steps recorded.")).toBeInTheDocument();
     expect(screen.queryByText(/Tier \d/)).not.toBeInTheDocument();
