@@ -4,12 +4,15 @@ import os from "node:os";
 import path from "node:path";
 
 import { VAULT_NOTE_MAX_BYTES, VAULT_TOP_DIRS } from "@ago/shared";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GitVaultStore } from "./git-vault-store.js";
 import { defaultVaultTemplateDir, loadVaultConfig } from "./vault-config.js";
 
 import type { VaultPrincipal } from "@ago/shared";
+
+// Every test here spawns git; the repo-wide run (all packages in parallel) is slow on Windows.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 const WS_A = "11111111-1111-4111-8111-111111111111";
 const WS_B = "22222222-2222-4222-8222-222222222222";
