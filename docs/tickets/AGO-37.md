@@ -1,9 +1,9 @@
 # AGO-37 - Approvals inbox and card UI
 
 - Ticket: https://stratyge.atlassian.net/browse/AGO-37 (US-039, Epic EP-06, Wave 2)
-- PRs: https://github.com/CodeEx24/ai-agent-office/pull/70 (draft until the pre-merge step)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/70
 - Related: AGO-21 (request flow), AGO-47 (payload-hash binding), AGO-58 (human-only decide route), AGO-54 (later: consequence-first server rendering), AGO-86 (pause/resume/stop, parallel), AGO-40 (budgets, not merged)
-- Type: Feature · Risk: high (human decision UI on approvals) · Status: approved by owner answer (2026-11-17), ready to merge after AGO-99
+- Type: Feature · Risk: high (human decision UI on approvals) · Status: Merged
 
 ## Overview
 One inbox where a signed-in member sees every pending approval in the workspace and decides it. As an owner, I want one inbox with approve, edit, reject and ask so that I can decide quickly.
@@ -72,3 +72,11 @@ Unit (card rendering incl. hostile text, age formatting), component tests for th
 - Realtime for the inbox (publication migration), replacing polling.
 - Non-blocking review notes, left for follow-ups: map known reason codes (for example `tier_3_needs_human`) to a plain sentence and explain "Tier 3"; make the Edit and Ask hint visible to touch and keyboard users (a visible "coming soon" line) and drop "ticket" jargon; show the view-only line once as a banner rather than on every card; "expired" copy ("Expired: denied automatically"); 375 px label wrapping. The other reviewers' non-blocking notes are in `.delivery/jobs/AGO-37/round-1/review-*.md`.
 - Waking the paused run after a decision (AGO-86).
+
+## Outcome
+- Delivered: the approvals inbox (`/approvals`) with consequence-first cards (tool, tier, reason, payload hash, recent steps, cost), 1 s polling refresh with a live region, keyset-paged event reads that flag cut history as "may be incomplete".
+- Review: 8 rounds (rounds 6-8 past the round limit, approved by the owner); final gate PASS on 7b508ad, pre-merge re-gate PASS after re-sync with main (AGO-99).
+- Deviations: 1 s polling instead of Supabase Realtime (accepted, q6).
+- Deferred: full payload on the card (AC3 part), accepted 2026-11-17, follow-up AGO-215 (must land before any real Tier 3/4 tool reaches users).
+- Feature guide: [docs/features/approvals.md](../features/approvals.md).
+- Follow-ups: AGO-215; AGO-54 builds on this (consequence-first server rendering).
