@@ -24,13 +24,19 @@ insert into public.members (id, workspace_id, user_id, role) values
   ('89000000-0000-4000-8000-0000000001a2', '89aaaaaa-0000-4000-8000-000000000001', '89000000-0000-4000-8000-00000000000c', 'member'),
   ('89000000-0000-4000-8000-0000000001a3', '89aaaaaa-0000-4000-8000-000000000001', '89000000-0000-4000-8000-00000000000d', 'viewer'),
   ('89000000-0000-4000-8000-0000000001b1', '89bbbbbb-0000-4000-8000-000000000001', '89000000-0000-4000-8000-00000000000b', 'owner');
--- s = source (deliberately NOT strict, to prove a copy is), x = to be archived, w = worker-touched, z = scratch, bb = B's agent
+-- s = source (deliberately NOT strict once raised below, to prove a copy is), x = to be archived, w = worker-touched, z = scratch, bb = B's agent
 insert into public.agents (id, workspace_id, name, role, model, prompt, daily_budget_cents, mode) values
-  ('89000000-0000-4000-8000-0000000002a1', '89aaaaaa-0000-4000-8000-000000000001', 'Source', 'Researcher', 'claude-haiku-5-5', 'Find sources.', 500, 'permissive'),
+  ('89000000-0000-4000-8000-0000000002a1', '89aaaaaa-0000-4000-8000-000000000001', 'Source', 'Researcher', 'claude-haiku-5-5', 'Find sources.', 500, 'strict'),
   ('89000000-0000-4000-8000-0000000002a2', '89aaaaaa-0000-4000-8000-000000000001', 'Archivable', 'Writer', 'claude-haiku-5-5', 'Write.', 300, 'strict'),
   ('89000000-0000-4000-8000-0000000002a3', '89aaaaaa-0000-4000-8000-000000000001', 'Worker touched', 'Ops', 'claude-haiku-5-5', 'Run.', 200, 'strict'),
   ('89000000-0000-4000-8000-0000000002a4', '89aaaaaa-0000-4000-8000-000000000001', 'Scratch', 'Temp', 'claude-haiku-5-5', 'Temp.', 100, 'strict'),
   ('89000000-0000-4000-8000-0000000002b1', '89bbbbbb-0000-4000-8000-000000000001', 'B agent', 'Other', 'claude-haiku-5-5', 'Other.', 100, 'strict');
+-- AGO-99: an agent is born strict and a mode changes only through set_agent_mode(); the fixture raises the source by calling that function as the workspace owner
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"89000000-0000-4000-8000-00000000000a","role":"authenticated"}', true);
+select public.set_agent_mode('89aaaaaa-0000-4000-8000-000000000001', '89000000-0000-4000-8000-0000000002a1', 'relaxed');
+reset role;
+select set_config('request.jwt.claims', '', true);
 insert into public.skills (id, workspace_id, name, body) values
   ('89000000-0000-4000-8000-0000000003a1', '89aaaaaa-0000-4000-8000-000000000001', 'skill-a', 'one');
 insert into public.agent_skills (workspace_id, agent_id, skill_id) values
