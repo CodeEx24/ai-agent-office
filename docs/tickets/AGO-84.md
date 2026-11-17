@@ -87,10 +87,10 @@ create unique index kill_switches_live_idx on private.kill_switches
 pgTAP (under the db lock): owner only (member, anon, agent claim refused), workspace isolation, agent scope covers one agent, credentials revoked and none deleted, latch blocks issuance, release re-allows issuance and keeps runs stopped, RLS-every-table allow-list widened by two definer functions.
 
 ## What the drill proves (and what it does not)
-The CI drill (`apps/worker/src/kill-switch/kill-switch.drill.test.ts`) runs the real agent loop, credential issuer and verifier, `finalizeStop` and `sweepControlRequests` over an in-memory office. Its `activate` is a hand-written copy of the SQL semantics, so it proves the **worker side** (how the loop, issuer and sweep react to a latch and a stop flag), **not the SQL**. That `activate_kill_switch` revokes the right rows is proved only by the live pgTAP drill in the migration round, so AC1 ("credentials revoked") stays partial until then. This PR must not merge to Done before that.
+The CI drill (`apps/worker/src/kill-switch/kill-switch.drill.test.ts`) runs the real agent loop, credential issuer and verifier, `finalizeStop` and `sweepControlRequests` over an in-memory office. Its `activate` is a hand-written copy of the SQL semantics, so it proves the **worker side** (how the loop, issuer and sweep react to a latch and a stop flag), **not the SQL**. That `activate_kill_switch` revokes the right rows is proved only by the live pgTAP drill in the migration round, so AC1 ("credentials revoked") stays partial until then. This PR must not merge until the migration round (migration + guard wiring + live pgTAP drill) passes.
 
 ## Migration-round checklist (do all of it in the SAME change as the migration; none of it now)
-1. Wire `createPgKillSwitchGuard(pool)` into `apps/worker/src/agent/wire.ts` (the loop's `killSwitch`) AND into the production credential issuer, in the same change as the migration. Not before: without the table the guard fails closed and would stop every run.
+1. Wire `createPgKillSwitchGuard(pool)` into `apps/worker/src/agent/wire.ts` (the loop's `killSwitch`) AND into the production credential issuer, in the same change as the migration. `createCredentialIssuer` (`apps/worker/src/identity/credential-service.ts:79`) has no production call site today (only tests build it): wherever the production issuer is first constructed, it must take `killSwitch: createPgKillSwitchGuard(pool)`; that change owns the wiring, and the migration round checks it with a grep for the call site. Not before: without the table the guard fails closed and would stop every run.
 2. `enable row level security` on `private.kill_switches`, deny-all for web roles (in the draft above).
 3. `activate_kill_switch` and `release_kill_switch` check `auth.uid()` is not null, no agent claims (agent_id, run_id, agent_credential) and the owner role.
 4. DB-side issuance latch in `private.check_agent_credential_issue` (the TypeScript issuer check is only the first layer).
@@ -100,6 +100,7 @@ The CI drill (`apps/worker/src/kill-switch/kill-switch.drill.test.ts`) runs the 
 8. Mount `KillSwitchControl` on the owner page behind the owner check.
 9. Decide the audit reason for latch-caused stops: today they record `stopped_by_human` (D5) and the kill appears only in the latch row; a reviewer reading run events will not see "kill switch". Product choice for the owner.
 10. Optional: extract the route shell shared with AGO-86 (`NO_STORE`, `jsonError`, agent rejection, 401/403 mapping) into one helper.
+11. Measure the latch read per tool call and per step once wired; do not cache it per run (a cache changes the fail-closed behaviour).
 
 ## Boundaries
 - **Always:** workspace_id scoping with RLS, human-only (agent credential refused), owner role, fail closed, no deletes of state.
