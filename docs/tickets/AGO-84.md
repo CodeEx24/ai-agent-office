@@ -53,6 +53,8 @@ One migration `<timestamp>_ago_84_kill_switch.sql` with a down script:
 | D6 | Audit reason for latch-caused stops stays `stopped_by_human` (checklist item 9). The stop is a human act, the flag path is identical to AGO-86, and the latch row (who, when, scope) is the kill audit. A distinct `kill_switch` reason would need a run-event schema change in `packages/shared`; offered as an optional follow-up for the owner, not done here | worker (migration round) | 2026-11-17 |
 | D7 | The DB issuance latch is a separate trigger (`check_kill_switch_on_credential_issue`) instead of an edit to AGO-148's `check_agent_credential_issue`, so the merged function stays untouched and the down script is a clean drop | worker (migration round) | 2026-11-17 |
 
+Owner decisions 2026-11-17 (Jocarl Basco, standing rule "go with recommendation always"): D6 is confirmed (latch-stop reason stays `stopped_by_human`); the three tester gaps (no release button, no latched state after reload, loop halt not exercised on the device lane) are accepted as non-blocking, with "follow-up: release button" and "follow-up: latched state on reload" as follow-up tickets.
+
 Deviation (checklist item 5): `supabase/tests/rls_every_table_qa.test.sql` lists the public functions executable by `authenticated`; it now has twelve entries, adding `activate_kill_switch` and `release_kill_switch`. Both are definer functions guarded by a human-session and owner check.
 
 ## Migration (applied in round 3)
@@ -129,6 +131,10 @@ Unit with fakes (loop halt, sweep, issuance refusal), route tests (403 agent, 40
 
 ## Follow-up tasks
 - Incident view (AGO-139) reads the kill events.
+- follow-up: release button. `KillSwitchControl` has no release button; release works only through `POST /api/control/kill/release`.
+- follow-up: latched state on reload. The owner page shows no latched state after a reload (the latch itself persists and is enforced).
+- Optional nits from round 3 review: focus is lost when the button swaps for the confirmation; the status text says "1 runs"; a Content-Type nit on the kill routes; `createCredentialIssuer` must take `killSwitch: createPgKillSwitchGuard(pool)` when it is first built.
+- Not covered on the device lane: the worker loop halting a live run (covered by the in-memory drill and the live-DB tests).
 
 ## Outcome
 Round 3 (2026-11-17), under the db lock after `supabase db reset` (local Docker stack only):
