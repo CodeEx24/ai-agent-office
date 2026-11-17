@@ -61,7 +61,7 @@ export function buildDockerRunArgs(input: {
     `${SANDBOX_LABEL}=true`,
     "--label",
     `${SANDBOX_RUN_LABEL}=${input.runId}`,
-    "--rm",
+    // No `--rm`: the stopped container is inspected for OOMKilled / State.Error, then force-removed by the runner.
     "--pull",
     "never",
     "-i",
@@ -131,6 +131,13 @@ export function createDockerSandboxRunner(options: DockerRunnerOptions = {}): Sa
 
       const limits = resolveSandboxLimits(request.limits);
       const files = request.files ?? [];
+      // Built before any container exists, and never allowed to throw out of run().
+      let archive: Buffer | undefined;
+      try {
+        archive = files.length > 0 ? createTar(files) : undefined;
+      } catch (error) {
+        return denied("invalid_request", `input files could not be packed: ${describe(error)}`);
+      }
       const name = `ago-sbx-${randomBytes(8).toString("hex")}`;
       const args = buildDockerRunArgs({
         name,
@@ -189,7 +196,7 @@ export function createDockerSandboxRunner(options: DockerRunnerOptions = {}): Sa
 
       // The container may exit before reading stdin; a broken pipe there is not an error.
       child.stdin?.on("error", () => undefined);
-      child.stdin?.end(files.length > 0 ? createTar(files) : undefined);
+      child.stdin?.end(archive);
 
       try {
         const { code, spawnError } = await exit;
@@ -211,18 +218,28 @@ export function createDockerSandboxRunner(options: DockerRunnerOptions = {}): Sa
         if (stopReason === "aborted") return denied("aborted", "the run was stopped");
 
         const stderrText = Buffer.concat(err.chunks).toString("utf8");
-        // 125 = Docker itself failed (daemon down, image missing); the code did not run.
-        if (code === 125) {
+        // The program's exit code says nothing about Docker. Ask Docker what happened to the container: if it
+        // cannot be inspected it was never created (daemon unreachable, image missing, bad flags), so the code
+        // did not run and the call fails closed. The stopped container still exists here (no `--rm`).
+        const state = await inspectContainer(docker, name);
+        if (state === undefined) {
           return denied(
             "runtime_unavailable",
-            `the container could not start: ${stderrText.trim().slice(0, 300)}`,
+            `the container could not be started: ${stderrText.trim().slice(0, 300) || `docker exited with ${String(code)}`}`,
           );
         }
-        // 137 = SIGKILL. A timeout or abort kill was handled above, so here it is the kernel OOM killer.
-        if (code === 137) {
+        if (state.oomKilled) {
           return denied(
             "out_of_memory",
             `the call used more than ${String(limits.memoryMb)} MiB and was killed`,
+          );
+        }
+        // A runtime error other than "program not found/not executable" (126/127, which are the program's
+        // own result and already in stderr) means the container could not run the code.
+        if (state.error !== "" && code !== 126 && code !== 127) {
+          return denied(
+            "runtime_unavailable",
+            `the container failed: ${state.error.slice(0, 300)}`,
           );
         }
         return {
@@ -235,7 +252,7 @@ export function createDockerSandboxRunner(options: DockerRunnerOptions = {}): Sa
       } finally {
         clearTimeout(timer);
         request.signal?.removeEventListener("abort", onAbort);
-        // Every exit path: success, deny, timeout, crash. Idempotent and a no-op when `--rm` already won.
+        // Every exit path: success, deny, timeout, crash. Idempotent; a no-op when nothing was created.
         await removeContainer(docker, name);
       }
     },
@@ -257,6 +274,24 @@ export async function listSandboxContainers(
   const label = runId === undefined ? `${SANDBOX_LABEL}=true` : `${SANDBOX_RUN_LABEL}=${runId}`;
   const result = await runDocker(dockerBinary, ["ps", "-a", "-q", "--filter", `label=${label}`]);
   return result.stdout.split(/\s+/).filter((id) => id.length > 0);
+}
+
+/** `undefined` when Docker cannot answer or the container does not exist. */
+async function inspectContainer(
+  docker: string,
+  name: string,
+): Promise<{ readonly oomKilled: boolean; readonly error: string } | undefined> {
+  const result = await runDocker(docker, [
+    "inspect",
+    "--format",
+    "{{.State.OOMKilled}}|{{.State.Error}}",
+    name,
+  ]);
+  if (result.code !== 0) return undefined;
+  const text = result.stdout.trim();
+  const at = text.indexOf("|");
+  if (at < 0) return undefined;
+  return { oomKilled: text.slice(0, at) === "true", error: text.slice(at + 1) };
 }
 
 function killContainer(docker: string, name: string): Promise<unknown> {
