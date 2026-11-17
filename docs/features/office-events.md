@@ -94,3 +94,37 @@ Both properties are tested over generated histories (`office-reducer.test.ts`).
 - The office only **displays** approvals; an event never approves anything.
 - Treat `anomalies` and `gaps` as health signals (log, catch up), not as errors to throw.
 - State keeps every run view; the store (AGO-142) may prune ended runs it no longer needs.
+
+## Realtime delivery (AGO-126)
+
+Code: `apps/web/src/features/office/realtime/`. It streams `run_events` to the browser and catches up after a drop. The office store (AGO-142) calls it; nothing else reads the stream.
+
+```ts
+const realtime = createOfficeRealtime({
+  source: createSupabaseOfficeSource(browserClient), // the user-scoped client, never a service role
+  workspaceId,
+  initialState,            // a validated snapshot (`parseOfficeState`), or omit for an empty office
+  onState: (state) => {},  // every new OfficeState (immutable)
+  onStatus: (status) => {}, // idle | connecting | catching_up | live | reconnecting | stopped
+});
+realtime.start();          // later: realtime.stop(), or realtime.reconnectNow() when the browser is back online
+```
+
+How it behaves:
+
+- **Stream, then catch up.** It subscribes first (Postgres Changes, `INSERT` on `run_events`, filter `workspace_id=eq.<id>`), and when the channel is `SUBSCRIBED` it loads every row from `cursor - 5 minutes` (feed order, keyset paged). Rows pushed during the catch-up wait on one serial queue and are applied after it.
+- **Exactly once, in order.** Every apply goes through `applyOfficeEvent`, so overlap and duplicates change nothing (per-run `seq`). The overlap is there because `created_at` is the transaction start: a row can commit after a later one.
+- **Gaps.** A row ahead of its run is held back by the reducer (`state.gaps`). The controller then fetches that run's rows with `seq > after_seq` and applies them, so the gap closes without waiting for a reconnect.
+- **Reconnect.** A closed, errored or timed-out channel (or a failed catch-up) reconnects with exponential backoff (1 s, doubling, 30 s cap, jittered) and catches up again from `state.cursor`. A good catch-up resets the backoff.
+- **No cursor** (an empty office) loads the feed from the start, bounded at 40 pages of 500 rows per load; give it a snapshot for large workspaces.
+- **`agent_id`** is not a `run_events` column: the Supabase source joins it from `runs` with a workspace-scoped read and caches it (AGO-124 decision 2).
+
+Isolation (events from other workspaces never arrive):
+
+1. **RLS is the guard.** `run_events_select_viewer` (AGO-107) filters both the catch-up queries and Realtime Postgres Changes per subscriber.
+2. The queries and the subscription also name the `workspace_id` (defence in depth, never the only guard).
+3. Every row is re-validated and its `workspace_id` re-checked on arrival; a foreign row is counted (`anomalies.foreign`, `foreign` in the loader) and never applied.
+
+Database: Realtime needs `public.run_events` in the `supabase_realtime` publication (migration `<timestamp>_ago_126_realtime_run_events.sql`, rollback in `supabase/rollbacks/`). It adds no policy: the existing select policy applies.
+
+Tests: `office-realtime.test.ts` (fake source: order, overlap, duplicates, gaps, foreign rows, backoff, stop) and `office-realtime.live.test.ts` (local stack, under the db lock: two workspaces, isolation, drop and reconnect).
