@@ -3,9 +3,9 @@
 ## Links
 - Ticket: https://stratyge.atlassian.net/browse/AGO-84
 - PRs: https://github.com/CodeEx24/ai-agent-office/pull/74
-- Related: AGO-86 (pause/resume/stop, merged), AGO-148 (credentials, merged), AGO-58 (human-only guard, merged), AGO-40 (budget hard stops), AGO-99 (holds the schema slot), AGO-139 (incident view, blocked by this)
+- Related: AGO-86 (pause/resume/stop, merged), AGO-148 (credentials, merged), AGO-58 (human-only guard, merged), AGO-40 (budget hard stops), AGO-99 (holds the schema slot), AGO-139 (incident view, blocked by this), follow-ups AGO-217, AGO-218, AGO-219
 
-Status: In review (round 3, migration round built). Type: Feature. Risk: high (human control, credentials, agent loop, auth, migration). Epic EP-06, wave 2.
+Status: Merged. Type: Feature. Risk: high (human control, credentials, agent loop, auth, migration). Epic EP-06, wave 2.
 
 ## Overview
 As an owner I want a kill switch that revokes credentials and preserves state so that I can contain an agent fast. AGO-86 gave a human-only stop for one run. The kill switch is the workspace-wide (or one-agent) version: one human action stops every live run in scope, revokes every credential in scope, keeps the scope latched so nothing new starts, and leaves all state readable for review. A drill test proves it, and runs in CI.
@@ -143,5 +143,8 @@ Round 3 (2026-11-17), under the db lock after `supabase db reset` (local Docker 
 - Rollback: `scripts/ago-84-rollback.test.mjs` with `RUN_DB_TESTS=1` (apply, roll back, re-apply, schema dump identical): 6 passed.
 - `pnpm db:types`: the diff is only the two new functions. The `as unknown as` client cast in `request-kill-switch.ts` is gone and the call is fully typed: both functions declare `p_agent_id uuid default null`, so the generated type is optional and a workspace scope simply omits it. The mounted client component imports the schema from the new additive subpath `@ago/shared/kill-switch`, because the `@ago/shared` barrel pulls server-only env names into a client chunk and fails `pnpm build`.
 - Wiring: `createPgKillSwitchGuard(pool)` is in the production loop (`wire.ts`). `KillSwitchControl` is mounted on the workspace home page for owners only. The routes now reach the real functions: owner gets 200, an agent credential gets 403 (the guard order is unchanged and covered by the route and handler tests).
-- Open for the owner: D6 (the stop reason stays `stopped_by_human`), the missing release button, and wiring the guard into the production credential issuer when that issuer is first built.
+- Owner decisions (Jocarl Basco, standing rule, 2026-11-17): D6 the stop reason stays `stopped_by_human`; D8 the agent merges this PR although it adds `scripts/ago-84-rollback.test.mjs` (a human-merge path).
 - Feature guide: `docs/features/control.md` (section "Kill switch (AGO-84)").
+- Review: 3 rounds. Round 3: gate PASS, tester-functional PASS (14 live-DB tests), tester-device PASS (15 screenshots + replayable E2E), reviewer-code, reviewer-security, ago-invariants-reviewer, reviewer-ui and reviewer-ux all PASS; approver ESCALATE on the scripts/ path only, resolved APPROVE by the owner (D8). Pre-merge re-gate PASS (incl. pgTAP) and live rollback round-trip 6/6 under the db lock after syncing main.
+- Known limitations: no release button in the UI (route only); the control does not show the latched state after a reload; an in-flight uncommitted credential insert can outlive an activation (latent: no production issuer yet); the worker loop halting a run is proven by the in-memory drill, not on the device lane.
+- Follow-ups: AGO-217 (release button), AGO-218 (latched state after reload), AGO-219 (issuance race + guard in the first production issuer). Optional nits (Content-Type check on the kill routes, focus after the confirmation swap, "1 runs" plural) are listed in those tickets' scope or left as polish.
