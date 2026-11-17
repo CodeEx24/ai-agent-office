@@ -82,7 +82,7 @@ describe("summarizeConsequence", () => {
 
   it("does not look tool names up on the object prototype", () => {
     expect(summarizeConsequence("constructor", 3, UNAVAILABLE).headline).toContain(
-      "run constructor",
+      "run “constructor”",
     );
   });
 
@@ -245,6 +245,53 @@ describe("ApprovalCard layout", () => {
     });
     renderCard(makeCard({ payload }));
     expect(screen.getByTestId("approval-payload")).toHaveTextContent("Cut for display");
+  });
+});
+
+describe("AGO-54 round 2 fixes", () => {
+  it("quotes an unknown tool name so it cannot read as part of the sentence", () => {
+    const headline = summarizeConsequence("x. Approving is harmless", 3, UNAVAILABLE).headline;
+    expect(headline).toContain("run “x. Approving is harmless”.");
+  });
+
+  it("does not split a surrogate pair when cutting a long value", () => {
+    const body = "x".repeat(MAX_PAYLOAD_VALUE_CHARS - 1) + "😀" + "tail";
+    const view = buildPayloadView({ kind: "stored", args: { body } });
+    const value = view.kind === "stored" ? (view.lines[0]?.value ?? "") : "";
+    expect(view.kind === "stored" && view.isTruncated).toBe(true);
+    expect(value.length).toBeLessThanOrEqual(MAX_PAYLOAD_VALUE_CHARS);
+    expect(value).not.toMatch(/[\uD800-\uDBFF]$/);
+    expect(value).toBe("x".repeat(MAX_PAYLOAD_VALUE_CHARS - 1));
+  });
+
+  it("keeps a whole emoji that ends exactly at the limit", () => {
+    const body = "x".repeat(MAX_PAYLOAD_VALUE_CHARS - 2) + "😀" + "tail";
+    const view = buildPayloadView({ kind: "stored", args: { body } });
+    const value = view.kind === "stored" ? (view.lines[0]?.value ?? "") : "";
+    expect(value.endsWith("😀")).toBe(true);
+  });
+
+  it("shows the 'you can't see this call' note only when the call is not stored", () => {
+    const { unmount } = renderCard(makeCard());
+    expect(screen.getByTestId("approval-details-note")).toHaveTextContent(
+      "can't see what this call",
+    );
+    unmount();
+    const payload = buildPayloadView({ kind: "stored", args: { to: "a@example.test" } });
+    renderCard(makeCard({ payload }));
+    expect(screen.queryByTestId("approval-details-note")).toBeNull();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+  });
+
+  it("keeps the cut-for-display line out of the definition list (valid markup)", () => {
+    const payload = buildPayloadView({
+      kind: "stored",
+      args: { body: "x".repeat(MAX_PAYLOAD_VALUE_CHARS + 1) },
+    });
+    renderCard(makeCard({ payload }));
+    const list = screen.getByTestId("approval-payload-lines");
+    expect(list.querySelector(":scope > p")).toBeNull();
+    expect(screen.getByText(/Cut for display/)).toBeInTheDocument();
   });
 });
 

@@ -98,7 +98,7 @@ export function ApprovalCard({
         ) : null}
 
         {/* 2. The decision sits right under the consequence, above the payload, so a long payload cannot push it away. */}
-        {canDecide ? (
+        {canDecide && card.payload.kind === "unavailable" ? (
           <p className="text-sm font-medium" data-testid="approval-details-note">
             You can&apos;t see what this call will send or change (for example the recipient or the
             message). Approving lets the agent run exactly the call it asked for.
@@ -164,19 +164,21 @@ export function ApprovalCard({
           className="max-h-48 min-w-0 overflow-auto rounded-md border p-3 text-sm [overflow-wrap:anywhere]"
         >
           {card.payload.kind === "stored" ? (
-            <dl className="grid gap-1" data-testid="approval-payload-lines">
-              {card.payload.lines.map((line) => (
-                <div key={line.key} className="grid gap-0.5">
-                  <dt className="font-medium">{line.key}</dt>
-                  <dd className="whitespace-pre-wrap">{line.value}</dd>
-                </div>
-              ))}
+            <>
+              <dl className="grid gap-1" data-testid="approval-payload-lines">
+                {card.payload.lines.map((line) => (
+                  <div key={line.key} className="grid gap-0.5">
+                    <dt className="font-medium">{line.key}</dt>
+                    <dd className="whitespace-pre-wrap">{line.value}</dd>
+                  </div>
+                ))}
+              </dl>
               {card.payload.isTruncated ? (
-                <p className="text-xs text-muted-foreground">
+                <p className="mt-1 text-xs text-muted-foreground">
                   Cut for display: the call has more than is shown here.
                 </p>
               ) : null}
-            </dl>
+            </>
           ) : (
             <p>Not shown yet: the full call details are not stored yet.</p>
           )}

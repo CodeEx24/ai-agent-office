@@ -112,7 +112,7 @@ export function summarizeConsequence(
   const effect = TOOL_EFFECTS.get(tool);
   const headline =
     effect === undefined
-      ? `Approving lets the agent run ${tool}. What it will change depends on the call's details.`
+      ? `Approving lets the agent run “${tool}”. What it will change depends on the call's details.`
       : `Approving lets the agent ${effect}.`;
 
   const details: string[] = [];
@@ -138,6 +138,13 @@ function stringify(value: JsonValue): string {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
+/** Cut to the character limit, dropping a high surrogate left alone at the end so an emoji is never split. */
+function cutWithoutSplittingPair(text: string): string {
+  const cut = text.slice(0, MAX_PAYLOAD_VALUE_CHARS);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+}
+
 /**
  * The payload region's content: one line per argument, in the stored order, every value as text and cut to the
  * limits. A source that does not match the schema is treated as unavailable, never shown.
@@ -153,7 +160,7 @@ export function buildPayloadView(source: ApprovalPayloadSource): ApprovalPayload
     const text = stringify(value);
     if (text.length <= MAX_PAYLOAD_VALUE_CHARS) return { key, value: text };
     isTruncated = true;
-    return { key, value: text.slice(0, MAX_PAYLOAD_VALUE_CHARS) };
+    return { key, value: cutWithoutSplittingPair(text) };
   });
   return { kind: "stored", lines, isTruncated };
 }

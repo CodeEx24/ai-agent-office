@@ -199,7 +199,7 @@ describe("AC1: the card renders from the stored payload, not agent prose", () =>
   it("gives an unknown tool a generic headline that names it and promises no effect", () => {
     const card = buildOne({ action: "mystery.tool" });
     expect(card.consequence.headline).toBe(
-      "Approving lets the agent run mystery.tool. What it will change depends on the call's details.",
+      "Approving lets the agent run “mystery.tool”. What it will change depends on the call's details.",
     );
   });
 
@@ -208,7 +208,7 @@ describe("AC1: the card renders from the stored payload, not agent prose", () =>
     (tool) => {
       const card = buildOne({ action: tool });
       expect(card.consequence.headline).toBe(
-        `Approving lets the agent run ${tool}. What it will change depends on the call's details.`,
+        `Approving lets the agent run “${tool}”. What it will change depends on the call's details.`,
       );
     },
   );
