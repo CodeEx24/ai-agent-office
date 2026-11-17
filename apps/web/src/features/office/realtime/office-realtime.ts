@@ -2,6 +2,7 @@ import {
   applyOfficeEvent,
   applyOfficeEvents,
   createOfficeState,
+  type OfficeCursor,
   type OfficeState,
 } from "@ago/shared";
 
@@ -127,22 +128,28 @@ export function createOfficeRealtime(options: OfficeRealtimeOptions): OfficeReal
   }
 
   async function catchUp(gen: number): Promise<void> {
+    // The overlap start comes from the cursor once. A truncated load continues from its last keyset position,
+    // never from the (moved) cursor, until a short page proves the backlog is drained.
+    const start = state.cursor;
+    let resumeAfter: OfficeCursor | null = null;
     for (let load = 0; load < MAX_CATCH_UP_LOADS; load += 1) {
       const loaded = await loadOfficeEvents({
         source,
         workspaceId,
-        cursor: state.cursor,
+        cursor: start,
+        resumeAfter,
         overlapMs,
         pageSize: options.pageSize,
       });
       if (gen !== generation) return;
-      const cursorBefore = state.cursor;
       setState(applyOfficeEvents(state, loaded.rows));
       await fillGaps(gen);
       if (gen !== generation) return;
-      const moved = state.cursor !== cursorBefore;
-      if (!loaded.truncated || !moved) return;
+      if (!loaded.truncated) return;
+      resumeAfter = loaded.next;
     }
+    // Never go live with a backlog left: fail so the reconnect path resumes from the advanced cursor.
+    throw new Error("catch-up backlog not drained");
   }
 
   function onRow(gen: number, row: unknown): void {

@@ -352,3 +352,53 @@ describe("createOfficeRealtime", () => {
     expect(h.states).toHaveLength(1);
   });
 });
+
+describe("truncated catch-up continues from the keyset position", () => {
+  async function settle(h: Harness): Promise<void> {
+    h.controller.start();
+    h.source.handlers?.onStatus("subscribed");
+    for (let i = 0; i < 60; i += 1) await flush();
+  }
+
+  it("catches up a backlog of exactly maxPages x pageSize, then proves the drain with one short page", async () => {
+    const h = harness({ pageSize: 2 });
+    for (let q = 1; q <= 80; q += 1) h.source.insert(mk(1, q, q), false); // 40 pages x 2, one overlap window
+    await settle(h);
+    expect(lastSeq(h.controller, 1)).toBe(80);
+    expect(h.controller.getStatus()).toBe("live");
+    expect(h.errors).toEqual([]);
+    const last = h.source.fetchCalls.at(-1);
+    expect(last?.after).not.toBeNull(); // the final fetch resumed from the keyset, not from the overlap start
+    expect(h.source.fetchCalls.filter((c) => c.after === null)).toHaveLength(1);
+  });
+
+  it("never goes live while a backlog is left: it fails into a reconnect and resumes", async () => {
+    const h = harness({ pageSize: 1 });
+    for (let q = 1; q <= 25 * 40 + 5; q += 1) h.source.insert(mk(1, q, q), false); // more than 20 loads x 40 pages
+    await settle(h);
+    expect(h.controller.getStatus()).not.toBe("live");
+    expect(h.errors).toHaveLength(1);
+    expect(h.statuses).not.toContain("live");
+  });
+
+  it("applies rows inserted while the catch-up is paging, in order, once each", async () => {
+    const h = harness({ pageSize: 2 });
+    for (let q = 1; q <= 100; q += 1) h.source.insert(mk(1, q, q), false);
+    const original = h.source.fetchEvents.bind(h.source);
+    let calls = 0;
+    h.source.fetchEvents = (args): Promise<readonly unknown[]> => {
+      calls += 1;
+      if (calls === 30) {
+        h.source.insert(mk(1, 101, 101), true); // also pushed live; the catch-up must not double-apply it
+        h.source.insert(mk(1, 102, 102), false);
+      }
+      return original(args);
+    };
+    await settle(h);
+    expect(lastSeq(h.controller, 1)).toBe(102);
+    const seen = h.states.map((s) => s.runs[runId(1)]?.last_seq ?? 0);
+    expect(seen).toEqual([...seen].sort((a, b) => a - b));
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(h.controller.getState().gaps).toEqual({});
+  });
+});

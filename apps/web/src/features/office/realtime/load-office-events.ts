@@ -17,6 +17,8 @@ export interface LoadOfficeEventsOptions {
   readonly workspaceId: string;
   /** Last applied row of the current state; null loads the whole feed (bounded by `maxPages`). */
   readonly cursor: OfficeCursor | null;
+  /** Continue a truncated load from this keyset position (`LoadedOfficeEvents.next`) instead of the overlap start. */
+  readonly resumeAfter?: OfficeCursor | null;
   readonly overlapMs?: number;
   readonly pageSize?: number;
   readonly maxPages?: number;
@@ -31,6 +33,8 @@ export interface LoadedOfficeEvents {
   readonly invalid: number;
   /** True when `maxPages` stopped the load before the feed ended; the caller must load again. */
   readonly truncated: boolean;
+  /** Set when truncated: the last keyset position read; pass it as `resumeAfter` to continue the same backlog. */
+  readonly next: OfficeCursor | null;
 }
 
 export function overlapStart(cursor: OfficeCursor | null, overlapMs: number): string | null {
@@ -53,7 +57,7 @@ export async function loadOfficeEvents(
   const byId = new Map<string, OfficeEventRecord>();
   let foreign = 0;
   let invalid = 0;
-  let after: OfficeCursor | null = null;
+  let after: OfficeCursor | null = options.resumeAfter ?? null;
   let truncated = false;
 
   for (let page = 0; ; page += 1) {
@@ -83,7 +87,7 @@ export async function loadOfficeEvents(
   }
 
   const rows = [...byId.values()].sort(compareFeedOrder);
-  return { rows, foreign, invalid, truncated };
+  return { rows, foreign, invalid, truncated, next: truncated ? after : null };
 }
 
 /** One run's rows after `afterSeq`, validated, this workspace only, ascending by `seq`. */

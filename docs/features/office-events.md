@@ -116,7 +116,8 @@ How it behaves:
 - **Exactly once, in order.** Every apply goes through `applyOfficeEvent`, so overlap and duplicates change nothing (per-run `seq`). The overlap is there because `created_at` is the transaction start: a row can commit after a later one.
 - **Gaps.** A row ahead of its run is held back by the reducer (`state.gaps`). The controller then fetches that run's rows with `seq > after_seq` and applies them, so the gap closes without waiting for a reconnect.
 - **Reconnect.** A closed, errored or timed-out channel (or a failed catch-up) reconnects with exponential backoff (1 s, doubling, 30 s cap, jittered) and catches up again from `state.cursor`. A good catch-up resets the backoff.
-- **No cursor** (an empty office) loads the feed from the start, bounded at 40 pages of 500 rows per load; give it a snapshot for large workspaces.
+- **Large backlogs.** One load reads at most 40 pages of 500 rows. When that stops short, the next load continues from the last `(created_at, id)` it read (not from `cursor - 5 minutes` again) until a short page proves the backlog is drained. The controller never goes live while a load is truncated: after 20 loads it reports an error and reconnects, resuming from the advanced cursor.
+- **No cursor** (an empty office) loads the feed from the start the same way; give it a snapshot for very large workspaces.
 - **`agent_id`** is not a `run_events` column: the Supabase source joins it from `runs` with a workspace-scoped read and caches it (AGO-124 decision 2).
 
 Isolation (events from other workspaces never arrive):
@@ -124,6 +125,8 @@ Isolation (events from other workspaces never arrive):
 1. **RLS is the guard.** `run_events_select_viewer` (AGO-107) filters both the catch-up queries and Realtime Postgres Changes per subscriber.
 2. The queries and the subscription also name the `workspace_id` (defence in depth, never the only guard).
 3. Every row is re-validated and its `workspace_id` re-checked on arrival; a foreign row is counted (`anomalies.foreign`, `foreign` in the loader) and never applied.
+
+Known and accepted: Supabase Realtime does not apply RLS to `DELETE` events. `run_events` is append-only (AGO-102), so the only delete is the foreign-key cascade when a whole workspace is deleted. A subscriber in another workspace could then see the deleted rows' primary keys (random uuids; with the default replica identity the old record holds nothing else). No `workspace_id`, payload or content leaves, and `UPDATE` and `TRUNCATE` cannot happen. This client subscribes to `INSERT` only and ignores everything else.
 
 Database: Realtime needs `public.run_events` in the `supabase_realtime` publication (migration `<timestamp>_ago_126_realtime_run_events.sql`, rollback in `supabase/rollbacks/`). It adds no policy: the existing select policy applies.
 
