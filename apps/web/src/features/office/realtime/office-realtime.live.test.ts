@@ -185,5 +185,5 @@ describe.skipIf(!enabled)("AGO-126 realtime delivery (live)", () => {
     expect(seen).toEqual([...seen].sort((a, b) => a - b));
     expect(new Set(seen).size).toBe(seen.length);
     controller.stop();
-  });
+  }, 90_000);
 });
