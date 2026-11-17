@@ -33,3 +33,4 @@ export * from "./approvals/approval-status.js";
 export * from "./approvals/approval-decision.js";
 export * from "./budget/budget.js";
 export * from "./claims/index.js";
+export * from "./office/index.js";
