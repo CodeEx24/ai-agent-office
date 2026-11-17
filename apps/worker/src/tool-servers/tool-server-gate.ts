@@ -4,7 +4,7 @@ import { diffSnapshots } from "./snapshot-diff.js";
 
 import type { ToolServerAlertSink, ToolServerScope } from "./alerts.js";
 import type { ToolServerConnector } from "./client.js";
-import type { ToolServerLookup } from "./registry.js";
+import type { ToolServerBlockRecorder, ToolServerLookup } from "./registry.js";
 import type { ToolServerDenialReason, ToolServerDiffSummary } from "@ago/shared";
 
 /**
@@ -30,18 +30,16 @@ interface GateLogger {
 }
 
 export interface ToolServerGateDeps {
-  /** Read only: the gate cannot allowlist or pin. */
-  readonly registry: ToolServerLookup;
+  /** Read only plus the block recorder: the gate cannot allowlist, pin or unblock. */
+  readonly registry: ToolServerLookup & ToolServerBlockRecorder;
+  readonly now?: () => Date;
   readonly connector: ToolServerConnector;
   readonly alerts?: ToolServerAlertSink;
   readonly logger?: GateLogger;
 }
 
-const MAX_ALERT_KEYS = 10_000;
-
 export function createToolServerGate(deps: ToolServerGateDeps): ToolServerGate {
-  // One alert per run, server and live hash: the gate is asked before every model call.
-  const alerted = new Set<string>();
+  const now = deps.now ?? (() => new Date());
 
   function deny(
     scope: ToolServerScope,
@@ -61,6 +59,7 @@ export function createToolServerGate(deps: ToolServerGateDeps): ToolServerGate {
     return { ok: false, reason };
   }
 
+  /** Called once per new distinct hash while blocked: the gate is asked before every model call. */
   async function alert(
     scope: ToolServerScope,
     serverId: string,
@@ -68,15 +67,11 @@ export function createToolServerGate(deps: ToolServerGateDeps): ToolServerGate {
     liveHash: string,
     diff: ToolServerDiffSummary | null,
   ): Promise<void> {
-    const key = JSON.stringify([scope.workspaceId, scope.runId, serverId, liveHash]);
-    if (alerted.has(key)) return;
-    if (alerted.size >= MAX_ALERT_KEYS) alerted.clear();
-    alerted.add(key);
     try {
       await deps.alerts?.changed(scope, { serverId, pinnedHash, liveHash, diff });
+      await deps.registry.markAlerted(scope.workspaceId, serverId, liveHash);
     } catch {
-      // The block stands; only the alert failed. Let the next check try again.
-      alerted.delete(key);
+      // The block stands; only the alert failed. It stays unrecorded so the next check tries again.
       deps.logger?.warn(
         { workspace_id: scope.workspaceId, run_id: scope.runId, server_id: serverId },
         "tool server change alert failed",
@@ -105,9 +100,13 @@ export function createToolServerGate(deps: ToolServerGateDeps): ToolServerGate {
           return deny(scope, serverId, "diff_error");
         }
 
-        if (liveHash === entry.pin.hash && live.serverId === serverId) {
-          return { ok: true, hash: liveHash };
-        }
+        const matchesPin = liveHash === entry.pin.hash && live.serverId === serverId;
+        const isBlocked = entry.blocked !== null && entry.blocked !== undefined;
+        // Sticky (D11): a block set earlier holds even when the live list matches the pin again.
+        if (matchesPin && !isBlocked) return { ok: true, hash: liveHash };
+        if (matchesPin) return deny(scope, serverId, "hash_mismatch");
+
+        await deps.registry.markBlocked(scope.workspaceId, serverId, liveHash, now().toISOString());
 
         let diff: ToolServerDiffSummary | null = null;
         try {
@@ -115,7 +114,9 @@ export function createToolServerGate(deps: ToolServerGateDeps): ToolServerGate {
         } catch {
           diff = null;
         }
-        await alert(scope, serverId, entry.pin.hash, liveHash, diff);
+        if (entry.blocked?.alertedHash !== liveHash) {
+          await alert(scope, serverId, entry.pin.hash, liveHash, diff);
+        }
         return deny(scope, serverId, diff === null ? "diff_error" : "hash_mismatch");
       } catch {
         // Anything unexpected (a registry outage included) is a deny.

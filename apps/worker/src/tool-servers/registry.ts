@@ -8,6 +8,18 @@ export interface ToolServerPin {
   readonly pinnedAt: string;
 }
 
+/**
+ * A sticky block (AGO-68 D11): set on the first hash mismatch and kept until a human re-pins. While it is set
+ * the server stays blocked even if its live tool list hashes to the pin again.
+ */
+export interface ToolServerBlock {
+  /** The first hash seen that differed from the pin. */
+  readonly observedHash: string;
+  readonly blockedAt: string;
+  /** The last hash an alert was raised for; a new distinct hash raises one more alert. */
+  readonly alertedHash: string | null;
+}
+
 /** One allowlisted server of one workspace. `pin` is null until a human reviews it for the first time. */
 export interface ToolServerEntry {
   readonly workspaceId: string;
@@ -19,6 +31,24 @@ export interface ToolServerEntry {
   readonly allowlistedBy: string;
   readonly allowlistedAt: string;
   readonly pin: ToolServerPin | null;
+  /** Null (or absent) when the server is not blocked. Cleared only by a human pin. */
+  readonly blocked?: ToolServerBlock | null;
+}
+
+/**
+ * What the gate may write: it can only tighten (block, note an alert), never allowlist, pin or unblock.
+ * Both calls are no-ops for an unknown server.
+ */
+export interface ToolServerBlockRecorder {
+  /** Idempotent: an existing block keeps its first observed hash and time. */
+  markBlocked(
+    workspaceId: string,
+    serverId: string,
+    observedHash: string,
+    at: string,
+  ): Promise<void>;
+  /** Record that an alert went out for this hash. */
+  markAlerted(workspaceId: string, serverId: string, hash: string): Promise<void>;
 }
 
 /**
@@ -31,10 +61,10 @@ export interface ToolServerLookup {
 }
 
 /** Writes. Only the human review path (`review.ts`) is given this. Every method takes the workspace id first. */
-export interface ToolServerRegistry extends ToolServerLookup {
+export interface ToolServerRegistry extends ToolServerLookup, ToolServerBlockRecorder {
   /** Allowlist a server. Replaces any earlier entry and clears its pin: a changed audience needs a new review. */
   allowlist(entry: Omit<ToolServerEntry, "pin">): Promise<void>;
-  /** Pin a server. Returns false (and writes nothing) when the workspace has not allowlisted it. */
+  /** Pin a server and clear any block (the human re-pin). Returns false (and writes nothing) when the workspace has not allowlisted it. */
   pin(workspaceId: string, serverId: string, pin: ToolServerPin): Promise<boolean>;
 }
 
@@ -53,7 +83,7 @@ export function createInMemoryToolServerRegistry(): ToolServerRegistry {
     },
     allowlist(entry) {
       const servers = byWorkspace.get(entry.workspaceId) ?? new Map<string, ToolServerEntry>();
-      servers.set(entry.serverId, { ...structuredClone(entry), pin: null });
+      servers.set(entry.serverId, { ...structuredClone(entry), pin: null, blocked: null });
       byWorkspace.set(entry.workspaceId, servers);
       return Promise.resolve();
     },
@@ -61,8 +91,29 @@ export function createInMemoryToolServerRegistry(): ToolServerRegistry {
       const servers = byWorkspace.get(workspaceId);
       const entry = servers?.get(serverId);
       if (servers === undefined || entry === undefined) return Promise.resolve(false);
-      servers.set(serverId, { ...entry, pin: structuredClone(pin) });
+      servers.set(serverId, { ...entry, pin: structuredClone(pin), blocked: null });
       return Promise.resolve(true);
+    },
+    markBlocked(workspaceId, serverId, observedHash, at) {
+      const servers = byWorkspace.get(workspaceId);
+      const entry = servers?.get(serverId);
+      if (servers === undefined || entry === undefined) return Promise.resolve();
+      if (entry.blocked === null || entry.blocked === undefined) {
+        servers.set(serverId, {
+          ...entry,
+          blocked: { observedHash, blockedAt: at, alertedHash: null },
+        });
+      }
+      return Promise.resolve();
+    },
+    markAlerted(workspaceId, serverId, hash) {
+      const servers = byWorkspace.get(workspaceId);
+      const entry = servers?.get(serverId);
+      if (servers === undefined || entry?.blocked === null || entry?.blocked === undefined) {
+        return Promise.resolve();
+      }
+      servers.set(serverId, { ...entry, blocked: { ...entry.blocked, alertedHash: hash } });
+      return Promise.resolve();
     },
   };
 }

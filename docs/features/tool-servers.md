@@ -21,7 +21,11 @@ Unknown server, no pin, hash mismatch, tool list unavailable, diff error, a regi
 
 ## Alerts
 
-A hash mismatch raises an `error.raised` run event with code `tool_server_changed`, once per run, server and live hash. The message holds the server id, both hashes and a bounded summary (tool names cleaned to a safe alphabet, counts). It never holds descriptions, schemas or tokens, because descriptions are untrusted text. A failing alert sink does not unblock anything.
+A hash mismatch raises an `error.raised` run event with code `tool_server_changed`, once per new distinct live hash. The message holds the server id, both hashes and a bounded summary (tool names cleaned to a safe alphabet, counts). It never holds descriptions, schemas or tokens, because descriptions are untrusted text. A failing alert sink does not unblock anything.
+
+## A change stays blocked (D11)
+
+The first mismatch records a block for that workspace and server (observed hash, time). While it is set the server is blocked even if its tools hash to the pin again, so a server cannot flip a bad description on, act, and flip it back. Only a person's `reviewAndPin` clears it (pinning the original or the new snapshot). The gate can set the block but never clear it.
 
 ## Human only
 

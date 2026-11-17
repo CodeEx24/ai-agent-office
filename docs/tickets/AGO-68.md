@@ -46,6 +46,8 @@ None (no migration). Allowlist and pins are in-memory behind the registry port f
 | D4 | Human review and re-pin | `reviewAndPin` takes the reviewed snapshot hash and a human actor; it pins exactly the snapshot the reviewer saw, bound to its hash; agent credentials rejected; audit event | owner, 2026-11-17 |
 | D5 | Passthrough detection | A tool-server call carries only a broker-issued token whose `aud` equals the server's registered audience. Rejected: any `ago_agt_` agent token, any token with no or a different `aud`, any token the broker did not issue, any outbound auth equal to the inbound run credential or a human session token | owner, 2026-11-17 |
 
+D11 (added in FIX r2, owner answer 2026-11-17 under the standing "go with recommendation" rule): a hash mismatch is a sticky block. The first mismatch records a blocked state per (workspace, server) with the observed hash and time; while it is set the server is neither offered nor callable even if the live hash equals the pin again, so a server cannot flip a malicious description on, act, and flip it off. Only a human `reviewAndPin` clears it (pinning the original or the new snapshot); re-allowlisting also clears it. The gate can only write the block (`ToolServerBlockRecorder`: `markBlocked`, `markAlerted`), never unblock. The alert fires on the first mismatch, then once per new distinct hash (no flood, also across runs). Supersedes the earlier once-per-run-and-hash alert rule.
+
 All of D1-D5 accepted by Jocarl Basco (owner), 2026-11-17, with these additions:
 | # | Addition | By / when |
 |---|---|---|
@@ -68,7 +70,7 @@ Vitest unit tests per module; integration test with an in-process fake tool serv
 - AGO-88 wires real MCP clients through this gate.
 - Token replay (security review r1, accepted for this ticket): audience tokens live 5 minutes and are bound to one audience, workspace, run and agent, but not to one tool or input, and there is no `jti` store. No transport exists yet, so nothing crosses a network here. To land with AGO-88: HTTPS-only endpoints, one token per call bound to tool name and an input hash, a `jti` replay cache on the verifying (tool server) side, and a shorter TTL.
 - The follow-up web route must take workspace and user from the verified session and check the owner role before calling `allowlistServer`, `prepareReview` or `reviewAndPin`.
-- Owner question (open): a server that changes and then changes back is unblocked without a review (an alert is raised each time). Should a mismatch keep the server blocked until a human re-pins?
+- Resolved as D11: a mismatch stays blocked until a human re-pins, even if the server changes back.
 
 ## Outcome
 Built: gate, registry port (in-memory), canonical hash and diff, human review and pin, audience-bound tokens through the broker, run-event alert, tool-offer wiring. Guide: docs/features/tool-servers.md. Postgres store: follow-up (owner files it at merge).

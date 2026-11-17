@@ -223,7 +223,7 @@ describe("AC2: a changed tool description raises an alert and blocks the tool un
     expect([...offered]).toEqual([]);
     await expect(caller.call(callRequest)).rejects.toMatchObject({ reason: "hash_mismatch" });
 
-    expect(events).toHaveLength(1); // one alert per run, server and live hash
+    expect(events).toHaveLength(1); // one alert per distinct live hash
     const parsed = runEventSchema.parse({ ...(events[0] as object), version: 1 });
     expect(parsed.type).toBe("error.raised");
     const text = JSON.stringify(events[0]);

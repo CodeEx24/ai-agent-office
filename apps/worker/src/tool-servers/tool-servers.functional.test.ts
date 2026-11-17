@@ -200,7 +200,11 @@ describe("AC1: unlisted servers are blocked (edge cases)", () => {
   it("denies, rather than throwing, when the registry itself is down", async () => {
     const { connector } = setup();
     const gate = createToolServerGate({
-      registry: { get: () => Promise.reject(new Error("registry outage")) },
+      registry: {
+        get: () => Promise.reject(new Error("registry outage")),
+        markBlocked: () => Promise.resolve(),
+        markAlerted: () => Promise.resolve(),
+      },
       connector,
     });
     expect((await gate.check(SCOPE, SERVER_ID)).ok).toBe(false);
@@ -329,13 +333,13 @@ describe("AC2: a changed tool description raises an alert and blocks the tool (e
     expect(events).toEqual([]);
   });
 
-  it("unblocks on its own when the server reverts to exactly the pinned tool list", async () => {
+  it("stays blocked when the server reverts to the pinned tool list (sticky, D11)", async () => {
     const { gate, server, approve } = setup();
     await approve();
     server.setDescription("lookup", "temporary");
     expect((await gate.check(SCOPE, SERVER_ID)).ok).toBe(false);
     server.setDescription("lookup", "lookup tool");
-    expect((await gate.check(SCOPE, SERVER_ID)).ok).toBe(true);
+    expect((await gate.check(SCOPE, SERVER_ID)).ok).toBe(false);
   });
 
   it("keeps the first pin missing when the server changes between prepareReview and reviewAndPin", async () => {
@@ -414,7 +418,7 @@ describe("AC2: a changed tool description raises an alert and blocks the tool (e
     expect((await gate.check(SCOPE, SERVER_ID)).ok).toBe(false);
   });
 
-  it("emits one alert per run and live hash, and a different run gets its own", async () => {
+  it("emits one alert per distinct live hash, even across runs (D11, no flood)", async () => {
     const { registry, connector, server, approve } = setup();
     const events: { scope: ToolServerScope }[] = [];
     const alerts = {
@@ -430,7 +434,7 @@ describe("AC2: a changed tool description raises an alert and blocks the tool (e
     await gate.check(SCOPE, SERVER_ID);
     await gate.check(SCOPE, SERVER_ID);
     await gate.check(other, SERVER_ID);
-    expect(events.map((e) => e.scope.runId)).toEqual(["run-1", "run-2"]);
+    expect(events.map((e) => e.scope.runId)).toEqual(["run-1"]);
   });
 
   it("the alert event holds the hashes and names but no token, schema or description text", async () => {
