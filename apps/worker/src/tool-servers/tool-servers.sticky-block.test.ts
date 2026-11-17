@@ -150,4 +150,70 @@ describe("sticky block (AGO-68 D11)", () => {
     expect((await registry.get("ws-a", SERVER_ID))?.blocked ?? null).toBeNull();
     expect((await gate.check(scopeOf("ws-a"), SERVER_ID)).ok).toBe(true);
   });
+
+  it("25 parallel checks with two different hashes raise exactly two alerts", async () => {
+    const { gate, servers, approve, events } = setup();
+    await approve("ws-a");
+    const many = () =>
+      Promise.all(Array.from({ length: 25 }, () => gate.check(scopeOf("ws-a"), SERVER_ID)));
+    servers["ws-a"].setDescription("lookup", "first");
+    const one = await many();
+    servers["ws-a"].setDescription("lookup", "second");
+    const two = await many();
+    expect([...one, ...two].every((v) => !v.ok)).toBe(true); // every caller is denied, claim or not
+    expect(events).toHaveLength(2);
+  });
+
+  it("parallel checks across two workspaces raise one alert each", async () => {
+    const { gate, servers, approve, events } = setup();
+    await approve("ws-a");
+    await approve("ws-b");
+    servers["ws-a"].setDescription("lookup", "evil");
+    servers["ws-b"].setDescription("lookup", "evil");
+    const verdicts = await Promise.all(
+      (["ws-a", "ws-b"] as const).flatMap((ws) =>
+        Array.from({ length: 25 }, () => gate.check(scopeOf(ws), SERVER_ID)),
+      ),
+    );
+    expect(verdicts.every((v) => !v.ok)).toBe(true);
+    expect(events).toHaveLength(2);
+  });
+
+  it("a failed alert gives the claim back so the next check alerts, and still denies", async () => {
+    const registry = createInMemoryToolServerRegistry();
+    const server = createFakeToolServer();
+    const connector = connectorFor({ "ws-a": { [SERVER_ID]: server } });
+    let fail = true;
+    const sent: unknown[] = [];
+    const gate = createToolServerGate({
+      registry,
+      connector,
+      alerts: {
+        changed: (scope) => {
+          if (fail) return Promise.reject(new Error("sink down"));
+          sent.push(scope);
+          return Promise.resolve();
+        },
+      },
+    });
+    const deps = { registry, connector };
+    await allowlistServer(deps, HUMAN, {
+      workspaceId: "ws-a",
+      serverId: SERVER_ID,
+      audience: AUDIENCE,
+      audienceSecretRef: "secret:crm_signing",
+    });
+    const r = await prepareReview(deps, HUMAN, { workspaceId: "ws-a", serverId: SERVER_ID });
+    await reviewAndPin(deps, HUMAN, {
+      workspaceId: "ws-a",
+      serverId: SERVER_ID,
+      reviewedHash: r.hash,
+    });
+    server.setDescription("lookup", "evil");
+    expect((await gate.check(scopeOf("ws-a"), SERVER_ID)).ok).toBe(false);
+    fail = false;
+    expect((await gate.check(scopeOf("ws-a"), SERVER_ID)).ok).toBe(false);
+    expect((await gate.check(scopeOf("ws-a"), SERVER_ID)).ok).toBe(false);
+    expect(sent).toHaveLength(1);
+  });
 });

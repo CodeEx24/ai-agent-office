@@ -59,7 +59,10 @@ export function createToolServerGate(deps: ToolServerGateDeps): ToolServerGate {
     return { ok: false, reason };
   }
 
-  /** Called once per new distinct hash while blocked: the gate is asked before every model call. */
+  /**
+   * One alert per distinct hash: the first caller to win the atomic claim sends it. Losing the claim (or the
+   * claim failing) never changes the verdict: the caller is denied either way.
+   */
   async function alert(
     scope: ToolServerScope,
     serverId: string,
@@ -68,10 +71,21 @@ export function createToolServerGate(deps: ToolServerGateDeps): ToolServerGate {
     diff: ToolServerDiffSummary | null,
   ): Promise<void> {
     try {
-      await deps.alerts?.changed(scope, { serverId, pinnedHash, liveHash, diff });
-      await deps.registry.markAlerted(scope.workspaceId, serverId, liveHash);
+      const won = await deps.registry.claimAlert(
+        scope.workspaceId,
+        serverId,
+        liveHash,
+        now().toISOString(),
+      );
+      if (!won) return;
+      try {
+        await deps.alerts?.changed(scope, { serverId, pinnedHash, liveHash, diff });
+      } catch {
+        // Only the alert failed. Give the claim back so the next check tries again.
+        await deps.registry.releaseAlert(scope.workspaceId, serverId, liveHash);
+        throw new Error("alert failed");
+      }
     } catch {
-      // The block stands; only the alert failed. It stays unrecorded so the next check tries again.
       deps.logger?.warn(
         { workspace_id: scope.workspaceId, run_id: scope.runId, server_id: serverId },
         "tool server change alert failed",
@@ -114,9 +128,7 @@ export function createToolServerGate(deps: ToolServerGateDeps): ToolServerGate {
         } catch {
           diff = null;
         }
-        if (entry.blocked?.alertedHash !== liveHash) {
-          await alert(scope, serverId, entry.pin.hash, liveHash, diff);
-        }
+        await alert(scope, serverId, entry.pin.hash, liveHash, diff);
         return deny(scope, serverId, diff === null ? "diff_error" : "hash_mismatch");
       } catch {
         // Anything unexpected (a registry outage included) is a deny.

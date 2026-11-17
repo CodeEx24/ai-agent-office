@@ -16,9 +16,14 @@ export interface ToolServerBlock {
   /** The first hash seen that differed from the pin. */
   readonly observedHash: string;
   readonly blockedAt: string;
-  /** The last hash an alert was raised for; a new distinct hash raises one more alert. */
+  /** The latest hash an alert was claimed for. */
   readonly alertedHash: string | null;
+  /** Every hash an alert was claimed for (bounded); a claim is granted once per hash. */
+  readonly alertedHashes: readonly string[];
 }
+
+/** Most distinct alerted hashes remembered per server; the oldest is forgotten first. */
+export const MAX_ALERTED_HASHES = 50;
 
 /** One allowlisted server of one workspace. `pin` is null until a human reviews it for the first time. */
 export interface ToolServerEntry {
@@ -47,8 +52,26 @@ export interface ToolServerBlockRecorder {
     observedHash: string,
     at: string,
   ): Promise<void>;
-  /** Record that an alert went out for this hash. */
-  markAlerted(workspaceId: string, serverId: string, hash: string): Promise<void>;
+  /**
+   * Claim the right to alert for `observedHash`. Sets the blocked state if it is not set yet and records the
+   * hash as alerted in ONE atomic step; returns true only for the first caller per (workspace, server, hash)
+   * and false for every other caller, concurrent or later. False also for an unknown server.
+   *
+   * Contract for every implementation: the check and the write must not be separable. The in-memory store is a
+   * synchronous compare-and-set. A Postgres store (follow-up) must do it as one conditional statement, for
+   * example `INSERT ... ON CONFLICT DO NOTHING RETURNING` on a unique (workspace_id, server_id, hash) row, and
+   * return true only when a row came back. A read followed by a write is not acceptable.
+   *
+   * Blocking never depends on this result: the gate denies every caller whether or not it won the claim.
+   */
+  claimAlert(
+    workspaceId: string,
+    serverId: string,
+    observedHash: string,
+    at: string,
+  ): Promise<boolean>;
+  /** Give the claim back after the alert could not be sent, so the next check can try again. */
+  releaseAlert(workspaceId: string, serverId: string, observedHash: string): Promise<void>;
 }
 
 /**
@@ -101,18 +124,45 @@ export function createInMemoryToolServerRegistry(): ToolServerRegistry {
       if (entry.blocked === null || entry.blocked === undefined) {
         servers.set(serverId, {
           ...entry,
-          blocked: { observedHash, blockedAt: at, alertedHash: null },
+          blocked: { observedHash, blockedAt: at, alertedHash: null, alertedHashes: [] },
         });
       }
       return Promise.resolve();
     },
-    markAlerted(workspaceId, serverId, hash) {
+    claimAlert(workspaceId, serverId, observedHash, at) {
+      // Synchronous from the read to the write: no await in between, so two callers cannot both win.
+      const servers = byWorkspace.get(workspaceId);
+      const entry = servers?.get(serverId);
+      if (servers === undefined || entry === undefined) return Promise.resolve(false);
+      const block = entry.blocked ?? {
+        observedHash,
+        blockedAt: at,
+        alertedHash: null,
+        alertedHashes: [],
+      };
+      if (block.alertedHashes.includes(observedHash)) return Promise.resolve(false);
+      const alertedHashes = [...block.alertedHashes, observedHash].slice(-MAX_ALERTED_HASHES);
+      servers.set(serverId, {
+        ...entry,
+        blocked: { ...block, alertedHash: observedHash, alertedHashes },
+      });
+      return Promise.resolve(true);
+    },
+    releaseAlert(workspaceId, serverId, observedHash) {
       const servers = byWorkspace.get(workspaceId);
       const entry = servers?.get(serverId);
       if (servers === undefined || entry?.blocked === null || entry?.blocked === undefined) {
         return Promise.resolve();
       }
-      servers.set(serverId, { ...entry, blocked: { ...entry.blocked, alertedHash: hash } });
+      const alertedHashes = entry.blocked.alertedHashes.filter((h) => h !== observedHash);
+      servers.set(serverId, {
+        ...entry,
+        blocked: {
+          ...entry.blocked,
+          alertedHash: alertedHashes.at(-1) ?? null,
+          alertedHashes,
+        },
+      });
       return Promise.resolve();
     },
   };

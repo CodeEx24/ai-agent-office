@@ -25,7 +25,7 @@ A hash mismatch raises an `error.raised` run event with code `tool_server_change
 
 ## A change stays blocked (D11)
 
-The first mismatch records a block for that workspace and server (observed hash, time). While it is set the server is blocked even if its tools hash to the pin again, so a server cannot flip a bad description on, act, and flip it back. Only a person's `reviewAndPin` clears it (pinning the original or the new snapshot). The gate can set the block but never clear it.
+The first mismatch records a block for that workspace and server (observed hash, time). While it is set the server is blocked even if its tools hash to the pin again, so a server cannot flip a bad description on, act, and flip it back. Only a person's `reviewAndPin` clears it (pinning the original or the new snapshot). The gate can set the block but never clear it. The alert is claimed atomically, so parallel checks raise one alert per distinct hash and every caller is still denied.
 
 ## Human only
 

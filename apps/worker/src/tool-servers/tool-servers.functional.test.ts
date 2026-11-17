@@ -203,7 +203,8 @@ describe("AC1: unlisted servers are blocked (edge cases)", () => {
       registry: {
         get: () => Promise.reject(new Error("registry outage")),
         markBlocked: () => Promise.resolve(),
-        markAlerted: () => Promise.resolve(),
+        claimAlert: () => Promise.resolve(false),
+        releaseAlert: () => Promise.resolve(),
       },
       connector,
     });

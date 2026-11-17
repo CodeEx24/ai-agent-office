@@ -261,7 +261,7 @@ describe("sticky block: agent-facing code cannot write or clear a block", () => 
     await expect(caller.call(request)).rejects.toMatchObject({ reason: "hash_mismatch" });
     expect([...(await offer.offeredToolNames([serverTool("lookup")], SCOPE))]).toEqual([]);
 
-    const allowed = new Set(["get", "markBlocked", "markAlerted"]);
+    const allowed = new Set(["get", "markBlocked", "claimAlert", "releaseAlert"]);
     expect(calls.filter((c) => !allowed.has(c))).toEqual([]);
     expect(calls).toContain("markBlocked");
     // The agent path never unblocked it: the block set during the run is still there.
@@ -279,10 +279,10 @@ describe("sticky block: agent-facing code cannot write or clear a block", () => 
     });
   });
 
-  it("markBlocked and markAlerted are no-ops for an unknown server or workspace (nothing is created)", async () => {
+  it("markBlocked and claimAlert are no-ops for an unknown server or workspace (nothing is created)", async () => {
     const registry = createInMemoryToolServerRegistry();
     await registry.markBlocked("ws-x", "nope", "h", "2026-01-01T00:00:00.000Z");
-    await registry.markAlerted("ws-x", "nope", "h");
+    expect(await registry.claimAlert("ws-x", "nope", "h", "2026-01-01T00:00:00.000Z")).toBe(false);
     expect(await registry.get("ws-x", "nope")).toBeNull();
   });
 });
