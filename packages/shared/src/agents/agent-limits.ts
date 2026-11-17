@@ -59,7 +59,10 @@ export function isAgentThinkingEffort(value: string): value is AgentThinkingEffo
   return AGENT_THINKING_EFFORTS.some((effort) => effort.id === value);
 }
 
-/** Where an agent starts. Always the lowest autonomy: the wizard has no way to pick another. */
+/**
+ * Where an agent starts: always the lowest autonomy. The database decides (the `agents.mode` default plus the insert
+ * guard, AGO-99); no creation path sends a mode, so this is the shared name for the value, pinned by tests.
+ */
 export const NEW_AGENT_MODE = "strict";
 
 /** The wizard fields, in step order. Error messages are keyed by these names. */
