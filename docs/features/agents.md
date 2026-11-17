@@ -1,5 +1,5 @@
 # Agents
-Tickets: AGO-141 (wizard) · AGO-136 (role templates) · AGO-138 (trifecta lint) · AGO-89 (edit, duplicate, archive)
+Tickets: AGO-141 (wizard) · AGO-136 (role templates) · AGO-138 (trifecta lint) · AGO-89 (edit, duplicate, archive) · AGO-99 (Strict default, owner mode change)
 
 ## What it does
 An owner creates an agent in a short wizard or in one click from a role template. The agent is created with its skills and capability grants and always starts in Strict mode. A capability set that combines untrusted content, private data and outbound communication is refused. After that, an owner can change the agent's settings, duplicate it or archive it. Every change is kept as a numbered version.
@@ -10,10 +10,14 @@ An owner creates an agent in a short wizard or in one click from a role template
 - **Agent list** (`/app/agents`): each name links to the agent page. Owners see Edit, Duplicate and Archive on every active row. An "Archived" section lists archived agents with View and Unarchive. Duplicate asks for a name (it proposes "<name> copy") and says the copy starts in Strict mode.
 - **Agent page** (`/app/agents/[agentId]`, `AgentEditForm.tsx`, `AgentVersionList.tsx`): owners edit name, role, model, thinking effort, prompt and daily budget and press Save. The page then says which version the agent is at. Below the form, History lists every version: kind (created, edited, archived, unarchived), changed fields, author ("You" or "A workspace <role>") and time. An archived agent shows a banner with an Unarchive button and the form is locked. Members and viewers see no controls.
 
+- **Autonomy section** (`AgentModeForm.tsx`, on the agent page, below the edit form): owners see the current mode, a New mode list, the confirm box and Change mode. Members and viewers see the mode as text.
+
 ## Data model
 `agents`, their skills and `agent_capabilities` (one row per granted capability with its mode) in a workspace, created together by the `create_agent` function. The lint adds no table or column.
 
 AGO-89 adds to `agents`: `thinking_effort` (`low`, `medium`, `high`; default `medium`; stored, the worker does not use it yet) and `version` (starts at 1, moves up by one when name, role, model, thinking effort, prompt, daily budget or `archived_at` changes). New table `agent_versions` holds one row per version (`change_kind`, `changed_fields`, the six settings, `changed_by`, `created_at`). It is append-only and filled by triggers on `agents`; nobody can update or delete rows. Worker writes to `status` or `run_limits` add no version.
+
+AGO-99 adds `agent_mode_changes` (append-only log: agent, from mode, to mode, member, time) and a CHECK that `agents.mode` is strict, standard or relaxed.
 
 ## Data flow
 ```mermaid
@@ -32,6 +36,8 @@ flowchart LR
   EditRPC --> Agents[(agents)]
   Agents --> Trig[version triggers] --> Versions[(agent_versions)]
   Tasks[(tasks)] --> Guard[refuse_archived_assignee]
+  ModeForm[AgentModeForm.tsx] --> ModeAct[setAgentModeAction] --> ModeLogic[promote-agent.ts] --> ModeEd[agent-mode-editor.ts] --> ModeRPC[(set_agent_mode)]
+  ModeRPC --> Agents --> ModeTrig[agents_log_mode_change] --> ModeLog[(agent_mode_changes)]
 ```
 
 ## Main functions and files
@@ -50,6 +56,9 @@ flowchart LR
 | `AgentEditForm`, `AgentRowActions`, `AgentVersionList` | `apps/web/src/features/agents/` | the edit form, row buttons and history |
 | `update_agent`, `duplicate_agent`, `archive_agent`, `unarchive_agent` | `supabase/migrations/20261113050001_ago_89_edit_duplicate_archive_agents.sql` | owner-checked database functions |
 | `bump_agent_version`, `append_agent_version`, `refuse_archived_assignee` | same migration | version triggers and the task guard |
+| `AgentModeForm`, `setAgentModeAction`, `setAgentModeWith`, `agentModeEditor` | `apps/web/src/features/agents/` (`AgentModeForm.tsx`, `actions.ts`, `promote-agent.ts`, `agent-mode-editor.ts`) | the Autonomy form, the human-only action, the logic and the RPC call |
+| `AGENT_MODES`, `setAgentModeSchema` | `packages/shared/src/agents/agent-mode.ts` | allowed modes, labels, strict input schema |
+| `set_agent_mode`, `agents_guard_mode`, `agents_log_mode_change` | `supabase/migrations/20261115010001_ago_99_agent_mode_promotion.sql` | owner-only RPC, Strict insert guard, owner check and log trigger |
 
 ## Rules and edge cases
 ### The trifecta lint (AGO-138)
@@ -78,6 +87,16 @@ An agent that can read **untrusted content**, see **private data** and **send da
 - **Archive.** Reversible. An archived agent cannot be edited (not even by a direct table update), duplicated or newly assigned a task (insert, or change of `agent_id` on a task, is refused with error 55000). Tasks assigned before the archive keep their agent.
 - **Prompt text** is stored in every version and shown as plain text; it is never run as markup.
 - **Not covered:** the worker does not yet refuse to claim work for an agent archived after assignment, and does not use `thinking_effort`. Names are not unique, so a duplicate can share a name.
+
+### Strict by default, human promotion (AGO-99)
+
+- **Every new agent starts in Strict.** The wizard, a template, a duplicate and (later) a pack import send no mode at all, so the `agents.mode` column default (`strict`) applies. The database (the column default plus the insert guard) is the source of truth; `NEW_AGENT_MODE` in `packages/shared/src/agents/agent-limits.ts` is the one shared name for the value, and nothing sends it. Pack import (AGO-194) must send no mode either. A duplicate never copies the source's mode: a promoted agent's copy is Strict.
+- **Promotion is a person's decision.** On the agent page an owner sees an **Autonomy** section: the current mode, a "New mode" list (Strict, Standard, Relaxed), a confirm box ("I have decided to change this agent's mode."; there is no runs view to link to yet) and **Change mode**. Nothing is sent until the box is ticked. Tier 3 and 4 actions need approval in every mode (AGO-43). Members and viewers see the mode as text only; an archived agent shows no form.
+- **Human only, at three layers.** `setAgentModeAction` refuses an agent credential before it reads anything (an agent can never change a mode, its own included); the editor requires the owner role; the database function `set_agent_mode` checks `auth.uid()` and the owner role again (an agent credential has no member) and is not executable by `service_role`.
+- **Logged.** A trigger on `agents` appends one row to `agent_mode_changes` (agent, from, to, member, time) in the same transaction as the change. The table is append-only for every role. The trigger fires for any change of `agents.mode`, whatever route it takes, and refuses it unless a signed-in workspace owner makes it, so a mode never changes without an owner and a log row. A role that can disable triggers on the table (the table owner, a superuser) can still bypass it. A second trigger makes a new agent row start in `strict`.
+- **Any change is allowed, in either direction** (owner decision 2026-11-14): promote Strict to Standard or Relaxed, or demote back. Setting the mode the agent already has is refused.
+- **Database part:** migration `supabase/migrations/20261115010001_ago_99_agent_mode_promotion.sql` adds the mode CHECK, the `agent_mode_changes` log, `set_agent_mode` and the two triggers on `agents`; rollback in `supabase/rollbacks/`, tests in `supabase/tests/agent_mode.test.sql`. Details: `docs/database.md`.
+- **Not covered:** no minimum amount of reviewed work is required before a promotion; the confirm box is the owner's own statement. The mode log is not shown on the agent page yet. A rejected agent-credential attempt returns an error but writes no event (a web action has no run to attach one to).
 
 ## How to extend it
 - New capability: map it to a leg in `trifecta-lint.ts` or list it as neutral in `trifecta-lint.test.ts`.
