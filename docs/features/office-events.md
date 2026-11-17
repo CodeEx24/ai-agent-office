@@ -1,6 +1,6 @@
 # Office events: how run events change the office
 
-Ticket: AGO-124 (EP-07). Code: `packages/shared/src/office/`. Built on the typed run events of AGO-164 (`packages/shared/src/events/run-events.ts`), which stay the single source of event types.
+Tickets: AGO-124 (created, EP-07) · AGO-126 (added realtime delivery and catch-up). Code: `packages/shared/src/office/`. Built on the typed run events of AGO-164 (`packages/shared/src/events/run-events.ts`), which stay the single source of event types.
 
 The office (agent cards, the 3D floor, the run view) never reads the database directly. It reads **office state**, and office state is a pure fold of `run_events` rows. This page is the contract: what each event does, how to rebuild the state, and what a consumer must handle.
 
@@ -115,7 +115,7 @@ How it behaves:
 - **Stream, then catch up.** It subscribes first (Postgres Changes, `INSERT` on `run_events`, filter `workspace_id=eq.<id>`), and when the channel is `SUBSCRIBED` it loads every row from `cursor - 5 minutes` (feed order, keyset paged). Rows pushed during the catch-up wait on one serial queue and are applied after it.
 - **Exactly once, in order.** Every apply goes through `applyOfficeEvent`, so overlap and duplicates change nothing (per-run `seq`). The overlap is there because `created_at` is the transaction start: a row can commit after a later one.
 - **Gaps.** A row ahead of its run is held back by the reducer (`state.gaps`). The controller then fetches that run's rows with `seq > after_seq` and applies them, so the gap closes without waiting for a reconnect.
-- **Reconnect.** A closed, errored or timed-out channel (or a failed catch-up) reconnects with exponential backoff (1 s, doubling, 30 s cap, jittered) and catches up again from `state.cursor`. A good catch-up resets the backoff.
+- **Reconnect.** A closed, errored or timed-out channel (or a failed catch-up) reconnects with exponential backoff (1 s, doubling, 30 s cap, jittered) and catches up again. It resumes from the held position of an unfinished catch-up when there is one (see "Large backlogs"), and otherwise from `state.cursor` minus the overlap. A good catch-up resets the backoff.
 - **Large backlogs.** One load reads at most 40 pages of 500 rows. When that stops short, the next load continues from the last `(created_at, id)` it read (not from `cursor - 5 minutes` again) until a short page proves the backlog is drained. The controller never goes live while a load is truncated: after 20 loads it reports an error and reconnects. The controller keeps the overlap start and the last keyset position across reconnects (also after a failed fetch) and clears them only when a short page proves the drain, so the next attempt continues where the last one stopped and never moves backwards; duplicates are still dropped by `seq`.
 - **No cursor** (an empty office) loads the feed from the start the same way; give it a snapshot for very large workspaces.
 - **`agent_id`** is not a `run_events` column: the Supabase source joins it from `runs` with a workspace-scoped read and caches it (AGO-124 decision 2).
