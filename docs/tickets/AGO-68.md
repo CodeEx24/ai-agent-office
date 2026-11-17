@@ -1,7 +1,7 @@
 # AGO-68 - Allowlist and pin tool servers (US-111)
 
 - Ticket: https://stratyge.atlassian.net/browse/AGO-68
-- PRs: (pending)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/82
 - Related: AGO-157 (credential broker, done), AGO-34 (policy engine), AGO-25 (tool offer), AGO-88 (read-only MCP integrations, unblocked by this), AGO-129 (red-team suite), AGO-154 (proposal-store precedent)
 - Status: In progress (record accepted 2026-11-17) · Type: Feature · Risk: high (tool supply chain, tool-description tampering, token passthrough) · Epic EP-17 · Wave 3
 
