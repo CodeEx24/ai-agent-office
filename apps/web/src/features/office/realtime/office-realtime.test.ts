@@ -402,3 +402,33 @@ describe("truncated catch-up continues from the keyset position", () => {
     expect(h.controller.getState().gaps).toEqual({});
   });
 });
+
+describe("the resume position survives reconnects", () => {
+  it("never moves backwards across reconnects and applies each row once", async () => {
+    const h = harness({ pageSize: 1 });
+    const total = 25 * 40 + 5; // above one connection's cap (20 loads x 40 pages x 1 row), one overlap window
+    for (let q = 1; q <= total; q += 1) h.source.insert(mk(1, q, q), false);
+    h.controller.start();
+    for (let attempt = 0; attempt < 6 && h.controller.getStatus() !== "live"; attempt += 1) {
+      h.source.handlers?.onStatus("subscribed");
+      for (let i = 0; i < 60; i += 1) await flush();
+      const timer = h.timers.filter((t) => !t.cleared).pop();
+      if (h.controller.getStatus() !== "live" && timer) {
+        timer.cleared = true;
+        timer.fn();
+      }
+    }
+    expect(h.controller.getStatus()).toBe("live");
+    expect(lastSeq(h.controller, 1)).toBe(total);
+    expect(h.errors.length).toBeGreaterThan(0); // the cap was hit at least once
+    const seen = h.states.map((s) => s.runs[runId(1)]?.last_seq ?? 0);
+    expect(seen).toEqual([...seen].sort((a, b) => a - b));
+    expect(new Set(seen).size).toBe(seen.length);
+    const positions = h.source.fetchCalls.filter((c) => c.after !== null).map((c) => c.after);
+    for (let i = 1; i < positions.length; i += 1) {
+      const prev = positions[i - 1];
+      const cur = positions[i];
+      if (prev && cur) expect(compareFeedOrder(cur, prev)).toBeGreaterThanOrEqual(0);
+    }
+  });
+});

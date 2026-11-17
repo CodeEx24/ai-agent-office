@@ -80,6 +80,8 @@ export function createOfficeRealtime(options: OfficeRealtimeOptions): OfficeReal
   let unsubscribe: (() => void) | null = null;
   let retryTimer: unknown = null;
   let attempt = 0;
+  /** An unfinished catch-up: the overlap start and the last keyset position read. Survives reconnects. */
+  let resume: { readonly start: OfficeCursor | null; readonly after: OfficeCursor } | null = null;
   let queue: Promise<void> = Promise.resolve();
 
   function setStatus(next: OfficeRealtimeStatus): void {
@@ -129,9 +131,11 @@ export function createOfficeRealtime(options: OfficeRealtimeOptions): OfficeReal
 
   async function catchUp(gen: number): Promise<void> {
     // The overlap start comes from the cursor once. A truncated load continues from its last keyset position,
-    // never from the (moved) cursor, until a short page proves the backlog is drained.
-    const start = state.cursor;
-    let resumeAfter: OfficeCursor | null = null;
+    // never from the (moved) cursor, until a short page proves the backlog is drained. The position lives on the
+    // controller, so a reconnect (after the load cap or a failed fetch) continues where it stopped.
+    const pending = resume;
+    const start = pending ? pending.start : state.cursor;
+    let resumeAfter: OfficeCursor | null = pending ? pending.after : null;
     for (let load = 0; load < MAX_CATCH_UP_LOADS; load += 1) {
       const loaded = await loadOfficeEvents({
         source,
@@ -143,12 +147,14 @@ export function createOfficeRealtime(options: OfficeRealtimeOptions): OfficeReal
       });
       if (gen !== generation) return;
       setState(applyOfficeEvents(state, loaded.rows));
+      if (loaded.truncated && loaded.next) resume = { start, after: loaded.next };
+      else resume = null; // a short page proved the backlog is drained
       await fillGaps(gen);
       if (gen !== generation) return;
       if (!loaded.truncated) return;
       resumeAfter = loaded.next;
     }
-    // Never go live with a backlog left: fail so the reconnect path resumes from the advanced cursor.
+    // Never go live with a backlog left: fail so the reconnect path continues from `resume`.
     throw new Error("catch-up backlog not drained");
   }
 
