@@ -332,10 +332,11 @@ describe("AC3: cards show payload, reason, recent steps and cost", () => {
   const build = (events: StoredEventInput[]) =>
     buildApprovalCards({ approvals: [approvalInput], agentNames: names, events })[0];
 
-  it("DEFERRED payload: the card carries the stored hash as its fingerprint, not the payload", () => {
+  it("DEFERRED payload: the card carries the stored hash as its fingerprint and an unavailable payload (AGO-215 fills it)", () => {
     const card = build([]);
     expect(card?.payloadHash).toBe(HASH);
-    expect(Object.keys(card ?? {})).not.toContain("payload");
+    // AGO-54: the payload is a typed source. Nothing stores the call yet, so it is `unavailable`, never agent text.
+    expect(card?.payload).toEqual({ kind: "unavailable" });
   });
 
   it("takes the reason from the policy decision of the same call as this approval", () => {

@@ -1,5 +1,13 @@
 import { parseStoredRunEvent, type RunEvent } from "@ago/shared";
 
+import {
+  buildPayloadView,
+  summarizeConsequence,
+  type ApprovalPayloadSource,
+  type ApprovalPayloadView,
+  type ConsequenceSummary,
+} from "./consequence-summary";
+
 /**
  * What one card in the approvals inbox shows (AGO-37). Pure: no I/O, so it is tested without a database.
  *
@@ -48,6 +56,10 @@ export interface ApprovalCardData {
   readonly reason: string | null;
   readonly createdAt: string;
   readonly expiresAt: string;
+  /** What approving will do (AGO-54): built on the server from the tool, tier and stored arguments, never agent prose. */
+  readonly consequence: ConsequenceSummary;
+  /** The call details for the card's bounded payload region; `unavailable` until AGO-215 stores the payload. */
+  readonly payload: ApprovalPayloadView;
   readonly recentSteps: readonly ApprovalStep[];
   /**
    * True when the events were read only in part and this card has no reason or no steps: they may exist but were not
@@ -177,6 +189,8 @@ export function buildApprovalCards(input: {
   readonly partialCostRunIds?: ReadonlySet<string>;
   /** True when the decision or step reads were cut short, so a missing reason or step list may just be unread. */
   readonly isHistoryCut?: boolean;
+  /** The stored call arguments by approval id (AGO-215 fills this); an approval with no entry has none stored. */
+  readonly payloads?: ReadonlyMap<string, ApprovalPayloadSource>;
 }): ApprovalCardData[] {
   const byRun = parseEvents(input.events);
   return [...input.approvals]
@@ -185,6 +199,7 @@ export function buildApprovalCards(input: {
       const events = approval.runId ? (byRun.get(approval.runId) ?? []) : [];
       const { reason, tier } = reasonFor(approval.id, events);
       const recentSteps = recentStepsFor(events);
+      const payload = input.payloads?.get(approval.id) ?? { kind: "unavailable" as const };
       const isPartial =
         approval.runId !== null && (input.partialCostRunIds?.has(approval.runId) ?? false);
       return {
@@ -198,6 +213,8 @@ export function buildApprovalCards(input: {
         reason,
         createdAt: approval.createdAt,
         expiresAt: approval.expiresAt,
+        consequence: summarizeConsequence(approval.action, tier, payload),
+        payload: buildPayloadView(payload),
         recentSteps,
         isHistoryIncomplete:
           (input.isHistoryCut ?? false) && (reason === null || recentSteps.length === 0),
