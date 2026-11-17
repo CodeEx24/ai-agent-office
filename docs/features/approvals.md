@@ -1,5 +1,5 @@
 # Approval requests
-Tickets: AGO-21 (created) · AGO-47 (payload-hash binding, single use, expiry limit) · AGO-51 (timeout means deny, guarded by a static check) · AGO-58 (human-only decide route, agent tokens refused with an event, Reviewer verdict is advisory)
+Tickets: AGO-21 (created) · AGO-37 (approvals inbox and card UI) · AGO-47 (payload-hash binding, single use, expiry limit) · AGO-51 (timeout means deny, guarded by a static check) · AGO-58 (human-only decide route, agent tokens refused with an event, Reviewer verdict is advisory)
 
 ## What it does
 When the policy engine says a tool call `needs_approval` (tier 3 and 4, or any call a policy escalates), the worker
@@ -46,6 +46,25 @@ a timeout denial.
 | `buildApprovalCards` | `apps/web/src/features/approvals/approval-card.ts` | pure: reason, recent steps and cost from validated run events |
 | `ApprovalInbox` | `apps/web/src/features/approvals/ApprovalInbox.tsx` | client: polling, the decide call, per-card result |
 | `ApprovalCard` | `apps/web/src/features/approvals/ApprovalCard.tsx` | presentational card |
+| `readEventPages` | `apps/web/src/features/approvals/inbox-data.ts` | keyset-pages event reads under the API's 1,000-row cap; reports when a read was cut |
+
+**Inbox data flow and long histories (AGO-37).**
+```mermaid
+flowchart LR
+  Page["ApprovalsPage"] --> Load["loadApprovalInbox"]
+  Load --> List["listPendingApprovals"]
+  List --> Pages["readEventPages (keyset on run_id, seq)"]
+  Pages --> Build["buildApprovalCards"]
+  Build --> UI["ApprovalInbox + ApprovalCard"]
+  UI -->|Approve / Reject| Decide["POST /api/approvals/[id]/decision (AGO-58)"]
+  UI -->|router.refresh, 1 s| Page
+```
+The API returns at most 1,000 rows per request, so each event read (decision events, recent steps, usage) is paged:
+every page starts strictly after the last `(run_id, seq)` of the one before, and the read stops on an empty page, never
+a short one. A read that reaches its row budget with rows left is "cut". Then a card with no reason or no steps says
+"Not loaded. This run has more history than the inbox reads at once." instead of "Not recorded" (`isHistoryIncomplete`),
+and a cut usage read marks the cost "partial". Limits: 50 pending approvals per page, 2,000 decision rows, 60 step rows
+per pending approval, 5,000 usage rows.
 
 ## Data model
 One table, `public.approvals` (created in AGO-74, RLS in AGO-107). The approval flow itself adds no table or column. AGO-58 adds one database function, `public.record_agent_approval_rejection` (see "Human-only decisions"), which appends a run event and touches no approval row.

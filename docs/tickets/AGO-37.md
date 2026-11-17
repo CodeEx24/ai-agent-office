@@ -1,9 +1,9 @@
 # AGO-37 - Approvals inbox and card UI
 
 - Ticket: https://stratyge.atlassian.net/browse/AGO-37 (US-039, Epic EP-06, Wave 2)
-- PRs: https://github.com/CodeEx24/ai-agent-office/pull/70 (draft)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/70 (draft until the pre-merge step)
 - Related: AGO-21 (request flow), AGO-47 (payload-hash binding), AGO-58 (human-only decide route), AGO-54 (later: consequence-first server rendering), AGO-86 (pause/resume/stop, parallel), AGO-40 (budgets, not merged)
-- Type: Feature · Risk: high (human decision UI on approvals) · Status: spec awaiting acceptance
+- Type: Feature · Risk: high (human decision UI on approvals) · Status: approved by owner answer (2026-11-17), ready to merge after AGO-99
 
 ## Overview
 One inbox where a signed-in member sees every pending approval in the workspace and decides it. As an owner, I want one inbox with approve, edit, reject and ask so that I can decide quickly.
@@ -48,6 +48,9 @@ AGO-21, AGO-115 (done); AGO-58 (merged a761f9d). AGO-54 builds on the same card 
 | q2 | Edit and Ask: A - Approve and Reject use the one AGO-58 decide path; Edit and Ask are shown disabled with a tooltip and listed as follow-ups | Owner, 2026-11-14 |
 | q3 | "Within 2 seconds": the owner chose A (Realtime). Built as **1 s polling** (`INBOX_REFRESH_MS`), a reviewed deviation (see Deviations): Realtime needs a publication migration that is outside this ticket's slot. Proven by a test; the run wake stays with AGO-86 | Owner chose Realtime, 2026-11-14; polling accepted by all four round-1 reviewers |
 | q4 | Record accepted | Owner, 2026-11-14 |
+| q5 | Deferral of the payload part of AC3 confirmed. Follow-up ticket **AGO-215** (Store approval payload: migration + worker), linked "relates to" AGO-37, must land before any real Tier 3/4 tool reaches users | Jocarl Basco, 2026-11-17 (answer to the round-8 approver escalation: "go with recommendation always for this project") |
+| q6 | 1 s polling accepted in place of Realtime (q3); Realtime stays a follow-up | Jocarl Basco, 2026-11-17 |
+| q7 | Keep fixing past the round limit: rounds 6, 7 and 8 ran beyond the cap, each fixing verified review findings (1,000-row API cap, keyset paging, copy) | Owner (keep-fixing decision), recorded 2026-11-17 |
 
 ## Deviations
 - **2026-11-14: polling, not Realtime.** The `approvals` and `run_events` tables are not in the `supabase_realtime` publication, so Realtime events would never arrive; adding them is a migration (not this ticket's slot). The inbox re-reads every 1 s (`INBOX_REFRESH_MS`) and shows a local decision's result at once. The ticket brief allows "Realtime or the existing run-update mechanism". Realtime stays a follow-up. **Reviewed:** the code, security, UI and UX reviewers each judged this in round 1 and accepted it (the user sees the verdict at once; a decision made elsewhere shows within about 1 s; polling pauses in a hidden tab). It is still a deviation from the owner's answer (q3 A, Realtime), so it is recorded here and not hidden.
@@ -55,7 +58,7 @@ AGO-21, AGO-115 (done); AGO-58 (merged a761f9d). AGO-54 builds on the same card 
 - A link to the inbox was added on the `/app` home page.
 
 ## Known limitations
-- **Deferred AC: "full payload on the card".** The approvals table stores only a payload hash, so the card shows tool, tier, reason, hash, recent steps and cost. Follow-up: pending: store approval payload (migration + worker). The orchestrator proposes the ticket to the owner; this ticket does not create it.
+- **Deferred AC: "full payload on the card".** The approvals table stores only a payload hash, so the card shows tool, tier, reason, hash, recent steps and cost. Follow-up: **AGO-215** (store approval payload: migration + worker), created and accepted by the owner on 2026-11-17 (see Decisions q5).
 - **Security condition (reviewer-security, round 1):** approving a call whose arguments the human cannot see is the residual risk. The follow-up "store approval payload" **must land before any real Tier 3/4 tool with real side effects reaches real users.** Until then the card says plainly that the details are hidden.
 - Edit and Ask are disabled with a tooltip (no backend). Follow-ups.
 - A decision updates the approval and what the inbox and run show; waking the paused run stays with AGO-86.
@@ -64,7 +67,7 @@ AGO-21, AGO-115 (done); AGO-58 (merged a761f9d). AGO-54 builds on the same card 
 Unit (card rendering incl. hostile text, age formatting), component tests for the buttons, a route-level test that the inbox calls the decide route only, a 2 s latency test (decision to visible state change, local Supabase under the db lock), Playwright flow for the device tester. No real model calls.
 
 ## Follow-up tasks
-- pending: store approval payload (migration + worker) so the card can show the full payload (deferred AC). The orchestrator proposes the ticket.
+- **AGO-215:** store approval payload (migration + worker) so the card can show the full payload (deferred AC). Must land before any real Tier 3/4 tool reaches users.
 - Edit and Ask backends (they are disabled in the UI).
 - Realtime for the inbox (publication migration), replacing polling.
 - Non-blocking review notes, left for follow-ups: map known reason codes (for example `tier_3_needs_human`) to a plain sentence and explain "Tier 3"; make the Edit and Ask hint visible to touch and keyboard users (a visible "coming soon" line) and drop "ticket" jargon; show the view-only line once as a banner rather than on every card; "expired" copy ("Expired: denied automatically"); 375 px label wrapping. The other reviewers' non-blocking notes are in `.delivery/jobs/AGO-37/round-1/review-*.md`.
