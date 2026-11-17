@@ -48,7 +48,8 @@ Lazy and idempotent: the first call for a workspace creates the repo; later call
 ## Known limitations
 - Needs `git` on the worker host and in the container image (deploy follow-up).
 - The symlink check is lstat-based; the repo folder is service-owned and must not be writable by other processes.
-- Writes are serialised in one process only; run one worker per vault root until a cross-process lock exists.
+- Writes are serialised in one process only; run one worker per vault root until a cross-process lock exists. The store assumes one worker per vault root until follow-up F1 (a failed-write rollback could otherwise overwrite another worker's commit).
+- Agents can still write `.gitignore` and `.gitattributes`, which can make later writes fail in that workspace (a person can repair it); follow-up F3.
 - Names with `~<digit>` and Windows device names are refused.
 
 ## Follow-ups
