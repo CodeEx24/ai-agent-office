@@ -65,56 +65,24 @@ export function ApprovalCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <dl className="grid gap-1 text-sm">
-          <div className="flex gap-2">
-            <dt className="shrink-0 font-medium whitespace-nowrap">Why it stopped</dt>
-            <dd data-testid="approval-reason">
-              {card.reason ??
-                (card.isHistoryIncomplete
-                  ? "Not loaded. This run has more history than the inbox reads at once."
-                  : "Not recorded")}
-            </dd>
-          </div>
-          <div className="flex gap-2">
-            <dt className="shrink-0 font-medium whitespace-nowrap">Tool</dt>
-            <dd>{card.action}</dd>
-          </div>
-          <div className="flex gap-2">
-            <dt className="shrink-0 font-medium whitespace-nowrap">Call details</dt>
-            <dd data-testid="approval-payload">
-              Not shown yet: the full call details are not stored yet.{" "}
-              <span className="text-xs text-muted-foreground">
-                Reference <code title={card.payloadHash}>{card.payloadHash.slice(0, 12)}…</code>
-              </span>
-            </dd>
-          </div>
-          <div className="flex gap-2">
-            <dt className="shrink-0 font-medium whitespace-nowrap">Cost so far</dt>
-            <dd data-testid="approval-cost">
-              {formatCostMicros(card.cost.costMicros)} ·{" "}
-              {(card.cost.inputTokens + card.cost.outputTokens).toLocaleString("en-US")} tokens
-              {card.cost.isPartial ? " (partial: some usage is not counted)" : null}
-            </dd>
-          </div>
-        </dl>
-
-        <section aria-label="Recent steps" className="grid gap-1">
-          <h3 className="text-sm font-medium">Recent steps</h3>
-          {card.recentSteps.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {card.isHistoryIncomplete
-                ? "Not loaded. This run has more history than the inbox reads at once."
-                : "No steps recorded."}
-            </p>
-          ) : (
-            <ol className="grid gap-0.5 text-sm text-muted-foreground" data-testid="approval-steps">
-              {card.recentSteps.map((step) => (
-                <li key={step.seq} className="[overflow-wrap:anywhere]">
-                  {step.label}
-                </li>
-              ))}
-            </ol>
-          )}
+        {/* 1. The consequence comes first and is never pushed down: it is built on the server from the tool, tier and stored arguments, not from agent text. */}
+        <section
+          aria-label="What approving will do"
+          data-testid="approval-consequence"
+          data-severity={card.consequence.severity}
+          className="grid gap-1 rounded-md border bg-muted/40 p-3 text-sm [overflow-wrap:anywhere]"
+        >
+          <p className="font-medium" data-testid="approval-consequence-headline">
+            {card.consequence.headline}
+          </p>
+          <p className="text-xs font-medium text-muted-foreground">{card.consequence.tierLabel}</p>
+          <ul className="grid gap-0.5 text-muted-foreground">
+            {card.consequence.details.map((line) => (
+              <li key={line} className="[overflow-wrap:anywhere]">
+                {line}
+              </li>
+            ))}
+          </ul>
         </section>
 
         {/* The outcome is announced once, by the inbox's live region, so this text carries no live role. */}
@@ -129,6 +97,7 @@ export function ApprovalCard({
           </p>
         ) : null}
 
+        {/* 2. The decision sits right under the consequence, above the payload, so a long payload cannot push it away. */}
         {canDecide ? (
           <p className="text-sm font-medium" data-testid="approval-details-note">
             You can&apos;t see what this call will send or change (for example the recipient or the
@@ -186,6 +155,78 @@ export function ApprovalCard({
             to decide it.
           </p>
         )}
+
+        {/* 3. The call details: a bounded region that scrolls inside the card, so its length cannot move anything above it. */}
+        <section
+          aria-label="Call details"
+          tabIndex={0}
+          data-testid="approval-payload"
+          className="max-h-48 min-w-0 overflow-auto rounded-md border p-3 text-sm [overflow-wrap:anywhere]"
+        >
+          {card.payload.kind === "stored" ? (
+            <dl className="grid gap-1" data-testid="approval-payload-lines">
+              {card.payload.lines.map((line) => (
+                <div key={line.key} className="grid gap-0.5">
+                  <dt className="font-medium">{line.key}</dt>
+                  <dd className="whitespace-pre-wrap">{line.value}</dd>
+                </div>
+              ))}
+              {card.payload.isTruncated ? (
+                <p className="text-xs text-muted-foreground">
+                  Cut for display: the call has more than is shown here.
+                </p>
+              ) : null}
+            </dl>
+          ) : (
+            <p>Not shown yet: the full call details are not stored yet.</p>
+          )}
+          <p className="mt-1 text-xs text-muted-foreground">
+            Reference <code title={card.payloadHash}>{card.payloadHash.slice(0, 12)}…</code>
+          </p>
+        </section>
+
+        <dl className="grid gap-1 text-sm">
+          <div className="flex gap-2">
+            <dt className="shrink-0 font-medium whitespace-nowrap">Why it stopped</dt>
+            <dd data-testid="approval-reason">
+              {card.reason ??
+                (card.isHistoryIncomplete
+                  ? "Not loaded. This run has more history than the inbox reads at once."
+                  : "Not recorded")}
+            </dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="shrink-0 font-medium whitespace-nowrap">Tool</dt>
+            <dd>{card.action}</dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="shrink-0 font-medium whitespace-nowrap">Cost so far</dt>
+            <dd data-testid="approval-cost">
+              {formatCostMicros(card.cost.costMicros)} ·{" "}
+              {(card.cost.inputTokens + card.cost.outputTokens).toLocaleString("en-US")} tokens
+              {card.cost.isPartial ? " (partial: some usage is not counted)" : null}
+            </dd>
+          </div>
+        </dl>
+
+        <section aria-label="Recent steps" className="grid gap-1">
+          <h3 className="text-sm font-medium">Recent steps</h3>
+          {card.recentSteps.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {card.isHistoryIncomplete
+                ? "Not loaded. This run has more history than the inbox reads at once."
+                : "No steps recorded."}
+            </p>
+          ) : (
+            <ol className="grid gap-0.5 text-sm text-muted-foreground" data-testid="approval-steps">
+              {card.recentSteps.map((step) => (
+                <li key={step.seq} className="[overflow-wrap:anywhere]">
+                  {step.label}
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
       </CardContent>
     </Card>
   );
