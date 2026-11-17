@@ -216,4 +216,52 @@ describe("sticky block (AGO-68 D11)", () => {
     expect((await gate.check(scopeOf("ws-a"), SERVER_ID)).ok).toBe(false);
     expect(sent).toHaveLength(1);
   });
+
+  it("a check whose listing is held open cannot pass after another check recorded the block", async () => {
+    const registry = createInMemoryToolServerRegistry();
+    const server = createFakeToolServer();
+    let held: Promise<void> | null = null;
+    const base = connectorFor({ "ws-a": { [SERVER_ID]: server } });
+    const connector = {
+      connect: (ws: string, id: string) => {
+        const client = base.connect(ws, id);
+        if (client === null) return null;
+        return {
+          listSnapshot: async (signal?: AbortSignal) => {
+            const answer = await client.listSnapshot(signal); // taken now: still the pinned list
+            if (held !== null) await held;
+            return answer;
+          },
+        };
+      },
+    };
+    const gate = createToolServerGate({ registry, connector });
+    const deps = { registry, connector };
+    await allowlistServer(deps, HUMAN, {
+      workspaceId: "ws-a",
+      serverId: SERVER_ID,
+      audience: AUDIENCE,
+      audienceSecretRef: "secret:crm_signing",
+    });
+    const r = await prepareReview(deps, HUMAN, { workspaceId: "ws-a", serverId: SERVER_ID });
+    await reviewAndPin(deps, HUMAN, {
+      workspaceId: "ws-a",
+      serverId: SERVER_ID,
+      reviewedHash: r.hash,
+    });
+
+    let release: () => void = () => undefined;
+    held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const slow = gate.check(scopeOf("ws-a"), SERVER_ID); // read the entry (unblocked), answer held
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    server.setDescription("lookup", "evil");
+    held = null;
+    expect((await gate.check(scopeOf("ws-a"), SERVER_ID)).ok).toBe(false); // records the block
+    release();
+    expect((await slow).ok).toBe(false); // the pinned list it got must not let it through now
+    server.setDescription("lookup", "lookup tool");
+    expect((await gate.check(scopeOf("ws-a"), SERVER_ID)).ok).toBe(false);
+  });
 });

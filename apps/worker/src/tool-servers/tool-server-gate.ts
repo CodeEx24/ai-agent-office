@@ -115,10 +115,16 @@ export function createToolServerGate(deps: ToolServerGateDeps): ToolServerGate {
         }
 
         const matchesPin = liveHash === entry.pin.hash && live.serverId === serverId;
-        const isBlocked = entry.blocked !== null && entry.blocked !== undefined;
-        // Sticky (D11): a block set earlier holds even when the live list matches the pin again.
-        if (matchesPin && !isBlocked) return { ok: true, hash: liveHash };
-        if (matchesPin) return deny(scope, serverId, "hash_mismatch");
+        if (matchesPin) {
+          // Sticky (D11): a block holds even when the live list matches the pin again. The listing above is
+          // slow or hostile at will, so the entry read before it may be stale: a block recorded meanwhile (or
+          // a re-pin) must count. Read again and decide with nothing awaited between that read and the return.
+          const fresh = await deps.registry.get(scope.workspaceId, serverId);
+          const isUnchanged = fresh?.pin?.hash === liveHash && (fresh.blocked ?? null) === null;
+          return isUnchanged
+            ? { ok: true, hash: liveHash }
+            : deny(scope, serverId, "hash_mismatch");
+        }
 
         await deps.registry.markBlocked(scope.workspaceId, serverId, liveHash, now().toISOString());
 
