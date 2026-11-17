@@ -2,7 +2,7 @@
 
 - Ticket: https://stratyge.atlassian.net/browse/AGO-54 (Story, Epic EP-16, wave 2, WS-E)
 - PRs: https://github.com/CodeEx24/ai-agent-office/pull/75
-- Status: In review
+- Status: Merged
 - Blocked by: AGO-37 (inbox and card, Done), AGO-47 (payload-hash binding, Done). Related: AGO-58 (the one decide path), AGO-215 (store the approval payload: migration plus worker, wave 3, not built)
 - Risk: **high** (a human decision UI: the integrity of what the owner approves)
 
@@ -65,4 +65,7 @@ Also source stored args from the hash-bound payload row, and keep the 'runs exac
 
 ## Outcome
 Feature guide: [docs/features/approvals.md](../features/approvals.md), section "Consequence-first card (AGO-54)".
-(rest filled at merge)
+- Review: 2 rounds. Round 1: gate PASS, tester-functional PASS, tester-device PASS (29 screenshots, phone 390x844 and wide 1440x900, replayable E2E e5fa872), reviewer-security, ago-invariants-reviewer, reviewer-ui, reviewer-ux PASS, reviewer-code CHANGES (the not-stored note rendered unconditionally). Round 2: fix 8b906f1 + 27 acceptance tests 0da81c6; tester-functional, reviewer-code, reviewer-ui PASS; approver APPROVE. Pre-merge re-gate PASS after syncing main (b1ef897).
+- Deferred (owner answer A, Jocarl Basco standing rule, 2026-11-17): showing the full stored payload; until AGO-215 stores it, the card shows the structured fields and the payload hash reference.
+- Known limitations: at column maximums on a 390x844 phone the last ~3 px of Approve sit below the fold (reachable by scroll; judged non-blocking by ui and ux); the optional title clamp was not done.
+- Follow-ups: AGO-215 (store the payload; carries the three dormant security nits listed under Follow-up tasks).
