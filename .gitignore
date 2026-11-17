@@ -45,3 +45,6 @@ apps/web/public/models/
 
 # Delivery working state (workflow kit); never commit
 .delivery/
+
+# Default local vault root (AGO-121): per-workspace git repos; never commit
+.vault-data/
