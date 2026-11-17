@@ -2,7 +2,7 @@
 
 ## Links
 - Ticket: [AGO-71](https://stratyge.atlassian.net/browse/AGO-71) (US-112), epic EP-17, wave 3
-- PRs: (pending)
+- PRs: [#79](https://github.com/CodeEx24/ai-agent-office/pull/79)
 - Related: AGO-167 (tool loop, done), AGO-65 (egress proxy), AGO-85 (capability prerequisites), AGO-129 (red-team suite)
 
 ## Overview
