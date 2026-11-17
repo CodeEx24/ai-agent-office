@@ -13,3 +13,5 @@ dcc4d189ceba7a23d5b9cc034caf2d1c7ccc3b48:scripts/ago-148-qa-round1.test.mjs:gene
 # AGO-25: fake secret fixtures (built at runtime in tests, not real secrets) in the QA test commit.
 7d279840a3e19de5bd091dd5b99482be8cb7ac4c:apps/worker/src/agent/tool-offer.qa.test.ts:generic-api-key:29
 7d279840a3e19de5bd091dd5b99482be8cb7ac4c:apps/worker/src/agent/tool-offer.qa.integration.test.ts:generic-api-key:240
+# AGO-84: fake test fixture (JWT-shaped agent token, payload {"fake":"token"}, signed by nobody) in the kill switch e2e spec.
+48e44489e06ab6294e66b48e18e538ba326edd01:apps/web/e2e/ago-84-kill-switch-live.spec.ts:generic-api-key:54

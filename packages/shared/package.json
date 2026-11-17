@@ -34,6 +34,10 @@
       "types": "./dist/skills/skill-schemas.d.ts",
       "default": "./dist/skills/skill-schemas.js"
     },
+    "./kill-switch": {
+      "types": "./dist/runs/kill-switch.d.ts",
+      "default": "./dist/runs/kill-switch.js"
+    },
     "./credential-token": {
       "types": "./dist/identity/credential-token.d.ts",
       "default": "./dist/identity/credential-token.js"

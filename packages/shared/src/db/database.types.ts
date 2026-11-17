@@ -613,7 +613,10 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            "archive_agent":
+            "activate_kill_switch":
+{ Args: { "p_agent_id"?: string,"p_scope": string,"p_workspace_id": string }; Returns: Json
+                           },
+"archive_agent":
 { Args: { "p_agent_id": string,"p_workspace_id": string }; Returns: undefined
                            },
 "claim_task":
@@ -640,6 +643,9 @@ isOneToOne: false
 { Args: { "p_claim_id": string,"p_claim_token": string,"p_reason"?: string,"p_workspace_id": string }; Returns: {
               "outcome": string,"reason": string
             }[]
+                           },
+"release_kill_switch":
+{ Args: { "p_agent_id"?: string,"p_scope": string,"p_workspace_id": string }; Returns: Json
                            },
 "renew_claim":
 { Args: { "p_claim_id": string,"p_claim_token": string,"p_ttl_seconds"?: number,"p_workspace_id": string }; Returns: {

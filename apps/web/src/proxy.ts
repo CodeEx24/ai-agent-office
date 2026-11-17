@@ -1,4 +1,4 @@
-import { isRunControlRoute } from "@ago/shared";
+import { isKillSwitchRoute, isRunControlRoute } from "@ago/shared";
 import { NextResponse, type NextRequest } from "next/server";
 
 import {
@@ -54,7 +54,12 @@ export async function proxy(request: NextRequest) {
   if (agentDenied) {
     // AGO-58: on an approval route the refusal also leaves an audit event (signature-checked, fixed shape).
     // AGO-86: the same audit event for a run control route (pause, resume, stop).
-    if (isApprovalRoute(request.nextUrl.pathname) || isRunControlRoute(request.nextUrl.pathname)) {
+    // AGO-84: and for the kill switch routes (activate, release).
+    if (
+      isApprovalRoute(request.nextUrl.pathname) ||
+      isRunControlRoute(request.nextUrl.pathname) ||
+      isKillSwitchRoute(request.nextUrl.pathname)
+    ) {
       await recordAgentRouteRejection({
         headers: request.headers,
         pathname: request.nextUrl.pathname,
