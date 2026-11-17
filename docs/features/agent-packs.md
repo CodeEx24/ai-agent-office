@@ -128,7 +128,7 @@ A dry run only; `--apply` prints that applying is not available yet. It signs in
 
 ## Data model
 
-One table: `pack_events`, the append-only export log described above (migration `20261114020001_ago_192_pack_events.sql`, rollback in `supabase/rollbacks/`). Packs themselves are not stored. A pack is plain JSON:
+One table: `pack_events`, the append-only log of pack exports and imports (migration `20261114020001_ago_192_pack_events.sql`, extended by `20261117030001_ago_194_pack_import.sql`; rollbacks in `supabase/rollbacks/`). `kind` is `export` or `import`. An import row also has `detail` (jsonb: the conflict rule, counts, and per agent `{name, action, disabled_reason}`; never pack text) and may list no agents (an import that skipped everything); an export still lists 1 to 100. The import rollback refuses while an `import` row exists, because the table is append-only. Packs themselves are not stored. A pack is plain JSON:
 
 ```json
 {
@@ -249,6 +249,11 @@ flowchart LR
 | `runPackImport` | `apps/web/src/features/packs/cli/run-pack-import.ts` | The command: flags, environment, file size, sign-in, owner check, loader, readable or JSON output. `pack-import.ts` wires the real dependencies. |
 | import preview tests | `packages/shared/src/packs/agent-pack-import-preview.test.ts`, `apps/web/src/features/packs/{preview-agent-pack-import,read-limited-body}.test.ts`, `.../cli/run-pack-import.test.ts`, `apps/web/src/app/api/agent-packs/import/preview/route.test.ts` | Limits, preview rules, no writes (a recording client), body reading, route statuses, CLI behaviour. |
 | live preview test | `apps/web/src/app/api/agent-packs/import/preview/route.integration.test.ts` | Runs the real route, role gate and loader against the local Supabase stack as real throw-away users (8 tests): owner succeeds with identical row counts before and after, member, viewer, stranger and another workspace's owner get 403, signed out gets 401, no cross-workspace leak. Skipped unless `E2E_SUPABASE=1`. |
+| `import_agent_pack` | `supabase/migrations/20261117030001_ago_194_pack_import.sql` | The import writer: SECURITY DEFINER, empty `search_path`, human session and owner role checked inside, one transaction for skills, agents, grants and the event. Reads tiers from the catalog, never sets a mode. |
+| `buildImportPlan`, `ImportPlan` | `packages/shared/src/packs/agent-pack-import-plan.ts` (import from `@ago/shared/pack-import-plan`) | Turns the same outcome the preview is built from into the exact rows to write (skipped items omitted). |
+| `applyAgentPackImport`, `ApplyPackImportError` | `apps/web/src/features/packs/apply-agent-pack-import.ts` | Validates, loads the workspace as the caller, plans, then makes the one `import_agent_pack` call and maps the database error to a fixed code. |
+| `POST` | `apps/web/src/app/api/agent-packs/import/route.ts` | Thin route: human-only guard, JSON check, query, owner role before the body is read, size-limited body, apply, status mapping. |
+| import apply tests | `packages/shared/src/packs/agent-pack-import-plan.test.ts`, `apps/web/src/features/packs/apply-agent-pack-import{,.live}.test.ts`, `apps/web/src/app/api/agent-packs/import/route.test.ts`, `supabase/tests/pack_import.test.sql`, `scripts/ago-194-rollback.test.mjs` | Plan per rule, preview equals apply, route statuses, the SQL function (principals, atomicity, isolation), the live run against the local stack (`RUN_DB_TESTS=1`), and the rollback round trip. |
 | tests | `packages/shared/src/packs/agent-pack*.test.ts`, `apps/web/src/features/packs/**/*.test.ts`, `apps/web/src/app/api/agent-packs/export/route.test.ts`, `supabase/tests/pack_events.test.sql` | Schema, migration, secret scan, JSON Schema staleness, export, checksum, route, CLI, no-service-role scan, table rules. |
 | live test | `apps/web/src/app/api/agent-packs/export/route.integration.test.ts` | Runs the real route, role check, loader, `record_pack_export` and CLI against the local Supabase stack as real throw-away users (42 tests). Skipped unless `E2E_SUPABASE=1`, so plain `pnpm test` needs no database. |
 
