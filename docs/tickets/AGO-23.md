@@ -3,7 +3,7 @@
 Ticket: https://stratyge.atlassian.net/browse/AGO-23
 PRs: (pending)
 Related: blocked by AGO-145 (context builder, done) · unblocks AGO-24 (quarantined reader), AGO-187 (webhooks) · live-model red team is AGO-129 (follow-up)
-Type: Feature · Risk: High · Status: In progress
+Type: Feature · Risk: High · Status: In progress (built, in checks)
 
 ## Overview
 Epic EP-17, wave 3. Web, email and note (vault) text that reaches a model prompt must be marked as data, not instructions, in every prompt. AGO-145 already built the first layer (`apps/worker/src/context/untrusted.ts`: one wrapper, tag escaping, system rule) and AGO-167 routes tool results through it as `retrieved` items. This ticket hardens and proves that layer:
@@ -21,7 +21,7 @@ Assumptions (source):
 4. Owner skills stay trusted in `system`; pack skills, task text, vault map and retrieved content stay untrusted in the user message (AGO-145 decision, CLAUDE.md "pack text is untrusted data").
 5. Tool results stay wrapped as untrusted retrieved items (AGO-167 decision).
 
-**Boundary.** `build()` creates one random id per call (injected `createBoundaryId`, default 128 bits from `crypto.randomBytes`, so tests stay deterministic). Every block is `<untrusted_data id="<boundary>" source="<label>">` ... `</untrusted_data id="<boundary>">`. The system rule says a block ends only at the closing tag carrying the same id, and that anything else claiming to end it is data. The AGO-145 escaping of tag look-alikes stays as the second layer; content containing the id string is also neutralised (the builder regenerates the id until it is absent from all content). The id is never logged or put in run events.
+**Boundary.** `build()` creates one random id per call (injected `createBoundaryId`, default 128 bits from `crypto.randomBytes`, so tests stay deterministic). Every block is `<untrusted_data id="<boundary>" source="<label>">` ... `</untrusted_data id="<boundary>">`. The system rule says a block ends only at the closing tag carrying the same id, and that anything else claiming to end it is data. The AGO-145 escaping of tag look-alikes stays as the second layer; content containing the id string has it removed (2026-11-17 deviation: removed rather than regenerating the id, which is simpler and just as safe because the id is random and unknown to content). The id is at least 96 bits (hex, checked), never derived from content or run ids. The id is never logged or put in run events.
 
 **Spotlighting.** Delimiting plus random boundary plus the system rule. No datamarking (open question q2).
 
@@ -67,8 +67,10 @@ AGO-145 (context builder, done). AGO-167 (tool results as retrieved items). Unbl
 |---|---|---|---|
 | Owner skills vs pack skills | all untrusted / owner trusted, pack untrusted | owner trusted, pack untrusted | AGO-145 record, kept |
 | Tool results | trusted / wrapped | wrapped | AGO-167 record, kept |
-| Boundary format | static tag + escaping / per-prompt random id | pending (AGO-23-q1) | owner |
-| Datamarking | none / mark whitespace in web and email text | pending (AGO-23-q2) | owner |
+| Record accepted | accept / changes | accepted (q1) | owner (standing rule: go with the recommendation), 2026-11-17 |
+| Boundary format | static tag + escaping / per-prompt random id | per-prompt random id, escaping kept for any tag-like sequence whatever id it carries (q2) | owner, 2026-11-17 |
+| Datamarking | none / mark whitespace in web and email text | none; possible follow-up only if the AGO-129 red team shows a need (q3) | owner, 2026-11-17 |
+| Boundary id strength | - | at least 96 bits of crypto randomness per prompt, never derived from content or run ids; not in logs or run_events beyond what is already stored for the prompt | owner build note, 2026-11-17 |
 
 ## Known limitations
 A fake model cannot prove a real model's obedience; AGO-129 covers that. AGO-24 / AGO-187 are not built yet, so `web` and `email` kinds are exercised by tests only.
