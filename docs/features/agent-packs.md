@@ -1,10 +1,10 @@
 # Agent packs
 
-Tickets: AGO-191 (created: format v1), AGO-192 (export, checksum, `pack_events`), AGO-193 (import preview, a dry run that writes nothing)
+Tickets: AGO-191 (created: format v1), AGO-192 (export, checksum, `pack_events`), AGO-193 (import preview, a dry run that writes nothing), AGO-194 (import: the apply)
 
 ## What it does
 
-A pack is one JSON file that moves a team of agents and their skills between computers. The code defines the **format (v1)**: how to read a pack, check it, and upgrade an older one. **Export (AGO-192)** writes a pack from the agents you pick, through the API (`POST /api/agent-packs/export`) or the command `pnpm pack:export`; both call the same function. **Import preview (AGO-193)** reads a pack and tells you what an import would create, update, skip or ignore, without writing anything (`POST /api/agent-packs/import/preview` or `pnpm pack:import`). Applying a pack is a later ticket. There is no export or import screen yet (EP-19).
+A pack is one JSON file that moves a team of agents and their skills between computers. The code defines the **format (v1)**: how to read a pack, check it, and upgrade an older one. **Export (AGO-192)** writes a pack from the agents you pick, through the API (`POST /api/agent-packs/export`) or the command `pnpm pack:export`; both call the same function. **Import preview (AGO-193)** reads a pack and tells you what an import would create, update, skip or ignore, without writing anything (`POST /api/agent-packs/import/preview` or `pnpm pack:import`). **Import (AGO-194)** applies a pack in one database transaction (`POST /api/agent-packs/import`); the command-line `--apply` is AGO-195. There is no export or import screen yet (EP-19).
 
 A pack never contains secrets, database ids, run history, approval history, policies, identities or credentials.
 
@@ -72,10 +72,10 @@ The app's own sign-in is passwordless, so your account needs a password for the 
 | `skills[]` | `create`, `update` or `skip` by name, with the stored and the pack's version. |
 | `references[]` | What you must set up afterwards: secrets (`secret:<name>`), integrations (`integration.*` capabilities) and departments. Names only. |
 | `ignored[]` | What import would drop and why: Tier 3+ or unknown capabilities, a budget above the cap (the default is used), a non-Strict mode (forced to Strict), a department, notes. |
-| `blockers[]` | Why the pack cannot be imported at all (all-or-nothing): a checksum that does not match, a model that is not on the allowlist, or a trifecta combination that would remain once Tier 3+ is ignored. `importable` is false when any exists. |
+| `blockers[]` | Why the pack cannot be imported at all (all-or-nothing): a checksum that does not match, or a model that is not on the allowlist. `importable` is false when any exists. A trifecta combination is **not** a blocker (AGO-194): the agent is imported archived (disabled) and the preview shows `importDisabled` on it. |
 | `summary` | Counts per action, conflicts, capabilities per tier and the number of Tier 3+ capabilities. |
 
-The checksum is checked here: `verifyPackChecksum` answers `missing`, `valid` or `mismatch`; a mismatch is a blocker. A trifecta that is declared but broken once Tier 3+ is ignored is still flagged, and is a blocker only if it remains. With the starter catalog the outbound leg (`message.send_outbound`, `integration.write`) is Tier 3, so a declared trifecta normally does not remain; the blocker matters for a catalog with lower tiers.
+The checksum is checked here: `verifyPackChecksum` answers `missing`, `valid` or `mismatch`; a mismatch is a blocker. A trifecta that is declared but broken once Tier 3+ is ignored is still flagged; if one remains, the new agent is imported disabled (see Import). With the starter catalog the outbound leg (`message.send_outbound`, `integration.write`) is Tier 3, so a declared trifecta normally does not remain; the disabled import matters for a catalog with lower tiers.
 
 **Budget cap.** Read through one helper, `getPackBudgetCapCents()` (today the agent daily maximum, 5000 cents). When the workspace monthly cap lands (AGO-40) only that helper changes.
 
@@ -102,6 +102,29 @@ pnpm pack:import --workspace <uuid> --file <pack.json> [--json]
 ```
 
 A dry run only; `--apply` prints that applying is not available yet. It signs in **as you** exactly like `pack:export` (same four environment variables, same fixed sign-in failure line, no service-role key), checks the file size before reading it, and checks you are an owner of the workspace. Exit codes: 0 importable, 1 blocked or failed, 2 bad usage or missing variables. The readable summary prints `WARNING: declares a trifecta combination (<legs>)` under any agent that declares one (and notes when it is gone once ignored capabilities are dropped), so the warning is not only in `--json`. A rejected file prints its issues as `path: message`, with the same no-echo rule as the API.
+
+## Import (apply, AGO-194)
+
+**What it does.** `POST /api/agent-packs/import?workspace_id=<uuid>&conflict=skip|rename|new_version` with the pack file as the body. It plans exactly like the dry run (same query, same `buildImportPlan` that the preview is built from), then writes the plan with ONE database call, `import_agent_pack`, which is one transaction: every agent, skill, capability grant and the audit event are written together or none are. The answer is the dry run's report plus `eventId`. Run the dry run with the same `conflict` first: it shows what the apply does.
+
+**Who.** An owner of the workspace; an agent credential is refused first (403). The database function checks the owner role, the workspace and that a signed-in person is calling (an agent has none), so the route is not the only guard.
+
+**What lands.**
+
+| Pack says | Import does |
+|---|---|
+| Any autonomy mode | The agent is created in **Strict** (the column default and an insert guard). Strict is the probation: promoting an agent stays an owner action, logged (AGO-99). An existing agent's mode is never touched. |
+| Capabilities of Tier 3 or 4, or not in the catalog | Ignored and reported. The database reads each tier from its own catalog, so a tampered request cannot grant one. A human grants them later through the normal approval flow. Granted capabilities use mode `approval`. |
+| A budget above the cap | The default budget is used and the report says so. |
+| Policies, identities, credentials, secrets | Not part of the format; secret references and departments are reported for you to set up, never applied. |
+| Notes | Not imported (AGO-198). |
+| A trifecta combination that remains | The new agent is created and **archived** (disabled), with the reason `trifecta_combination` in the report and in the event. An owner can unarchive it after review. An existing agent is never archived by an import: it is skipped instead. |
+| A name that already exists | One rule for the whole import: `skip` (default, leave it), `rename` (a copy called `<name> (imported)`, then `(imported 2)`), or `new_version` (update the existing agent's role, model, effort, prompt and budget through the normal version history, and add missing skills and capabilities; never remove). An archived agent is skipped. |
+| A skill with an existing name | Never overwritten: with `new_version` a changed body becomes a new skill version (`skill_versions`), an identical body is skipped; with `rename` it is created under a new name. |
+
+**One event.** `pack_events` gets one `import` row with the content checksum, the counts and per agent action and disabled reason. It holds no prompt, skill text or note. A failed import writes no row.
+
+**Errors.** 200 the report; 400 bad query; 401 signed out; 403 not an owner or an agent credential; 409 the workspace changed between reading and writing (run the dry run again); 413 over 5 MB; 415 not JSON; 422 not a valid pack, or a blocked pack (the report is returned, nothing was written); 500.
 
 ## Data model
 

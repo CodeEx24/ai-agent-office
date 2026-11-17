@@ -132,6 +132,7 @@ describe("previewAgentPackImport", () => {
     const result = await previewAgentPackImport(client, {
       workspaceId: WORKSPACE_A,
       text: packText(),
+      conflictRule: "new_version",
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;

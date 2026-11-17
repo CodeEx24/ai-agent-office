@@ -2,6 +2,7 @@ import {
   AGENT_DAILY_BUDGET_DEFAULT_CENTS,
   AGENT_DAILY_BUDGET_MAX_CENTS,
   AGENT_MODEL_IDS,
+  AGENT_NAME_MAX_LENGTH,
 } from "../agents/agent-limits.js";
 import { lintTrifecta, trifectaMappedKeys, type TrifectaLeg } from "../agents/trifecta-lint.js";
 import { MIN_NEVER_AUTOMATIC_TIER } from "../capabilities/capability-schemas.js";
@@ -218,6 +219,8 @@ export interface PreviewContext {
   allowedModels?: readonly string[];
   /** Defaults to `getPackBudgetCapCents()`. */
   budgetCapCents?: number;
+  /** Defaults to `new_version`, the dry run's original behaviour. The import API and CLI pass `skip` unless told. */
+  conflictRule?: ConflictRule;
 }
 
 export type PreviewAction = "create" | "update" | "skip";
@@ -230,7 +233,21 @@ export type IgnoredReason =
   | "department_not_applied"
   | "notes_not_imported";
 
-export type BlockerCode = "checksum_mismatch" | "model_not_allowed" | "trifecta_combination";
+export type BlockerCode = "checksum_mismatch" | "model_not_allowed";
+
+/** What to do when a pack agent or skill has the name of an existing one (AGO-194). One rule per import. */
+export const CONFLICT_RULES = ["skip", "rename", "new_version"] as const;
+export type ConflictRule = (typeof CONFLICT_RULES)[number];
+/** The rule the import API and the CLI use when none is given. Nothing existing is touched. */
+export const DEFAULT_CONFLICT_RULE: ConflictRule = "skip";
+
+/** Why an agent is imported archived (disabled). A fixed code, never pack text. */
+export type ImportDisabledReason = "trifecta_combination";
+
+export interface ImportDisabled {
+  reason: ImportDisabledReason;
+  legs: TrifectaLeg[];
+}
 
 export interface PreviewCapability {
   name: string;
@@ -247,7 +264,11 @@ export interface PreviewCapability {
 
 export interface PreviewAgent {
   name: string;
+  /** The name the agent gets: `name`, or a renamed copy when the rule is `rename` and the name is taken. */
+  targetName: string;
   action: PreviewAction;
+  /** Set when the agent is imported archived: its capabilities would still hold a trifecta combination. */
+  importDisabled: ImportDisabled | null;
   /** An agent with this name already exists in the workspace. */
   conflict: boolean;
   /** For `update`: which fields differ. Field names only. */
@@ -267,6 +288,8 @@ export interface PreviewAgent {
 
 export interface PreviewSkill {
   name: string;
+  /** The name the skill gets: `name`, or a renamed copy when the rule is `rename` and the name is taken. */
+  targetName: string;
   action: PreviewAction;
   conflict: boolean;
   /** For `update`: the stored version and the pack's. */
@@ -314,12 +337,23 @@ export interface ImportPreview {
     capabilitiesByTier: Record<TierBucket, number>;
     tier3plus: number;
     notes: number;
+    /** Agents imported archived (disabled). */
+    disabled: number;
   };
 }
 
 const INTEGRATION_PREFIX = "integration.";
 const TRIFECTA_KEYS = new Set(trifectaMappedKeys());
 const COMPARED_AGENT_FIELDS = ["role", "model", "thinkingEffort", "prompt"] as const;
+
+/** `<name> (imported)`, then `(imported 2)`, ...: the first name not in `taken`, within the name length limit. */
+export function renamedCopyName(name: string, taken: ReadonlySet<string>): string {
+  for (let n = 1; ; n += 1) {
+    const suffix = n === 1 ? " (imported)" : ` (imported ${String(n)})`;
+    const candidate = `${name.slice(0, AGENT_NAME_MAX_LENGTH - suffix.length).trimEnd()}${suffix}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
 
 function emptyCounts(): Record<PreviewAction, number> {
   return { create: 0, update: 0, skip: 0 };
@@ -329,6 +363,9 @@ interface Collector {
   references: PreviewReference[];
   ignored: PreviewIgnored[];
   blockers: PreviewBlocker[];
+  /** The real (unsanitised) target names, by pack position. For the apply only; never put into a message. */
+  agentTargets: string[];
+  skillTargets: string[];
 }
 
 function previewCapabilities(
@@ -365,7 +402,13 @@ function previewCapabilities(
   });
 }
 
-function previewAgent(agent: PackAgent, context: PreviewContext, collect: Collector): PreviewAgent {
+function previewAgent(
+  agent: PackAgent,
+  context: PreviewContext,
+  collect: Collector,
+  takenAgentNames: Set<string>,
+): PreviewAgent {
+  const rule = context.conflictRule ?? "new_version";
   const catalog = new Map(context.catalog.map((entry) => [entry.key, entry]));
   const allowedModels = context.allowedModels ?? AGENT_MODEL_IDS;
   const budgetCap = context.budgetCapCents ?? getPackBudgetCapCents();
@@ -379,13 +422,6 @@ function previewAgent(agent: PackAgent, context: PreviewContext, collect: Collec
     .filter((_, index) => capabilities[index]?.status === "applied")
     .map((capability) => capability.name);
   const appliedLint = lintTrifecta(appliedKeys);
-  if (!appliedLint.ok) {
-    collect.blockers.push({
-      code: "trifecta_combination",
-      agent: name,
-      message: `Agent "${name}" would hold a blocked capability combination (untrusted content, private data and outbound sending together). Remove one of those capabilities from the pack.`,
-    });
-  }
 
   const modelAllowed = allowedModels.includes(agent.model);
   if (!modelAllowed) {
@@ -429,15 +465,36 @@ function previewAgent(agent: PackAgent, context: PreviewContext, collect: Collec
   const changedFields = existing
     ? COMPARED_AGENT_FIELDS.filter((field) => existing[field] !== agent[field])
     : [];
-  const action: PreviewAction = !existing
-    ? "create"
-    : changedFields.length === 0
-      ? "skip"
-      : "update";
+  // The conflict rule decides what an existing name means. An archived agent cannot be edited, so it is skipped.
+  let action: PreviewAction;
+  let targetName = agent.name;
+  if (!existing) action = "create";
+  else if (rule === "skip") action = "skip";
+  else if (rule === "rename") {
+    action = "create";
+    targetName = renamedCopyName(agent.name, takenAgentNames);
+    takenAgentNames.add(targetName);
+  } else {
+    action = changedFields.length === 0 || existing.archived ? "skip" : "update";
+  }
+  // A trifecta that survives the dropped capabilities: a new agent is imported archived. An existing agent is never
+  // archived by an import, so for it the agent is left as it is (skipped).
+  const importDisabled: ImportDisabled | null = appliedLint.ok
+    ? null
+    : {
+        reason: "trifecta_combination",
+        legs: (Object.keys(appliedLint.legs) as TrifectaLeg[]).filter(
+          (leg) => appliedLint.legs[leg].length > 0,
+        ),
+      };
+  if (importDisabled && action === "update") action = "skip";
+  collect.agentTargets.push(targetName);
 
   return {
     name,
+    targetName: safeText(targetName),
     action,
+    importDisabled,
     conflict: existing !== undefined,
     changedFields: [...changedFields],
     existingIsArchived: existing?.archived ?? false,
@@ -462,16 +519,34 @@ function previewAgent(agent: PackAgent, context: PreviewContext, collect: Collec
   };
 }
 
-function previewSkills(pack: AgentPack, context: PreviewContext): PreviewSkill[] {
+function previewSkills(
+  pack: AgentPack,
+  context: PreviewContext,
+  collect: Collector,
+): PreviewSkill[] {
+  const rule = context.conflictRule ?? "new_version";
+  const taken = new Set([
+    ...context.existingSkills.map((skill) => skill.name),
+    ...pack.skills.map((skill) => skill.name),
+  ]);
   return pack.skills.map((skill) => {
     const existing = context.existingSkills.find((candidate) => candidate.name === skill.name);
-    const action: PreviewAction = !existing
-      ? "create"
-      : existing.body === skill.body
-        ? "skip"
-        : "update";
+    let action: PreviewAction;
+    let targetName = skill.name;
+    if (!existing) action = "create";
+    else if (rule === "skip") action = "skip";
+    else if (rule === "rename") {
+      action = "create";
+      targetName = renamedCopyName(skill.name, taken);
+      taken.add(targetName);
+    } else {
+      // A changed body is always a new version of the existing skill, never an edit in place.
+      action = existing.body === skill.body ? "skip" : "update";
+    }
+    collect.skillTargets.push(targetName);
     return {
       name: safeText(skill.name),
+      targetName: safeText(targetName),
       action,
       conflict: existing !== undefined,
       version:
@@ -492,8 +567,10 @@ function summarise(
     capabilitiesByTier: { "0": 0, "1": 0, "2": 0, "3": 0, "4": 0, unknown: 0 },
     tier3plus: 0,
     notes,
+    disabled: 0,
   };
   for (const agent of agents) {
+    if (agent.importDisabled && agent.action === "create") summary.disabled += 1;
     summary.agents[agent.action] += 1;
     if (agent.conflict) summary.conflicts += 1;
     for (const capability of agent.capabilities) {
@@ -509,9 +586,18 @@ function summarise(
   return summary;
 }
 
-/** What importing a validated pack would do. Pure: the caller supplies the workspace state. */
-export function buildImportPreview(pack: AgentPack, context: PreviewContext): ImportPreview {
-  const collect: Collector = { references: [], ignored: [], blockers: [] };
+/** The preview plus the real target names the apply needs. Pure: the caller supplies the workspace state. */
+export function buildImportOutcome(
+  pack: AgentPack,
+  context: PreviewContext,
+): { preview: ImportPreview; agentTargets: string[]; skillTargets: string[] } {
+  const collect: Collector = {
+    references: [],
+    ignored: [],
+    blockers: [],
+    agentTargets: [],
+    skillTargets: [],
+  };
 
   const checksum = verifyPackChecksum(pack);
   if (checksum === "mismatch") {
@@ -522,8 +608,12 @@ export function buildImportPreview(pack: AgentPack, context: PreviewContext): Im
     });
   }
 
-  const agents = pack.agents.map((agent) => previewAgent(agent, context, collect));
-  const skills = previewSkills(pack, context);
+  const takenAgentNames = new Set([
+    ...context.existingAgents.map((agent) => agent.name),
+    ...pack.agents.map((agent) => agent.name),
+  ]);
+  const agents = pack.agents.map((agent) => previewAgent(agent, context, collect, takenAgentNames));
+  const skills = previewSkills(pack, context, collect);
 
   const notes = pack.notes?.length ?? 0;
   if (notes > 0) {
@@ -531,17 +621,26 @@ export function buildImportPreview(pack: AgentPack, context: PreviewContext): Im
   }
 
   return {
-    importable: collect.blockers.length === 0,
-    packName: safeText(pack.metadata.name),
-    packVersion: pack.packVersion,
-    checksum,
-    agents,
-    skills,
-    references: collect.references,
-    ignored: collect.ignored,
-    blockers: collect.blockers,
-    summary: summarise(agents, skills, notes),
+    preview: {
+      importable: collect.blockers.length === 0,
+      packName: safeText(pack.metadata.name),
+      packVersion: pack.packVersion,
+      checksum,
+      agents,
+      skills,
+      references: collect.references,
+      ignored: collect.ignored,
+      blockers: collect.blockers,
+      summary: summarise(agents, skills, notes),
+    },
+    agentTargets: collect.agentTargets,
+    skillTargets: collect.skillTargets,
   };
+}
+
+/** What importing a validated pack would do. Pure: the caller supplies the workspace state. */
+export function buildImportPreview(pack: AgentPack, context: PreviewContext): ImportPreview {
+  return buildImportOutcome(pack, context).preview;
 }
 
 export type ValidatePackTextResult =

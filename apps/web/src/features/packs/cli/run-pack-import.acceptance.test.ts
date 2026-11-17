@@ -145,7 +145,7 @@ describe("AC1: the CLI preview is a dry run with no apply path", () => {
     expect(calls.every((call) => /\.(select|eq|is|order|range|maybeSingle)$/.test(call))).toBe(
       true,
     );
-    expect(out.join("\n")).toContain("Agents: 0 to create, 1 to update, 0 to skip");
+    expect(out.join("\n")).toContain("Agents: 0 to create, 0 to update, 1 to skip");
     expect(out.join("\n")).toContain("Nothing was written.");
   });
 

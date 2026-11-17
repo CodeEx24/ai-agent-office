@@ -87,7 +87,7 @@ describe("POST /api/agent-packs/import/preview", () => {
     expect(requireWorkspaceRole).toHaveBeenCalledWith(WORKSPACE_ID, "owner");
     expect(previewAgentPackImport).toHaveBeenCalledWith(
       { tag: "client" },
-      { workspaceId: WORKSPACE_ID, text: PACK_TEXT },
+      { workspaceId: WORKSPACE_ID, text: PACK_TEXT, conflictRule: "skip" },
     );
   });
 

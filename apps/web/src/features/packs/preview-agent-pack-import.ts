@@ -1,12 +1,15 @@
 import type { Database } from "@ago/shared";
 import {
+  DEFAULT_CONFLICT_RULE,
   buildImportPreview,
   validatePackText,
   type CatalogCapability,
+  type ConflictRule,
   type ExistingPackAgent,
   type ExistingPackSkill,
   type ImportPreview,
   type PackRejection,
+  type PreviewContext,
 } from "@ago/shared/pack-import-preview";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -55,14 +58,15 @@ async function readAll<Row>(
   throw new PreviewPackImportError();
 }
 
-export async function previewAgentPackImport(
+/**
+ * Reads the workspace state a plan is built from: SELECT only, as the caller, filtered by `workspace_id`. The dry run
+ * and the apply (AGO-194) both call this, so they plan from the same reading.
+ */
+export async function loadPackImportContext(
   client: Client,
-  input: { workspaceId: string; text: string },
-): Promise<PreviewPackImportResult> {
-  const validated = validatePackText(input.text);
-  if (!validated.ok) return validated;
-
-  const { workspaceId } = input;
+  workspaceId: string,
+  conflictRule: ConflictRule,
+): Promise<PreviewContext> {
   const [agentRows, skillRows, catalogRows] = await Promise.all([
     readAll((from, to) =>
       client
@@ -109,8 +113,19 @@ export async function previewAgentPackImport(
     scope: row.scope,
   }));
 
-  return {
-    ok: true,
-    preview: buildImportPreview(validated.pack, { existingAgents, existingSkills, catalog }),
-  };
+  return { existingAgents, existingSkills, catalog, conflictRule };
+}
+
+export async function previewAgentPackImport(
+  client: Client,
+  input: { workspaceId: string; text: string; conflictRule?: ConflictRule },
+): Promise<PreviewPackImportResult> {
+  const validated = validatePackText(input.text);
+  if (!validated.ok) return validated;
+  const context = await loadPackImportContext(
+    client,
+    input.workspaceId,
+    input.conflictRule ?? DEFAULT_CONFLICT_RULE,
+  );
+  return { ok: true, preview: buildImportPreview(validated.pack, context) };
 }
