@@ -66,6 +66,9 @@ Vitest unit tests per module; integration test with an in-process fake tool serv
 - Web route and UI for review and re-pin (human-only route).
 - Notification (Telegram/UI) reading `tool_server_changed` events.
 - AGO-88 wires real MCP clients through this gate.
+- Token replay (security review r1, accepted for this ticket): audience tokens live 5 minutes and are bound to one audience, workspace, run and agent, but not to one tool or input, and there is no `jti` store. No transport exists yet, so nothing crosses a network here. To land with AGO-88: HTTPS-only endpoints, one token per call bound to tool name and an input hash, a `jti` replay cache on the verifying (tool server) side, and a shorter TTL.
+- The follow-up web route must take workspace and user from the verified session and check the owner role before calling `allowlistServer`, `prepareReview` or `reviewAndPin`.
+- Owner question (open): a server that changes and then changes back is unblocked without a review (an alert is raised each time). Should a mismatch keep the server blocked until a human re-pins?
 
 ## Outcome
 Built: gate, registry port (in-memory), canonical hash and diff, human review and pin, audience-bound tokens through the broker, run-event alert, tool-offer wiring. Guide: docs/features/tool-servers.md. Postgres store: follow-up (owner files it at merge).
