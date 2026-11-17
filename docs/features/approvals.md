@@ -347,7 +347,8 @@ Everything is React text; a test scans the feature for `dangerouslySetInnerHTML`
 `ApprovalPayloadSource` that is `{ kind: "unavailable" }` or `{ kind: "stored", args }`. Today the `approvals` table
 stores only `payload_hash`, so every card is `unavailable` and says "the full call details are not stored yet" with the
 hash as a small reference. **AGO-215** (store the payload: a migration plus a worker change) fills the `stored` variant by
-passing `payloads` (a map by approval id) to `buildApprovalCards` in `inbox-data.ts`; the card needs no other change. A
+passing `payloads` (a map by approval id) to `buildApprovalCards` in `inbox-data.ts`. The card itself needs no change, but three hardening items must land with AGO-215 first (see the
+AGO-54 record, Follow-up tasks). A
 stored payload is shown one line per argument, each value cut at 2,000 characters and at most 40 lines, with a "Cut for
 display" line when cut.
 

@@ -36,7 +36,7 @@ export const storedApprovalPayloadSchema = z.record(z.string().min(1).max(200), 
 
 /**
  * Where a card's call details come from. Today nothing stores them, so the only value anything produces is
- * `unavailable`. AGO-215 stores the payload and fills `stored` in `inbox-data.ts`; the card needs no other change.
+ * `unavailable`. AGO-215 stores the payload and fills `stored` in `inbox-data.ts`; the hardening listed in docs/tickets/AGO-54.md must land with it.
  */
 export type ApprovalPayloadSource =
   | { readonly kind: "unavailable" }

@@ -57,7 +57,11 @@ The full call payload is not shown until AGO-215 stores it; the consequence summ
 Unit: `summarizeConsequence` (known tool, unknown tool, tier labels, args present, hostile strings stay inert), card order and bounded payload region, no agent prose path, no `dangerouslySetInnerHTML`. Existing AGO-37 acceptance tests keep passing. Device walk: a card with a very long tool name and reference; consequence and buttons stay in view.
 
 ## Follow-up tasks
-AGO-215 (store the payload; fills `ApprovalPayloadSource`), Edit and Ask backends.
+AGO-215 (store the payload; fills `ApprovalPayloadSource`), Edit and Ask backends. AGO-215 must also close three latent defects found by the AGO-54 security review, dormant until a stored payload exists:
+1. Argument keys are agent-chosen text and enter the consequence block (`summarizeConsequence` names them): bound or drop them from the summary.
+2. A `__proto__` argument key is silently dropped from the call details while the summary still names it: handle own keys explicitly.
+3. A very deeply nested stored payload makes `safeParse` throw and takes down the whole inbox: cap depth and treat a throw as unavailable.
+Also source stored args from the hash-bound payload row, and keep the 'runs exactly the call, once' sentence in sync.
 
 ## Outcome
 (filled at merge)
