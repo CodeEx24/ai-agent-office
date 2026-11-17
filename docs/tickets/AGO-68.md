@@ -73,4 +73,4 @@ Vitest unit tests per module; integration test with an in-process fake tool serv
 - Resolved as D11: a mismatch stays blocked until a human re-pins, even if the server changes back.
 
 ## Outcome
-Built: gate, registry port (in-memory), canonical hash and diff, human review and pin, audience-bound tokens through the broker, run-event alert, tool-offer wiring. Guide: docs/features/tool-servers.md. Postgres store: follow-up (owner files it at merge).
+Built: gate, registry port (in-memory), canonical hash and diff, human review and pin, audience-bound tokens through the broker, run-event alert, tool-offer wiring, sticky block with atomic alert claim (D11). Guide: [docs/features/tool-servers.md](../features/tool-servers.md). Postgres store: follow-up (owner files it at merge).

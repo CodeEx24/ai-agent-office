@@ -25,7 +25,9 @@ A hash mismatch raises an `error.raised` run event with code `tool_server_change
 
 ## A change stays blocked (D11)
 
-The first mismatch records a block for that workspace and server (observed hash, time). While it is set the server is blocked even if its tools hash to the pin again, so a server cannot flip a bad description on, act, and flip it back. Only a person's `reviewAndPin` clears it (pinning the original or the new snapshot). The gate can set the block but never clear it. The alert is claimed atomically, so parallel checks raise one alert per distinct hash and every caller is still denied.
+The first mismatch records a block for that workspace and server (observed hash, time). While it is set the server is blocked even if its tools hash to the pin again, so a server cannot flip a bad description on, act, and flip it back. Only a person's `reviewAndPin` clears it (pinning the original or the new snapshot). The gate can set the block but never clear it. The alert is claimed atomically: the gate calls `claimAlert(workspace, server, hash, at)` on the registry's block recorder, which sets the block and the alerted hash in one step and returns true only for the first caller per hash. Parallel checks therefore raise one alert per distinct hash, and every caller is still denied whether or not it won the claim. If the alert sink fails, the gate calls `releaseAlert` so the next check tries again. Only the last 50 alerted hashes per server are kept (`MAX_ALERTED_HASHES`); forgetting an old one can repeat an alert but never unblocks.
+
+When the live list matches the pin, the gate reads the registry entry again after the (server-controlled, possibly slow) listing and allows only if the pin is unchanged and no block is set. This stops a slow listing from carrying a stale "not blocked" past a block that another check recorded meanwhile.
 
 ## Human only
 
@@ -33,7 +35,9 @@ Allowlisting, reviewing and pinning check the actor (`kind: "human"`, a user id,
 
 ## Not yet built (follow-ups)
 
-- Postgres `tool_servers` and pins tables with RLS (needs the schema slot). Until then the registry is in memory and starts empty after a restart.
+- Postgres `tool_servers` and pins tables with RLS (needs the schema slot). Until then the registry is in memory and starts empty after a restart. The block must live in the same row as the pin, and `claimAlert` must be one conditional statement (`INSERT ... ON CONFLICT DO NOTHING RETURNING` on a unique workspace, server, hash row), never a read followed by a write.
+- Token replay hardening with AGO-88: HTTPS-only endpoints, one token per call bound to tool name and input hash, a `jti` replay cache on the tool server side, shorter TTL (tokens last 5 minutes today).
+- The review route must take workspace and user from the verified session and check the owner role.
 - The web route and UI for review and re-pin (a human-only route).
 - Notifications (Telegram, UI badge) that read the `tool_server_changed` events.
 - AGO-88 connects real MCP clients behind `ToolServerClient` and `ToolServerTransport`.
