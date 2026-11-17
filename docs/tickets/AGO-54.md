@@ -64,4 +64,5 @@ AGO-215 (store the payload; fills `ApprovalPayloadSource`), Edit and Ask backend
 Also source stored args from the hash-bound payload row, and keep the 'runs exactly the call, once' sentence in sync.
 
 ## Outcome
-(filled at merge)
+Feature guide: [docs/features/approvals.md](../features/approvals.md), section "Consequence-first card (AGO-54)".
+(rest filled at merge)

@@ -1,5 +1,5 @@
 # Approval requests
-Tickets: AGO-21 (created) · AGO-37 (approvals inbox and card UI) · AGO-47 (payload-hash binding, single use, expiry limit) · AGO-51 (timeout means deny, guarded by a static check) · AGO-58 (human-only decide route, agent tokens refused with an event, Reviewer verdict is advisory)
+Tickets: AGO-21 (created) · AGO-37 (approvals inbox and card UI) · AGO-47 (payload-hash binding, single use, expiry limit) · AGO-51 (timeout means deny, guarded by a static check) · AGO-58 (human-only decide route, agent tokens refused with an event, Reviewer verdict is advisory) · AGO-54 (consequence-first card, bounded call details)
 
 ## What it does
 When the policy engine says a tool call `needs_approval` (tier 3 and 4, or any call a policy escalates), the worker
@@ -329,33 +329,43 @@ them means editing `scripts/`, which keeps this PR on the agent-merge path, so t
 ## Consequence-first card (AGO-54)
 Ticket: AGO-54 · builds on AGO-37 (card) and AGO-47 (hash binding) · the full call payload waits for AGO-215.
 
-**What changed.** The card (`ApprovalCard`, still the one card) now reads top to bottom: header (agent, waiting, time
-left) → **consequence summary** → the decision (the "you can't see the call" note, then Approve / Reject / Edit / Ask) →
-**call details** (a bounded region) → why it stopped, tool, cost → recent steps. A long payload therefore cannot push
-the consequence or the buttons out of view: the call details sit below them and scroll inside the card
+**What it shows.** The card (`ApprovalCard`, still the one card) reads top to bottom: header (agent, waiting, time
+left) → **consequence summary** → the decision (the "you can't see the call" note when it applies, then Approve /
+Reject / Edit / Ask) → **call details** (a bounded region) → why it stopped, tool, cost → recent steps. A long payload
+cannot push the consequence or the buttons out of view: the call details sit below them and scroll inside the card
 (`max-h-48 overflow-auto`, focusable so a keyboard user can scroll it).
 
 **Where the words come from.** `summarizeConsequence(tool, tier, payload)` (`consequence-summary.ts`) is pure and
 deterministic. It is called on the server inside `buildApprovalCards`, from the stored tool name, the stored tier and,
 when it exists, the stored structured arguments. It never reads agent prose (names, messages, step labels), so an agent
 cannot word its own consequence. A known tool (a small table: `email.send`, `vault.write`, `file.delete`, ...) gets
-"Approving lets the agent <effect>."; an unknown tool gets a generic sentence that names the tool and promises nothing.
-Stored arguments are named by field, never echoed in the headline. The client inbox only renders the finished text.
-Everything is React text; a test scans the feature for `dangerouslySetInnerHTML` and `innerHTML`.
+"Approving lets the agent <effect>."; an unknown tool gets a generic sentence that **quotes** the tool name and
+promises nothing about its effect. Stored arguments are named by field, never echoed in the headline. The client inbox
+only renders the finished text. Everything is React text; a test scans the feature for `dangerouslySetInnerHTML` and
+`innerHTML`.
 
 **The payload source.** `ApprovalCardData.payload` is a typed `ApprovalPayloadView`, built from an
 `ApprovalPayloadSource` that is `{ kind: "unavailable" }` or `{ kind: "stored", args }`. Today the `approvals` table
 stores only `payload_hash`, so every card is `unavailable` and says "the full call details are not stored yet" with the
 hash as a small reference. **AGO-215** (store the payload: a migration plus a worker change) fills the `stored` variant by
-passing `payloads` (a map by approval id) to `buildApprovalCards` in `inbox-data.ts`. The card itself needs no change, but three hardening items must land with AGO-215 first (see the
-AGO-54 record, Follow-up tasks). A
-stored payload is shown one line per argument, each value cut at 2,000 characters and at most 40 lines, with a "Cut for
-display" line when cut.
+passing `payloads` (a map by approval id) to `buildApprovalCards` in `inbox-data.ts`; three hardening items must land
+with it first (AGO-54 record, Follow-up tasks).
+
+**The "you can't see this call" note.** It appears next to Approve only when the card can be decided and the payload
+is `unavailable`. When a stored payload is on screen the note is hidden, because it would be untrue. A source that
+fails the schema counts as unavailable, so the note shows again.
+
+**Cutting long values.** A stored payload is shown one line per argument, at most 40 lines, each value cut at 2,000
+characters (`cutWithoutSplittingPair` drops a lone first half of an emoji, so a cut never leaves a broken character),
+with a "Cut for display" line, placed after the list, when anything was cut.
 
 | function / component | file | role |
 |---|---|---|
 | `summarizeConsequence`, `buildPayloadView` | `apps/web/src/features/approvals/consequence-summary.ts` | pure: the consequence and the bounded payload view from stored structured fields |
 | `storedApprovalPayloadSchema` | same | Zod shape AGO-215's stored payload must match; a source that does not match is treated as unavailable |
+| `buildApprovalCards` | `apps/web/src/features/approvals/approval-card.ts` | adds `consequence` and `payload` to each card; optional `payloads` input |
 
 Tests: `consequence-card.test.tsx` (summary, payload view, server-side build, card order, bounded region, inert text,
-no HTML insertion).
+no HTML insertion), `consequence-card.acceptance.test.tsx` (AC1 to AC3), `consequence-card.round2.acceptance.test.tsx`
+(note only when unavailable, emoji-safe cut, quoted tool name, valid markup), and the e2e flow
+`apps/web/e2e/ago-54-consequence-first-live.spec.ts`.
