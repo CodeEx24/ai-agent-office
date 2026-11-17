@@ -9,9 +9,11 @@
 --   itself: it needs a signed-in person (auth.uid() is null for an agent token or the service role), the owner role
 --   in the named workspace, and it only ever touches rows of that workspace. One call is one transaction: any error
 --   leaves no agent, skill, grant or event behind.
--- * It never sets a mode (every new agent gets the column default, strict: that is the probation), reads capability
---   tiers from the workspace catalog (never from the plan), grants only approval mode and refuses Tier 3 or higher.
---   An agent flagged disabled_reason is created and archived in the same transaction.
+-- * An imported agent always lands in Strict mode (the probation). A new agent gets the column default, strict; an
+--   existing agent updated by new_version is reset to strict in the same transaction when it was standard or relaxed
+--   (the agent_mode_changes trigger records the change, and the event detail names the mode it left). The function
+--   reads capability tiers from the workspace catalog (never from the plan), grants only approval mode and refuses
+--   Tier 3 or higher. An agent flagged disabled_reason is created and archived in the same transaction.
 -- * A plan that no longer matches the workspace (a name now exists, or an agent to update is gone or archived) is a
 --   stale plan: SQLSTATE 40001, nothing written.
 
@@ -19,30 +21,31 @@ alter table public.pack_events add column detail jsonb;
 alter table public.pack_events add constraint pack_events_detail_object
   check (detail is null or jsonb_typeof(detail) = 'object');
 
--- The old checks are looked up by definition, not by a guessed name.
-do $$
-declare
-  v_name text;
-begin
-  for v_name in
-    select c.conname
-      from pg_constraint c
-     where c.conrelid = 'public.pack_events'::regclass
-       and c.contype = 'c'
-       and (pg_get_constraintdef(c.oid) like '%kind%'
-            or pg_get_constraintdef(c.oid) like '%cardinality(agent_ids)%')
-       and c.conname <> 'pack_events_detail_object'
-  loop
-    execute format('alter table public.pack_events drop constraint %I', v_name);
-  end loop;
-end;
-$$;
+-- Exactly two checks change, dropped by their (Postgres-generated, stable) names. Nothing else is matched: the AGO-192
+-- table check cardinality(agent_names) = cardinality(agent_ids) stays as it is.
+alter table public.pack_events drop constraint pack_events_kind_check;
+alter table public.pack_events drop constraint pack_events_agent_ids_check;
 
 alter table public.pack_events add constraint pack_events_kind_check check (kind in ('export', 'import'));
 alter table public.pack_events add constraint pack_events_agent_ids_check check (
   (kind = 'export' and cardinality(agent_ids) between 1 and 100)
   or (kind = 'import' and cardinality(agent_ids) between 0 and 100)
 );
+
+-- An earlier draft of this migration also dropped the AGO-192 names/ids check. A database that applied that draft gets
+-- it back here; a database that never lost it is left alone.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint c
+     where c.conrelid = 'public.pack_events'::regclass and c.contype = 'c'
+       and pg_get_constraintdef(c.oid) like '%cardinality(agent_names)%'
+  ) then
+    alter table public.pack_events
+      add constraint pack_events_check check (cardinality(agent_names) = cardinality(agent_ids));
+  end if;
+end;
+$$;
 
 comment on column public.pack_events.detail is 'Import only (AGO-194): the conflict rule, counts and the per-agent outcome. Never pack text or secrets.';
 
@@ -80,6 +83,9 @@ declare
   v_reason text;
   v_held text[];
   v_clean_name text;
+  v_mode text;
+  v_mode_reset text;
+  v_modes_reset integer := 0;
 begin
   -- Human only: a real person's session, never a token that carries an agent claim.
   if v_user is null
@@ -132,18 +138,31 @@ begin
   for v_agent in select * from jsonb_array_elements(p_plan -> 'agents') loop
     v_name := v_agent ->> 'name';
     v_action := case when jsonb_typeof(v_agent -> 'action') = 'string' then v_agent ->> 'action' else null end;
-    -- The budget must be a JSON integer number before any cast (text, fractions and exponents are refused).
+    -- Every field has its JSON type checked before it is used, so a wrong type is 22023 here and never a not-null or
+    -- check violation (23502, 23514) half way through. The budget must be a JSON number printed as a whole number
+    -- before any cast: text and fractions (12.5, 100.0) are refused. jsonb normalises an exponent form such as 1e2 to
+    -- the number 100 when it parses the plan, so that arrives as the integer 100 and is accepted as such.
     if jsonb_typeof(v_agent) is distinct from 'object'
        or v_name is null or char_length(v_name) not between 1 and 120
        or v_action is null or v_action not in ('create', 'update')
+       or jsonb_typeof(v_agent -> 'role') is distinct from 'string'
+       or jsonb_typeof(v_agent -> 'model') is distinct from 'string'
+       or jsonb_typeof(v_agent -> 'thinking_effort') is distinct from 'string'
+       or jsonb_typeof(v_agent -> 'prompt') is distinct from 'string'
        or jsonb_typeof(v_agent -> 'capabilities') is distinct from 'array'
        or jsonb_typeof(v_agent -> 'skills') is distinct from 'array'
        or jsonb_typeof(v_agent -> 'daily_budget_cents') is distinct from 'number'
-       or (v_agent -> 'daily_budget_cents')::text !~ '^[0-9]{1,4}$' then
+       or (v_agent -> 'daily_budget_cents')::text !~ '^[0-9]{1,4}$'
+       or (v_agent -> 'disabled_reason') is not null
+          and jsonb_typeof(v_agent -> 'disabled_reason') <> 'null'
+          and (v_agent -> 'disabled_reason') <> '"trifecta_combination"'::jsonb then
       raise exception 'import_agent_pack: invalid agent entry' using errcode = '22023';
     end if;
-    -- Only reached for a plain 1..4 digit integer, so the cast cannot fail.
-    if ((v_agent -> 'daily_budget_cents')::text)::integer not between 1 and 5000 then
+    -- Only reached for the shapes checked above: sizes (the pack schema's limits), string elements, the budget range.
+    if jsonb_array_length(v_agent -> 'capabilities') > 50 or jsonb_array_length(v_agent -> 'skills') > 50
+       or exists (select 1 from jsonb_array_elements(v_agent -> 'capabilities') e where jsonb_typeof(e) <> 'string')
+       or exists (select 1 from jsonb_array_elements(v_agent -> 'skills') e where jsonb_typeof(e) <> 'string')
+       or ((v_agent -> 'daily_budget_cents')::text)::integer not between 1 and 5000 then
       raise exception 'import_agent_pack: invalid agent entry' using errcode = '22023';
     end if;
   end loop;
@@ -173,6 +192,7 @@ begin
     v_action := v_agent ->> 'action';
     v_budget := ((v_agent -> 'daily_budget_cents')::text)::integer; -- validated in the first pass
 
+    v_mode_reset := null;
     if v_action = 'create' then
       if exists (select 1 from public.agents a where a.workspace_id = p_workspace_id and a.name = v_name) then
         raise exception 'import_agent_pack: an agent now exists' using errcode = '40001';
@@ -184,16 +204,24 @@ begin
       returning id into v_agent_id;
     elsif v_action = 'update' then
       v_agent_id := null;
-      select a.id, a.archived_at into v_agent_id, v_existing_archived
+      v_mode := null;
+      select a.id, a.archived_at, a.mode into v_agent_id, v_existing_archived, v_mode
         from public.agents a where a.workspace_id = p_workspace_id and a.name = v_name for update;
       if v_agent_id is null or v_existing_archived is not null then
         raise exception 'import_agent_pack: an agent to update is gone or archived' using errcode = '40001';
       end if;
-      -- The mode, status and archive state are never part of an update.
+      -- Status and archive state are not part of an update. The mode is: the prompt is replaced, so the agent goes
+      -- back to Strict (probation) in the same transaction. The signed-in owner is still auth.uid() here, so the
+      -- mode-change trigger accepts and logs it in agent_mode_changes.
       update public.agents
          set role = v_agent ->> 'role', model = v_agent ->> 'model', thinking_effort = v_agent ->> 'thinking_effort',
              prompt = v_agent ->> 'prompt', daily_budget_cents = v_budget
        where workspace_id = p_workspace_id and id = v_agent_id;
+      if v_mode is distinct from 'strict' then
+        update public.agents set mode = 'strict' where workspace_id = p_workspace_id and id = v_agent_id;
+        v_mode_reset := v_mode;
+        v_modes_reset := v_modes_reset + 1;
+      end if;
     else
       raise exception 'import_agent_pack: invalid agent entry' using errcode = '22023';
     end if;
@@ -245,20 +273,25 @@ begin
 
     -- Names in the event are stripped of control, zero-width and direction-override characters, so the event row
     -- and anything that prints it cannot reorder or hide text. The agent row keeps the name as given.
+    -- The class is the shared set in packages/shared/src/packs/agent-pack-import-preview.ts (PACK_INVISIBLE_RANGES):
+    -- C0 and C1 controls, soft hyphen, combining grapheme joiner, Arabic letter mark, Mongolian vowel separator,
+    -- zero-width and direction marks, line and paragraph separators, bidi embeddings, word joiner and invisible
+    -- operators, bidi isolates, the byte order mark and the tag characters. Written with escapes, never raw bytes.
     v_clean_name := left(
       regexp_replace(v_agent ->> 'name',
-        '[\u0001-\u001F\u007F-\u009F​-‏ -‮⁠-⁩﻿]', '', 'g'),
+        '[\u0001-\u001F\u007F-\u009F\u00AD\u034F\u061C\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\U000E0000-\U000E007F]',
+        '', 'g'),
       120);
     if v_clean_name = '' then
       v_clean_name := '?';
     end if;
     v_agent_ids := v_agent_ids || v_agent_id;
     v_agent_names := v_agent_names || v_clean_name;
-    v_outcomes := v_outcomes || jsonb_build_array(jsonb_build_object(
-      'name', v_clean_name,
-      'action', v_action,
-      'disabled_reason', v_reason
-    ));
+    -- mode_reset_from is present only when the agent was reset (absent, not null, otherwise).
+    v_outcomes := v_outcomes || jsonb_build_array(
+      jsonb_build_object('name', v_clean_name, 'action', v_action, 'disabled_reason', v_reason)
+      || case when v_mode_reset is null then '{}'::jsonb else jsonb_build_object('mode_reset_from', v_mode_reset) end
+    );
   end loop;
 
   insert into public.pack_events (
@@ -270,6 +303,7 @@ begin
       'agents_written', cardinality(v_agent_ids),
       'skills_written', v_skills_written,
       'disabled', v_disabled,
+      'modes_reset', v_modes_reset,
       'agents', v_outcomes
     )
   ) returning id into v_event_id;

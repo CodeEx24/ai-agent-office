@@ -1,6 +1,6 @@
 import type { Database } from "@ago/shared";
 import { computePackChecksum } from "@ago/shared/pack-export";
-import { buildImportPlan, type ImportPlan } from "@ago/shared/pack-import-plan";
+import { buildImportPlan } from "@ago/shared/pack-import-plan";
 import {
   DEFAULT_CONFLICT_RULE,
   validatePackText,
@@ -20,8 +20,8 @@ import { loadPackImportContext } from "./preview-agent-pack-import";
  * plan that is applied. The only write is `rpc("import_agent_pack")`, one database transaction: every agent, skill,
  * capability grant and the audit event are written together or not at all. The function checks the owner role and the
  * workspace itself and refuses an agent principal (it has no signed-in person), so the route guard is not the only
- * line. It reads tiers from its own capability catalog and never sets a mode, so a tampered plan cannot give an
- * agent more than the pack path allows. A blocked pack (a checksum mismatch, a model off the allowlist) never
+ * line. It reads tiers from its own capability catalog and decides the mode itself (Strict for every imported agent,
+ * an updated one included), so a tampered plan cannot give an agent more than the pack path allows. A blocked pack (a checksum mismatch, a model off the allowlist) never
  * reaches the database. This file has no `server-only` import because the CLI runs it too (AGO-195); the route does
  * the role check. No service-role key anywhere.
  */
@@ -53,19 +53,6 @@ export type ApplyPackImportResult =
   | { ok: false; error: PackRejection };
 
 type Client = SupabaseClient<Database>;
-
-interface ImportRpcResult {
-  data: unknown;
-  error: { code?: string } | null;
-}
-
-/** The generated database types do not list this function until they are regenerated, so the call is typed here. */
-interface ImportRpcClient {
-  rpc(
-    name: "import_agent_pack",
-    args: { p_workspace_id: string; p_checksum: string; p_plan: ImportPlan },
-  ): PromiseLike<ImportRpcResult>;
-}
 
 const INSUFFICIENT_PRIVILEGE = "42501";
 const UNIQUE_VIOLATION = "23505";
@@ -113,7 +100,7 @@ export async function applyAgentPackImport(
   const { preview, plan } = buildImportPlan(validated.pack, context);
   if (!preview.importable) return { ok: false, blocked: preview };
 
-  const { data, error } = await (client as unknown as ImportRpcClient).rpc("import_agent_pack", {
+  const { data, error } = await client.rpc("import_agent_pack", {
     p_workspace_id: input.workspaceId,
     // The checksum of the content, whether or not the pack carried one: the event always records what was imported.
     p_checksum: computePackChecksum(validated.pack),

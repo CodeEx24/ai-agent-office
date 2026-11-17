@@ -71,7 +71,7 @@ export async function loadPackImportContext(
     readAll((from, to) =>
       client
         .from("agents")
-        .select("id, name, role, model, thinking_effort, prompt, archived_at")
+        .select("id, name, role, model, thinking_effort, prompt, mode, archived_at")
         .eq("workspace_id", workspaceId)
         .order("name", { ascending: true })
         .range(from, to),
@@ -99,6 +99,8 @@ export async function loadPackImportContext(
         .select("agent_id, capability")
         .eq("workspace_id", workspaceId)
         .order("agent_id", { ascending: true })
+        // A tiebreaker: without it two grants of one agent can swap places between pages and be read twice or missed.
+        .order("capability", { ascending: true })
         .range(from, to),
     ),
   ]);
@@ -116,6 +118,7 @@ export async function loadPackImportContext(
     model: row.model,
     thinkingEffort: row.thinking_effort,
     prompt: row.prompt,
+    mode: row.mode,
     archived: row.archived_at !== null,
   }));
   const existingSkills: ExistingPackSkill[] = skillRows.map((row) => ({

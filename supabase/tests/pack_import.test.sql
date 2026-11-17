@@ -12,7 +12,7 @@
 -- Run: pnpm exec supabase test db (inside the db lock).
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(51);
+select plan(72);
 
 insert into auth.users (id, instance_id, aud, role, email) values
   ('19400000-0000-4000-8000-00000000000a', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'ago194-o@example.test'),
@@ -220,8 +220,103 @@ select lives_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-00000
 select is((select (agent_names::text || detail::text) ~ (chr(8238) || '|' || chr(8203)) from public.pack_events where checksum = repeat('2', 64)),
   false, 'the event row holds neither the direction override nor the zero-width space');
 
--- 7. Isolation: the other workspace was never touched.
+-- 6c. Round 3: an update resets a non-Strict agent to Strict (logged), the first pass checks every field's type and
+-- size with 22023, disabled_reason takes one value, and event names lose the whole shared invisible set.
+select lives_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('3', 64), $json$
+  {"rule":"skip","skills":[],"agents":[
+   {"name":"Modal","action":"create","role":"r","model":"claude-haiku-5-5","thinking_effort":"medium","prompt":"old",
+    "daily_budget_cents":100,"capabilities":[],"skills":[],"disabled_reason":null}]}
+  $json$::jsonb)$$, 'an agent to be promoted is imported');
+select lives_ok($$select public.set_agent_mode('194aaaaa-0000-4000-8000-000000000001',
+  (select id from public.agents where name = 'Modal' and workspace_id = '194aaaaa-0000-4000-8000-000000000001'), 'relaxed')$$,
+  'the owner promotes the agent to relaxed');
+select lives_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('4', 64), $json$
+  {"rule":"new_version","skills":[],"agents":[
+   {"name":"Modal","action":"update","role":"r","model":"claude-haiku-5-5","thinking_effort":"medium","prompt":"replaced",
+    "daily_budget_cents":100,"capabilities":[],"skills":[],"disabled_reason":null}]}
+  $json$::jsonb)$$, 'a new_version import replaces the prompt of a relaxed agent');
+select is((select mode from public.agents where name = 'Modal' and workspace_id = '194aaaaa-0000-4000-8000-000000000001'),
+  'strict', 'the updated agent is back in strict mode');
+select is((select count(*)::int from public.agent_mode_changes m join public.agents a on a.id = m.agent_id
+            where a.name = 'Modal' and a.workspace_id = '194aaaaa-0000-4000-8000-000000000001'
+              and m.from_mode = 'relaxed' and m.to_mode = 'strict'),
+  1, 'the reset to strict is in the append-only mode log');
+select is((select detail -> 'agents' -> 0 ->> 'mode_reset_from' from public.pack_events where checksum = repeat('4', 64)),
+  'relaxed', 'the event detail records the mode the agent left');
+select lives_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('5', 64), $json$
+  {"rule":"new_version","skills":[],"agents":[
+   {"name":"Modal","action":"update","role":"r","model":"claude-haiku-5-5","thinking_effort":"medium","prompt":"again",
+    "daily_budget_cents":100,"capabilities":[],"skills":[],"disabled_reason":null}]}
+  $json$::jsonb)$$, 'a second update of the now strict agent');
+select is((select detail -> 'agents' -> 0 ->> 'mode_reset_from' from public.pack_events where checksum = repeat('5', 64)),
+  null, 'a strict agent records no mode reset');
+select is((select count(*)::int from public.agent_mode_changes m join public.agents a on a.id = m.agent_id
+            where a.name = 'Modal' and a.workspace_id = '194aaaaa-0000-4000-8000-000000000001'),
+  2, 'a strict agent adds no mode log row (only the promotion and the reset exist)');
+
+select throws_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('6', 64), $json$
+  {"rule":"skip","skills":[],"agents":[
+   {"name":"T1","action":"create","role":7,"model":"claude-haiku-5-5","thinking_effort":"medium","prompt":"p",
+    "daily_budget_cents":100,"capabilities":[],"skills":[]}]}
+  $json$::jsonb)$$, '22023', null, 'a role that is not a string is 22023');
+select throws_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('6', 64), $json$
+  {"rule":"skip","skills":[],"agents":[
+   {"name":"T2","action":"create","role":"r","thinking_effort":"medium","prompt":"p",
+    "daily_budget_cents":100,"capabilities":[],"skills":[]}]}
+  $json$::jsonb)$$, '22023', null, 'a missing model is 22023, not a not-null violation');
+select throws_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('6', 64), $json$
+  {"rule":"skip","skills":[],"agents":[
+   {"name":"T3","action":"create","role":"r","model":"claude-haiku-5-5","thinking_effort":"medium","prompt":null,
+    "daily_budget_cents":100,"capabilities":[],"skills":[]}]}
+  $json$::jsonb)$$, '22023', null, 'a null prompt is 22023');
+select throws_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('6', 64), $json$
+  {"rule":"skip","skills":[],"agents":[
+   {"name":"T4","action":"create","role":"r","model":"claude-haiku-5-5","thinking_effort":3,"prompt":"p",
+    "daily_budget_cents":100,"capabilities":[],"skills":[]}]}
+  $json$::jsonb)$$, '22023', null, 'a thinking effort that is not a string is 22023');
+select throws_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('6', 64),
+  jsonb_build_object('rule', 'skip', 'skills', '[]'::jsonb, 'agents', jsonb_build_array(jsonb_build_object(
+    'name', 'T5', 'action', 'create', 'role', 'r', 'model', 'claude-haiku-5-5', 'thinking_effort', 'medium',
+    'prompt', 'p', 'daily_budget_cents', 100, 'skills', '[]'::jsonb,
+    'capabilities', (select jsonb_agg('vault.read'::text) from generate_series(1, 51))))))$$,
+  '22023', null, 'more than 50 capabilities is 22023');
+select throws_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('6', 64), $json$
+  {"rule":"skip","skills":[],"agents":[
+   {"name":"T6","action":"create","role":"r","model":"claude-haiku-5-5","thinking_effort":"medium","prompt":"p",
+    "daily_budget_cents":100,"capabilities":[],"skills":[5]}]}
+  $json$::jsonb)$$, '22023', null, 'a skill list with a non-string element is 22023');
+select throws_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('6', 64), $json$
+  {"rule":"skip","skills":[],"agents":[
+   {"name":"T7","action":"create","role":"r","model":"claude-haiku-5-5","thinking_effort":"medium","prompt":"p",
+    "daily_budget_cents":100,"capabilities":[],"skills":[],"disabled_reason":"because"}]}
+  $json$::jsonb)$$, '22023', null, 'a disabled_reason other than trifecta_combination is 22023');
+select throws_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('6', 64), $json$
+  {"rule":"skip","skills":[],"agents":[
+   {"name":"T8","action":"create","role":"r","model":"claude-haiku-5-5","thinking_effort":"medium","prompt":"p",
+    "daily_budget_cents":100,"capabilities":[],"skills":[],"disabled_reason":5}]}
+  $json$::jsonb)$$, '22023', null, 'a disabled_reason that is not a string is 22023');
+
+select lives_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('7', 64),
+  jsonb_build_object('rule', 'skip', 'skills', '[]'::jsonb, 'agents', jsonb_build_array(jsonb_build_object(
+    'name', 'A' || chr(1564) || chr(173) || chr(847) || chr(6158) || chr(8294) || chr(917504) || chr(917631) || 'B',
+    'action', 'create', 'role', 'r', 'model', 'claude-haiku-5-5', 'thinking_effort', 'medium', 'prompt', 'p',
+    'daily_budget_cents', 100, 'capabilities', '[]'::jsonb, 'skills', '[]'::jsonb, 'disabled_reason', null))))$$,
+  'an agent name full of invisible characters is imported');
+select is((select agent_names from public.pack_events where checksum = repeat('7', 64)), array['AB'],
+  'the event name lost the Arabic letter mark, soft hyphen, joiner, Mongolian separator, isolate and tag characters');
+
+-- The AGO-192 names/ids check survives this migration (checked again after the rollback by the rollback test).
 reset role;
+select is((select count(*)::int from pg_constraint
+            where conrelid = 'public.pack_events'::regclass and contype = 'c'
+              and pg_get_constraintdef(oid) like '%cardinality(agent_names)%'),
+  1, 'the AGO-192 check on agent_names and agent_ids still exists');
+select throws_ok($$insert into public.pack_events (workspace_id, kind, exported_by, agent_ids, agent_names, skill_count, checksum)
+  values ('194aaaaa-0000-4000-8000-000000000001', 'import', '19400000-0000-4000-8000-0000000001a1', '{}', array['x'], 0, repeat('9', 64))$$,
+  '23514', 'new row for relation "pack_events" violates check constraint "pack_events_check"',
+  'an event with a different number of names and ids is refused by the AGO-192 check');
+
+-- 7. Isolation: the other workspace was never touched.
 select is((select body || ':' || version from public.skills where id = '19400000-0000-4000-8000-0000000003b1'),
   'B body:1', 'the other workspace''s skill is untouched');
 select is((select role from public.agents where id = '19400000-0000-4000-8000-0000000002b1'),

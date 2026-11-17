@@ -11,6 +11,10 @@ $$;
 
 drop function if exists public.import_agent_pack(uuid, text, jsonb);
 
+-- Restores exactly what the up migration changed, by name: the detail column and its check, and the two checks it
+-- widened (kind, agent_ids), back to the AGO-192 definitions. The AGO-192 check pack_events_check
+-- (cardinality(agent_names) = cardinality(agent_ids)) is neither dropped here nor re-added: up never removes it
+-- (it only restores it where an earlier draft of this migration had dropped it), so the rollback leaves it in place.
 alter table public.pack_events drop constraint if exists pack_events_agent_ids_check;
 alter table public.pack_events drop constraint if exists pack_events_kind_check;
 alter table public.pack_events drop constraint if exists pack_events_detail_object;

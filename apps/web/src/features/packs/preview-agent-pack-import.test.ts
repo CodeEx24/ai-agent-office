@@ -7,7 +7,7 @@ const WORKSPACE_B = "19300000-0000-4000-8000-0000000000b1";
 
 /** The only tables a preview may read, and the only columns of each. */
 const ALLOWED_READS: Record<string, string> = {
-  agents: "id, name, role, model, thinking_effort, prompt, archived_at",
+  agents: "id, name, role, model, thinking_effort, prompt, mode, archived_at",
   skills: "name, version, body",
   capabilities: "key, tier, scope",
   agent_capabilities: "agent_id, capability",
@@ -16,7 +16,7 @@ const ALLOWED_READS: Record<string, string> = {
 type Row = Record<string, unknown>;
 
 interface Recorder {
-  reads: { table: string; columns: string; filters: [string, unknown][] }[];
+  reads: { table: string; columns: string; filters: [string, unknown][]; orders: string[] }[];
   /** Anything that is not a select: must stay empty. */
   writes: string[];
 }
@@ -31,6 +31,7 @@ function fakeClient(tables: Record<string, Row[]>, options: { failTable?: string
     from(table: string) {
       const filters: [string, unknown][] = [];
       let columns = "";
+      const orders: string[] = [];
       const builder = {
         select(cols: string) {
           columns = cols;
@@ -40,11 +41,12 @@ function fakeClient(tables: Record<string, Row[]>, options: { failTable?: string
           filters.push([column, value]);
           return builder;
         },
-        order() {
+        order(column: string) {
+          orders.push(column);
           return builder;
         },
         range(from: number, to: number) {
-          recorder.reads.push({ table, columns, filters });
+          recorder.reads.push({ table, columns, filters, orders });
           if (options.failTable === table) {
             return Promise.resolve({ data: null, error: { message: "boom" } });
           }
@@ -223,6 +225,53 @@ describe("previewAgentPackImport", () => {
       expect(result.preview.skills[0]).toMatchObject({ action: "skip", conflict: true });
     }
     expect(recorder.reads.filter((read) => read.table === "skills")).toHaveLength(2);
+  });
+
+  it("pages every table in a total order: the grants of one agent are ordered by capability as well", async () => {
+    const { client, recorder } = fakeClient({ agents: [], skills: [], capabilities: CATALOG_A });
+    await previewAgentPackImport(client, { workspaceId: WORKSPACE_A, text: packText() });
+    const grantRead = recorder.reads.find((read) => read.table === "agent_capabilities");
+    expect(grantRead?.orders).toEqual(["agent_id", "capability"]);
+  });
+
+  it("shows the mode an update resets: Standard or Relaxed to Strict, never for a create or a Strict agent", async () => {
+    const baseAgent = {
+      workspace_id: WORKSPACE_A,
+      name: "Scout",
+      role: "Researcher",
+      model: "claude-sonnet-5-5",
+      thinking_effort: "medium",
+      prompt: "old prompt",
+      archived_at: null,
+    };
+    for (const [mode, expected] of [
+      ["standard", "standard"],
+      ["relaxed", "relaxed"],
+      ["strict", null],
+    ] as const) {
+      const { client } = fakeClient({
+        agents: [{ ...baseAgent, id: "a1", mode }],
+        skills: [],
+        capabilities: CATALOG_A,
+      });
+      const result = await previewAgentPackImport(client, {
+        workspaceId: WORKSPACE_A,
+        text: packText({ skills: [], agents: [agentJson({ skills: [], capabilities: [] })] }),
+        conflictRule: "new_version",
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.preview.agents[0]).toMatchObject({
+        action: "update",
+        resetsModeFrom: expected,
+      });
+    }
+    const { client } = fakeClient({ agents: [], skills: [], capabilities: CATALOG_A });
+    const created = await previewAgentPackImport(client, {
+      workspaceId: WORKSPACE_A,
+      text: packText(),
+    });
+    if (created.ok) expect(created.preview.agents[0]?.resetsModeFrom).toBeNull();
   });
 
   it("throws a generic error when a read fails, without the database's text", async () => {

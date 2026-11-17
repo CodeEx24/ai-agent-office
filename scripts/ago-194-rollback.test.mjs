@@ -38,6 +38,11 @@ const dumpSchema = () =>
   );
 const hasFunction = () => psql(`select count(*) from pg_proc where pronamespace = 'public'::regnamespace and proname = 'import_agent_pack'`) === '1';
 
+const auditCheckCount = () =>
+  psql(
+    `select count(*) from pg_constraint where conrelid = 'public.pack_events'::regclass and contype = 'c' and pg_get_constraintdef(oid) like '%cardinality(agent_names)%'`,
+  );
+
 describe('AGO-194 migration files', () => {
   it('rolls back everything the migration creates, without cascade, and refuses to lose import events', () => {
     expect(DOWN).toContain('drop function if exists public.import_agent_pack');
@@ -56,11 +61,30 @@ describe('AGO-194 migration files', () => {
     expect(UP).toMatch(/grant execute on function public\.import_agent_pack[^;]*to authenticated;/);
   });
 
-  it('never writes a mode or a secret, and never reads a tier from the plan', () => {
+  it('drops exactly the two intended checks by name and leaves the AGO-192 names/ids check alone', () => {
+    const code = (text) =>
+      text
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('--'))
+        .join('\n');
+    const drops = [...code(UP).matchAll(/drop constraint\s+(\w+)/gi)].map((match) => match[1]);
+    expect(drops).toEqual(['pack_events_kind_check', 'pack_events_agent_ids_check']);
+    expect(code(UP)).not.toMatch(/drop constraint[^;]*pack_events_check/i);
+    expect(code(DOWN)).not.toMatch(/pack_events_check/);
+    const restored = [...code(DOWN).matchAll(/drop constraint if exists\s+(\w+)/gi)].map((match) => match[1]);
+    expect(restored.sort()).toEqual(
+      ['pack_events_agent_ids_check', 'pack_events_detail_object', 'pack_events_kind_check'].sort(),
+    );
+  });
+
+  it('writes a mode only as strict, never a secret, and never reads a tier from the plan', () => {
     const body = /create function public\.import_agent_pack[\s\S]*?\n\$\$;/.exec(UP)?.[0] ?? '';
     expect(body).not.toBe('');
     expect(body).not.toMatch(/insert into public\.agents \([^)]*\bmode\b/i);
-    expect(body).not.toMatch(/set\s+[^;]*\bmode\s*=/i);
+    // The one mode write is the reset of an updated agent to strict.
+    const assignments = [...body.matchAll(/\bmode\s*=\s*([^\s,;]+)/gi)].map((match) => match[1]);
+    expect(assignments.length).toBeGreaterThan(0);
+    expect(assignments.every((value) => value === "'strict'")).toBe(true);
     expect(body).not.toMatch(/->>\s*'tier'/);
     expect(body).not.toMatch(/agent_credentials|agent_identities|secret/i);
     expect(body).toMatch(/'approval'/);
@@ -91,16 +115,20 @@ describe.skipIf(!enabled)('AGO-194 rollback against the local stack', () => {
   it('apply, roll back, re-apply: the schema returns to the same dump', () => {
     assertLocalOnly({});
     expect(hasFunction()).toBe(true);
+    // The AGO-192 check (cardinality(agent_names) = cardinality(agent_ids)) exists after up, after rollback, after re-apply.
+    expect(auditCheckCount()).toBe('1');
     const applied = dumpSchema();
     try {
       psql(`begin;\n${DOWN}\ncommit;`);
       expect(hasFunction()).toBe(false);
+      expect(auditCheckCount()).toBe('1');
       expect(dumpSchema()).not.toBe(applied);
     } finally {
       // The stack is shared by every worktree: whatever failed above, leave the migration applied.
       if (!hasFunction()) psql(`begin;\n${UP}\ncommit;`);
     }
     expect(hasFunction()).toBe(true);
+    expect(auditCheckCount()).toBe('1');
     expect(dumpSchema()).toBe(applied);
   });
 });

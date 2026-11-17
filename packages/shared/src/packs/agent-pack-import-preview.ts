@@ -68,6 +68,42 @@ export interface PackRejection {
   issues?: PackRejectionIssue[];
 }
 
+/**
+ * Code points that are invisible or reorder text: C0 and C1 controls, soft hyphen, combining grapheme joiner, Arabic
+ * letter mark, Mongolian vowel separator, zero-width and direction marks, line and paragraph separators, bidi
+ * embeddings, word joiner and invisible operators, bidi isolates, the byte order mark and the tag characters.
+ * ONE set: the import function's event-name scrub (supabase/migrations/..._ago_194_pack_import.sql) lists the same
+ * ranges as unicode escapes, and a test keeps the two in step. Inclusive [from, to] pairs.
+ */
+export const PACK_INVISIBLE_RANGES: readonly (readonly [number, number])[] = [
+  [0x0001, 0x001f],
+  [0x007f, 0x009f],
+  [0x00ad, 0x00ad],
+  [0x034f, 0x034f],
+  [0x061c, 0x061c],
+  [0x180e, 0x180e],
+  [0x200b, 0x200f],
+  [0x2028, 0x202e],
+  [0x2060, 0x2064],
+  [0x2066, 0x2069],
+  [0xfeff, 0xfeff],
+  [0xe0000, 0xe007f],
+];
+
+/** True for a code point in `PACK_INVISIBLE_RANGES`. */
+export function isInvisibleCodePoint(code: number): boolean {
+  return PACK_INVISIBLE_RANGES.some(([from, to]) => code >= from && code <= to);
+}
+
+/** Removes every invisible code point (the same set the database scrubs event names with). */
+export function stripInvisibleText(value: string): string {
+  let out = "";
+  for (const char of value) {
+    if (!isInvisibleCodePoint(char.codePointAt(0) ?? 0)) out += char;
+  }
+  return out;
+}
+
 /** Strips control and direction-override characters and bounds the length. For any untrusted text in a message. */
 export function safeText(value: string, max: number = MAX_ECHO_LENGTH): string {
   let out = "";
@@ -246,6 +282,8 @@ export interface ExistingPackAgent {
   thinkingEffort: string;
   prompt: string;
   archived: boolean;
+  /** The agent's autonomy mode now (strict, standard or relaxed). Lets the preview show a reset to Strict. Optional. */
+  mode?: string;
   /** The capability keys the agent holds now (any grant mode). Lets the trifecta lint judge an update. Optional. */
   capabilities?: readonly string[];
 }
@@ -333,6 +371,11 @@ export interface PreviewAgent {
   packBudgetCents: number;
   /** Import always lands agents in Strict mode. */
   landsIn: "strict";
+  /**
+   * For an `update` of an agent that is not Strict now: the mode it leaves ("mode -> Strict"). The update resets it in
+   * the same transaction. Null for every other agent.
+   */
+  resetsModeFrom: "standard" | "relaxed" | null;
   capabilities: PreviewCapability[];
   trifecta: { declared: boolean; remainsAfterIgnoring: boolean; legs: TrifectaLeg[] };
   skills: string[];
@@ -398,12 +441,17 @@ const INTEGRATION_PREFIX = "integration.";
 const TRIFECTA_KEYS = new Set(trifectaMappedKeys());
 const COMPARED_AGENT_FIELDS = ["role", "model", "thinkingEffort", "prompt"] as const;
 
-/** The longest prefix of whole code points that fits `maxUnits` UTF-16 units (never splits a surrogate pair). */
-function truncateByCodePoint(value: string, maxUnits: number): string {
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/**
+ * The longest prefix of whole grapheme clusters that fits `maxUnits` UTF-16 units. A cut never splits a surrogate pair,
+ * a combining mark from its base, or a joined emoji sequence (a family, a flag, a skin tone).
+ */
+function truncateByGrapheme(value: string, maxUnits: number): string {
   let out = "";
-  for (const char of value) {
-    if (out.length + char.length > maxUnits) break;
-    out += char;
+  for (const { segment } of graphemes.segment(value)) {
+    if (out.length + segment.length > maxUnits) break;
+    out += segment;
   }
   return out;
 }
@@ -412,7 +460,7 @@ function truncateByCodePoint(value: string, maxUnits: number): string {
 export function renamedCopyName(name: string, taken: ReadonlySet<string>): string {
   for (let n = 1; ; n += 1) {
     const suffix = n === 1 ? " (imported)" : ` (imported ${String(n)})`;
-    const candidate = `${truncateByCodePoint(name, AGENT_NAME_MAX_LENGTH - suffix.length).trimEnd()}${suffix}`;
+    const candidate = `${truncateByGrapheme(name, AGENT_NAME_MAX_LENGTH - suffix.length).trimEnd()}${suffix}`;
     if (!taken.has(candidate)) return candidate;
   }
 }
@@ -564,6 +612,9 @@ function previewAgent(
     }
   }
   collect.agentTargets.push(targetName);
+  const modeNow = existing?.mode;
+  const resetsModeFrom =
+    action === "update" && (modeNow === "standard" || modeNow === "relaxed") ? modeNow : null;
 
   return {
     name,
@@ -580,6 +631,7 @@ function previewAgent(
       : agent.dailyBudgetCents,
     packBudgetCents: agent.dailyBudgetCents,
     landsIn: "strict",
+    resetsModeFrom,
     capabilities,
     trifecta: {
       declared: !declaredLint.ok,

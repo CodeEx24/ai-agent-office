@@ -48,7 +48,7 @@ function localStackEnv(): { url: string; serviceKey: string; anonKey: string } {
   return { url: read("API_URL"), serviceKey: read("SERVICE_ROLE_KEY"), anonKey: read("ANON_KEY") };
 }
 
-function packText(): string {
+function packText(prompt = "Find sources."): string {
   return JSON.stringify({
     packVersion: 1,
     metadata: { name: "Live pack", exportedAt: "2026-11-17T00:00:00Z", appVersion: "0.1.0" },
@@ -58,7 +58,7 @@ function packText(): string {
         role: "Researcher",
         model: "claude-haiku-5-5",
         thinkingEffort: "medium",
-        prompt: "Find sources.",
+        prompt,
         skills: ["Live citing"],
         capabilities: [
           { name: "vault.read", scope: "workspace" },
@@ -242,5 +242,40 @@ describe.skipIf(!enabled)("AGO-194 agent pack import (live)", () => {
     const result = await applyAgentPackImport(owner, { workspaceId: wsA, text: packText() });
     expect(result.ok).toBe(true);
     expect(await countA()).toBe("1:1:1:2");
+  });
+
+  it("an update resets a relaxed agent to strict: the dry run says so, the apply does it, the log and the event record it", async () => {
+    const agentId = await psql(
+      `select id from public.agents where workspace_id = '${wsA}' and name = 'Live scout'`,
+    );
+    const promoted = await owner.rpc("set_agent_mode", {
+      p_workspace_id: wsA,
+      p_agent_id: agentId,
+      p_mode: "relaxed",
+    });
+    expect(promoted.error).toBeNull();
+
+    const text = packText("A new prompt that the owner reviewed.");
+    const result = await applyAgentPackImport(owner, {
+      workspaceId: wsA,
+      text,
+      conflictRule: "new_version",
+    });
+    if (!result.ok || !("report" in result)) throw new Error("expected the import to apply");
+    // Preview == apply: the report the owner saw names the reset, and the database does exactly that.
+    expect(result.report.agents[0]).toMatchObject({ action: "update", resetsModeFrom: "relaxed" });
+    expect(
+      await psql(`select mode || ':' || prompt from public.agents where id = '${agentId}'`),
+    ).toBe("strict:A new prompt that the owner reviewed.");
+    expect(
+      await psql(
+        `select count(*) from public.agent_mode_changes where agent_id = '${agentId}' and from_mode = 'relaxed' and to_mode = 'strict'`,
+      ),
+    ).toBe("1");
+    expect(
+      await psql(
+        `select detail -> 'agents' -> 0 ->> 'mode_reset_from' from public.pack_events where id = '${result.report.eventId}'`,
+      ),
+    ).toBe("relaxed");
   });
 });

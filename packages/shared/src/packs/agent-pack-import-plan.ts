@@ -16,13 +16,16 @@ import type { AgentPack } from "./agent-pack-schemas.js";
  *
  * Only what the database needs is in the plan: names, the fields to write, the capability KEYS that survive the
  * Tier 3+ filter, the budget after the cap. Never a tier, a mode, an id, a secret reference or a note: the database
- * function reads tiers from its own catalog and never sets a mode. Plan text (prompts, skill bodies) is pack text and
+ * function reads tiers from its own catalog, and it alone decides the mode (a new agent is Strict; an updated agent
+ * that is not Strict is reset to Strict in the same transaction). Plan text (prompts, skill bodies) is pack text and
  * travels as data to one function; it is never put in a report, an event or a log line.
  *
  * Node only, like the preview (it imports it).
  */
 
-export interface ImportPlanAgent {
+// Type aliases, not interfaces: an alias is assignable to the database client's `Json`, so the RPC call needs no cast.
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- an interface is not assignable to `Json`
+export type ImportPlanAgent = {
   /** The name to write: the pack's, or the renamed copy. */
   name: string;
   action: "create" | "update";
@@ -36,22 +39,24 @@ export interface ImportPlanAgent {
   capabilities: string[];
   /** Target skill names (a skill that exists now, or one this plan creates). */
   skills: string[];
-  /** Set: the agent is created and then archived (disabled). Only ever on `create`. */
+  /** Set: the agent is archived (disabled) in the same transaction: a failed trifecta lint, on a create or on an update. */
   disabled_reason: ImportDisabledReason | null;
-}
+};
 
-export interface ImportPlanSkill {
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- an interface is not assignable to `Json`
+export type ImportPlanSkill = {
   name: string;
   /** `new_version`: the skill exists and the body changed; the database appends a version, it never rewrites one. */
   action: "create" | "new_version";
   body: string;
-}
+};
 
-export interface ImportPlan {
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- an interface is not assignable to `Json`
+export type ImportPlan = {
   rule: ConflictRule;
   agents: ImportPlanAgent[];
   skills: ImportPlanSkill[];
-}
+};
 
 export interface ImportOutcome {
   /** The report: what the dry run shows, and what the apply returns with its counts. */
