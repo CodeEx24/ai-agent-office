@@ -1,8 +1,8 @@
 # AGO-54 - US-044 Render approval cards on the server with consequence summary first
 
 - Ticket: https://stratyge.atlassian.net/browse/AGO-54 (Story, Epic EP-16, wave 2, WS-E)
-- PRs: (pending)
-- Status: In progress
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/75
+- Status: In review
 - Blocked by: AGO-37 (inbox and card, Done), AGO-47 (payload-hash binding, Done). Related: AGO-58 (the one decide path), AGO-215 (store the approval payload: migration plus worker, wave 3, not built)
 - Risk: **high** (a human decision UI: the integrity of what the owner approves)
 
