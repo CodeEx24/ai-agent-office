@@ -5,6 +5,7 @@ const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
 import type { ApprovalCardData } from "./approval-card";
+import { summarizeConsequence } from "./consequence-summary";
 import {
   ApprovalInbox,
   DECISION_LOCK_MS,
@@ -29,6 +30,8 @@ const card: ApprovalCardData = {
   reason: "tier_3_needs_human",
   createdAt: "2026-11-14T10:00:00.000Z",
   expiresAt: "2026-11-14T11:00:00.000Z",
+  consequence: summarizeConsequence("email.send", 3, { kind: "unavailable" }),
+  payload: { kind: "unavailable" },
   recentSteps: [
     { seq: 4, label: "Approval requested" },
     { seq: 2, label: "Requested email.send (tier 3)" },
@@ -554,7 +557,8 @@ describe("ApprovalCard layout and cost display (AGO-37 round 3)", () => {
       expect(step).toHaveClass("[overflow-wrap:anywhere]");
     }
     const labels = Array.from(cardEl.querySelectorAll("dt"));
-    expect(labels).toHaveLength(4);
+    // Why it stopped, Tool, Cost: the call details moved out of the list into their own bounded region (AGO-54).
+    expect(labels).toHaveLength(3);
     for (const label of labels) {
       expect(label).toHaveClass("shrink-0", "whitespace-nowrap");
     }
