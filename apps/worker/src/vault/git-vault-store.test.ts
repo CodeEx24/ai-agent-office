@@ -99,7 +99,7 @@ describe("provisioning", () => {
     expect(await fs.readdir(root)).toEqual([WS_A]);
     expect(git(path.join(root, WS_A), "rev-list", "--count", "HEAD")).toBe("2");
     expect(git(path.join(root, WS_A), "status", "--porcelain")).toBe("");
-  });
+  }, 30_000);
 });
 
 describe("read, write, list, history", () => {

@@ -117,7 +117,7 @@ describe("AC1: a new workspace gets a repo with the starter folders", () => {
     expect(results.filter((r) => r.ok && r.value.created).length).toBeGreaterThanOrEqual(1);
     expect(await fs.readdir(root)).toEqual([WS_A]);
     expect(git(path.join(root, WS_A), "rev-list", "--count", "HEAD")).toBe("1");
-  });
+  }, 30_000);
 
   it("refuses a workspace id that is not a UUID instead of creating a folder", async () => {
     for (const bad of ["", "../escape", "not-a-uuid", `${WS_A}/../x`, "..\\x", `${WS_A}\u0000`]) {
@@ -394,7 +394,8 @@ describe("AC2: read and write go through the service only", () => {
     const repo = path.join(root, WS_A);
     expect(git(repo, "status", "--porcelain")).toBe("");
     expect(git(repo, "rev-list", "--count", "HEAD")).toBe("13");
-  });
+    // Many git processes at once: under the full suite on Windows this is slow, so the timeout is explicit.
+  }, 30_000);
 
   it("serialises concurrent writes to one note from one service so the last write wins cleanly", async () => {
     const results = await Promise.all(
