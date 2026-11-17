@@ -28,6 +28,19 @@ await store.history({ workspaceId, path: "projects/plan.md" });
 ```
 Every call returns `{ ok: true, value }` or `{ ok: false, reason }`. Reasons: `invalid_workspace`, `invalid_path`, `invalid_principal`, `human_only_path`, `symlink_not_allowed`, `not_found`, `not_a_file`, `too_large`, `invalid_content`, `store_failed`. A denial never carries note text.
 
+## Data flow
+```mermaid
+flowchart LR
+  Caller[Worker code] --> Store[GitVaultStore]
+  Store --> Checks[validateVaultPath, isVaultHumanOnlyPath, assertNoSymlink]
+  Checks --> Lock[withLock per repo]
+  Lock --> Git[git add + commit]
+  Git --> Repo[(VAULT_ROOT_DIR/workspace_id)]
+```
+
+## How to extend it
+Add a new operation to the `VaultStore` interface first, then implement it in `GitVaultStore` behind `guard`, with the same path and principal checks. To protect another file from agents, extend the boot-file rule in `isVaultHumanOnlyPath`. To change the starter layout, edit `vault-template/` and `VAULT_TOP_DIRS` together (a test keeps them in step).
+
 ## Provisioning
 Lazy and idempotent: the first call for a workspace creates the repo; later calls find it. The repo is built in a temp folder and renamed into place, so callers racing on first access (even from several processes) never produce a half-built or double-initialised repo. `ensureVault(workspaceId)` is exported for the workspace-creation flow to call later.
 
