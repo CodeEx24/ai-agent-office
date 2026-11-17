@@ -7,6 +7,7 @@ import { createClaudeProvider } from "./claude-provider.js";
 import { createModelRouter, createPgAgentModelSource } from "./model-routing.js";
 import { createPgPolicySource, createPolicyEngineHook } from "../policy/index.js";
 import { createPgCredentialStore } from "../identity/index.js";
+import { createPgKillSwitchGuard } from "../kill-switch/index.js";
 import { createPgGrantedCapabilitySource, createToolOffer } from "./tool-offer.js";
 import { createPgAgentRunLimitsSource } from "./pg-run-limits-source.js";
 import { createRunLimitsResolver } from "./run-limits.js";
@@ -75,6 +76,9 @@ export function createProductionAgentExecutor(options: {
     checkpoints: createPgCheckpointStore(pool),
     // AGO-21: a call that needs approval gets a pending approval row before the run pauses.
     approvals: createPgApprovalStore(pool),
+    // AGO-84: the kill switch latch is read at every step and tool-call boundary, next to the pause and stop flags.
+    // A latch that cannot be read stops the run (fail closed), so a database fault never lifts a kill switch.
+    killSwitch: createPgKillSwitchGuard(pool),
     // AGO-40: the money budgets (agent daily, workspace monthly) are checked before every model call. A ledger that
     // cannot answer refuses the call, so a database fault stops spending rather than lifting the limit.
     budget: createBudgetGuard({
