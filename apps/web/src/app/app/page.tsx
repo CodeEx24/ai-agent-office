@@ -39,6 +39,12 @@ export default async function WorkspaceHomePage() {
             <Link href="/app/skills" className="text-sm text-primary underline underline-offset-4">
               Skills
             </Link>
+            <Link
+              href="/app/approvals"
+              className="text-sm text-primary underline underline-offset-4"
+            >
+              Approvals
+            </Link>
           </p>
           {/* AGO-84: only an owner sees the kill switch; the route and the database check the role again. */}
           {workspace.role === "owner" ? <KillSwitchControl workspaceId={workspace.id} /> : null}
