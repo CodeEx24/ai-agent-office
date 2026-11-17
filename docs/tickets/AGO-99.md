@@ -76,3 +76,6 @@ Unit: shared schema and default; the action with and without an agent credential
 - Security review nits, not fixed: owner hard-delete erases an agent's mode history by cascade (a pgTAP case asserts it; noted in `docs/database.md`); refused agent attempts leave no record (D7).
 - Code review nits: `NEW_AGENT_MODE` has no product reader today (the database default is the source of truth, D6); whether a workspace cascade reaches `agents` before `agent_mode_changes` is untested (same pattern as `agent_versions`).
 - Test gap (UX note): no component test for the action result arriving before the revalidated `currentMode` prop.
+
+## Outcome
+- Feature guide: [docs/features/agents.md](../features/agents.md) (section "Strict by default, human promotion (AGO-99)").
