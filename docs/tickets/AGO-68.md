@@ -2,8 +2,9 @@
 
 - Ticket: https://stratyge.atlassian.net/browse/AGO-68
 - PRs: https://github.com/CodeEx24/ai-agent-office/pull/82
+- Follow-ups: AGO-224 (Postgres store), AGO-225 (review page), AGO-226 (change notifications), AGO-227 (token replay hardening, before or with AGO-88)
 - Related: AGO-157 (credential broker, done), AGO-34 (policy engine), AGO-25 (tool offer), AGO-88 (read-only MCP integrations, unblocked by this), AGO-129 (red-team suite), AGO-154 (proposal-store precedent)
-- Status: In progress (record accepted 2026-11-17) · Type: Feature · Risk: high (tool supply chain, tool-description tampering, token passthrough) · Epic EP-17 · Wave 3
+- Status: Merged (record accepted 2026-11-17) · Type: Feature · Risk: high (tool supply chain, tool-description tampering, token passthrough) · Epic EP-17 · Wave 3
 
 ## Overview
 Agents may only reach tool servers a workspace owner has allowlisted. Each allowlisted server is pinned by a hash of its identity and its tool list (names, descriptions, input schemas). On connect the worker snapshots the tool list and diffs it against the pin. A changed tool is blocked and an alert is raised until a human reviews and re-pins. Tool servers only ever receive broker-issued, audience-bound credentials; a user token, an agent token or a token meant for another audience is never forwarded.
@@ -64,13 +65,19 @@ No Postgres persistence, no web UI for review (follow-ups). Live MCP transport i
 Vitest unit tests per module; integration test with an in-process fake tool server whose description changes mid-test; file-level `vi.setConfig` timeout. AC map: AC1 unlisted and other-workspace entry blocked; AC2 description change alerts and blocks, human re-pin unblocks, agent re-pin refused; AC3 agent token, wrong audience, missing audience, human token all rejected; fail-closed cases (snapshot unavailable, diff throws). No DB tests, no real network.
 
 ## Follow-up tasks
-- Postgres `tool_servers`/pins tables with RLS (needs schema slot).
-- Web route and UI for review and re-pin (human-only route).
-- Notification (Telegram/UI) reading `tool_server_changed` events.
+- AGO-224: Postgres `tool_servers`/pins tables with RLS (needs schema slot).
+- AGO-225: web route and UI for review and re-pin (human-only route).
+- AGO-226: notification (Telegram/UI) reading `tool_server_changed` events.
 - AGO-88 wires real MCP clients through this gate.
-- Token replay (security review r1, accepted for this ticket): audience tokens live 5 minutes and are bound to one audience, workspace, run and agent, but not to one tool or input, and there is no `jti` store. No transport exists yet, so nothing crosses a network here. To land with AGO-88: HTTPS-only endpoints, one token per call bound to tool name and an input hash, a `jti` replay cache on the verifying (tool server) side, and a shorter TTL.
+- AGO-227: token replay (security review r1, accepted for this ticket): audience tokens live 5 minutes and are bound to one audience, workspace, run and agent, but not to one tool or input, and there is no `jti` store. No transport exists yet, so nothing crosses a network here. To land with AGO-88: HTTPS-only endpoints, one token per call bound to tool name and an input hash, a `jti` replay cache on the verifying (tool server) side, and a shorter TTL.
 - The follow-up web route must take workspace and user from the verified session and check the owner role before calling `allowlistServer`, `prepareReview` or `reviewAndPin`.
 - Resolved as D11: a mismatch stays blocked until a human re-pins, even if the server changes back.
 
 ## Outcome
-Built: gate, registry port (in-memory), canonical hash and diff, human review and pin, audience-bound tokens through the broker, run-event alert, tool-offer wiring, sticky block with atomic alert claim (D11). Guide: [docs/features/tool-servers.md](../features/tool-servers.md). Postgres store: follow-up (owner files it at merge).
+Built: gate, registry port (in-memory), canonical hash and diff, human review and pin, audience-bound tokens through the broker, run-event alert, tool-offer wiring, sticky block with atomic alert claim (D11). Guide: [docs/features/tool-servers.md](../features/tool-servers.md).
+
+- All four ACs met (approver APPROVE, round 3, 2026-11-17). Rounds: r1 gate/tester/code/security/invariants PASS (owner answer: flap-back stays blocked -> D11); r2 tester CHANGES (alert flood under concurrency); r3 atomic claim plus a security-found held-listing bypass fixed, tester/code/security PASS.
+- Deviations from the design: none beyond D11 (sticky block) and the atomic alert claim, both recorded above.
+- Known limitations: in-memory store (a worker restart leaves every server unlisted and blocked until a human re-pins); nothing calls the gate in production until AGO-88; a check racing a human re-pin can briefly block the freshly pinned server (fail-closed); without an alert sink the claim is consumed silently.
+- Follow-up tickets: AGO-224, AGO-225, AGO-226, AGO-227.
+- Deferred criteria: none.
