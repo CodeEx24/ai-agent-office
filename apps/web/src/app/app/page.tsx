@@ -38,6 +38,12 @@ export default async function WorkspaceHomePage() {
             <Link href="/app/skills" className="text-sm text-primary underline underline-offset-4">
               Skills
             </Link>
+            <Link
+              href="/app/approvals"
+              className="text-sm text-primary underline underline-offset-4"
+            >
+              Approvals
+            </Link>
           </p>
         </section>
       ) : (
