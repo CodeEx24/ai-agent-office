@@ -12,6 +12,8 @@ import {
   verifyCredentialToken,
 } from "./credential-token.js";
 
+import { KillSwitchActiveError, type KillSwitchGuard } from "../kill-switch/index.js";
+
 import type { CredentialStore } from "./credential-store.js";
 
 /** Issuance refused: the agent is archived, or is not in the run's workspace. Carries no ids. */
@@ -60,6 +62,11 @@ export interface CredentialIssuerDeps {
   readonly secret: string;
   readonly now?: () => Date;
   readonly logger?: IssuanceLogger;
+  /**
+   * The kill switch latch (AGO-84). While the workspace or the agent is latched, no credential is issued
+   * (`KillSwitchActiveError`). A failed read throws too: fail closed. Omitted: no latch (tests).
+   */
+  readonly killSwitch?: KillSwitchGuard;
 }
 
 /**
@@ -76,6 +83,15 @@ export function createCredentialIssuer(deps: CredentialIssuerDeps): CredentialIs
     async issue(request) {
       const issuedAt = new Date(Math.floor(now().getTime() / 1000) * 1000);
       const expiresAt = computeCredentialExpiry({ now: issuedAt, taskEndsAt: request.taskEndsAt });
+      if (
+        deps.killSwitch !== undefined &&
+        (await deps.killSwitch.isKilled({
+          workspaceId: request.workspaceId,
+          agentId: request.agentId,
+        }))
+      ) {
+        throw new KillSwitchActiveError();
+      }
       if (!(await deps.store.isAgentActive(request))) throw new AgentNotActiveError();
       const granted = await deps.store.grantedCapabilities(request);
       const capabilities = intersectCapabilities(granted, request.requestedCapabilities);
