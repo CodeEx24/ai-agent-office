@@ -1,9 +1,9 @@
 # AGO-23 - US-069 Mark retrieved content as untrusted data
 
 Ticket: https://stratyge.atlassian.net/browse/AGO-23
-PRs: (pending)
+PRs: https://github.com/CodeEx24/ai-agent-office/pull/80
 Related: blocked by AGO-145 (context builder, done) · unblocks AGO-24 (quarantined reader), AGO-187 (webhooks) · live-model red team is AGO-129 (follow-up)
-Type: Feature · Risk: High · Status: In progress (built, in checks)
+Type: Feature · Risk: High · Status: In review
 
 ## Overview
 Epic EP-17, wave 3. Web, email and note (vault) text that reaches a model prompt must be marked as data, not instructions, in every prompt. AGO-145 already built the first layer (`apps/worker/src/context/untrusted.ts`: one wrapper, tag escaping, system rule) and AGO-167 routes tool results through it as `retrieved` items. This ticket hardens and proves that layer:
