@@ -2,6 +2,7 @@
 
 - Ticket: https://stratyge.atlassian.net/browse/AGO-99 (Story, Epic EP-16, wave 2, WS-E, sprint 11)
 - PRs: https://github.com/CodeEx24/ai-agent-office/pull/73
+- Status: Merged
 - Blocked by: AGO-43 (autonomy dial, Done), AGO-89 (edit, duplicate, archive, Done). Related: AGO-58 (human-only guard), AGO-194 (pack import, builds on the default), AGO-192 (pack_events, precedent for a non-run audit table)
 - Risk: **high** (autonomy, the human-only invariant, a migration)
 
@@ -79,3 +80,9 @@ Unit: shared schema and default; the action with and without an agent credential
 
 ## Outcome
 - Feature guide: [docs/features/agents.md](../features/agents.md) (section "Strict by default, human promotion (AGO-99)").
+- Delivered: new agents start in Strict (column default, insert guard, CHECK); owner-only, logged mode changes via `set_agent_mode`, the append-only `agent_mode_changes` table and its log trigger; `AgentModeForm` on `/app/agents/[agentId]`.
+- Review: 4 rounds; final gate PASS on 0da91e0 and pre-merge re-gate PASS on a078146 (install, lint, typecheck, test, build, pgTAP, record); every role's latest verdict PASS.
+- Deviations: no link to the agent's runs (D8, accepted 2026-11-17, follow-up AGO-216).
+- Known limitation: forged `auth.uid()` claim by raw-SQL or signing-secret holders (D10, accepted 2026-11-16, follow-up AGO-214).
+- Merge: agent-merged as a one-off owner exception to the `scripts/` human-merge path (D11).
+- Follow-ups: AGO-214, AGO-216.
