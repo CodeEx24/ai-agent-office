@@ -136,12 +136,18 @@ function hasControlOrBidi(text: string): boolean {
 }
 
 describe("AC1: the CLI preview is a dry run with no apply path", () => {
-  it("reads only the three workspace tables and the caller's membership, and never writes", async () => {
+  it("reads only the workspace tables (agents, skills, catalog, agent grants) and the caller's membership, and never writes", async () => {
     const { deps, out, err, calls } = setup(packOf());
     expect(await runPackImport(ARGS, deps)).toBe(0);
     expect(err).toEqual([]);
     const tables = new Set(calls.map((call) => call.split(".")[0]));
-    expect([...tables].sort()).toEqual(["agents", "capabilities", "members", "skills"]);
+    expect([...tables].sort()).toEqual([
+      "agent_capabilities",
+      "agents",
+      "capabilities",
+      "members",
+      "skills",
+    ]);
     expect(calls.every((call) => /\.(select|eq|is|order|range|maybeSingle)$/.test(call))).toBe(
       true,
     );

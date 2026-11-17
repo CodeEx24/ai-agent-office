@@ -97,7 +97,9 @@ export function buildImportPlan(pack: AgentPack, context: PreviewContext): Impor
       daily_budget_cents: entry.appliedBudgetCents,
       capabilities: capabilityKeys,
       skills: [...new Set(agent.skills.map((name) => skillTargetByName.get(name) ?? name))],
-      disabled_reason: entry.action === "create" ? (entry.importDisabled?.reason ?? null) : null,
+      // A new agent is archived on a trifecta, and so is an updated one whose existing plus imported capabilities
+      // complete the trifecta (the function checks again from its own tables).
+      disabled_reason: entry.importDisabled?.reason ?? null,
     });
   });
   return { preview, plan };

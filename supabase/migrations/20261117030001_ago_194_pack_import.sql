@@ -76,6 +76,10 @@ declare
   v_skills_written integer := 0;
   v_disabled integer := 0;
   v_event_id uuid;
+  v_action text;
+  v_reason text;
+  v_held text[];
+  v_clean_name text;
 begin
   -- Human only: a real person's session, never a token that carries an agent claim.
   if v_user is null
@@ -112,40 +116,64 @@ begin
 
   -- Skills first, so an agent can point at them. A new skill is version 1; a new version updates the body and the
   -- existing triggers bump the version and append to the history. Nothing is ever overwritten silently.
+  -- First pass: every entry is validated before anything is written. An action that is missing, null or unknown is
+  -- refused (a NULL would make a plain `not in` test unknown and fall through to the update branch). jsonb cannot
+  -- hold NUL or a lone surrogate, so hostile text is refused earlier (the web boundary, and the database parse).
   for v_skill in select * from jsonb_array_elements(p_plan -> 'skills') loop
     v_name := v_skill ->> 'name';
-    if v_name is null or char_length(v_name) not between 1 and 120
+    v_action := case when jsonb_typeof(v_skill -> 'action') = 'string' then v_skill ->> 'action' else null end;
+    if jsonb_typeof(v_skill) is distinct from 'object'
+       or v_name is null or char_length(v_name) not between 1 and 120
        or jsonb_typeof(v_skill -> 'body') is distinct from 'string'
-       or (v_skill ->> 'action') not in ('create', 'new_version') then
+       or v_action is null or v_action not in ('create', 'new_version') then
       raise exception 'import_agent_pack: invalid skill entry' using errcode = '22023';
     end if;
-    if (v_skill ->> 'action') = 'create' then
+  end loop;
+  for v_agent in select * from jsonb_array_elements(p_plan -> 'agents') loop
+    v_name := v_agent ->> 'name';
+    v_action := case when jsonb_typeof(v_agent -> 'action') = 'string' then v_agent ->> 'action' else null end;
+    -- The budget must be a JSON integer number before any cast (text, fractions and exponents are refused).
+    if jsonb_typeof(v_agent) is distinct from 'object'
+       or v_name is null or char_length(v_name) not between 1 and 120
+       or v_action is null or v_action not in ('create', 'update')
+       or jsonb_typeof(v_agent -> 'capabilities') is distinct from 'array'
+       or jsonb_typeof(v_agent -> 'skills') is distinct from 'array'
+       or jsonb_typeof(v_agent -> 'daily_budget_cents') is distinct from 'number'
+       or (v_agent -> 'daily_budget_cents')::text !~ '^[0-9]{1,4}$' then
+      raise exception 'import_agent_pack: invalid agent entry' using errcode = '22023';
+    end if;
+    -- Only reached for a plain 1..4 digit integer, so the cast cannot fail.
+    if ((v_agent -> 'daily_budget_cents')::text)::integer not between 1 and 5000 then
+      raise exception 'import_agent_pack: invalid agent entry' using errcode = '22023';
+    end if;
+  end loop;
+
+  for v_skill in select * from jsonb_array_elements(p_plan -> 'skills') loop
+    v_name := v_skill ->> 'name';
+    v_action := v_skill ->> 'action';
+    if v_action = 'create' then
       if exists (select 1 from public.skills s where s.workspace_id = p_workspace_id and s.name = v_name) then
         raise exception 'import_agent_pack: a skill now exists' using errcode = '40001';
       end if;
       insert into public.skills (workspace_id, name, body) values (p_workspace_id, v_name, v_skill ->> 'body');
-    else
+    elsif v_action = 'new_version' then
       update public.skills s set body = v_skill ->> 'body'
        where s.workspace_id = p_workspace_id and s.name = v_name;
       if not found then
         raise exception 'import_agent_pack: a skill to version is gone' using errcode = '40001';
       end if;
+    else
+      raise exception 'import_agent_pack: invalid skill entry' using errcode = '22023';
     end if;
     v_skills_written := v_skills_written + 1;
   end loop;
 
   for v_agent in select * from jsonb_array_elements(p_plan -> 'agents') loop
     v_name := v_agent ->> 'name';
-    v_budget := (v_agent ->> 'daily_budget_cents')::integer;
-    if v_name is null or char_length(v_name) not between 1 and 120
-       or (v_agent ->> 'action') not in ('create', 'update')
-       or jsonb_typeof(v_agent -> 'capabilities') is distinct from 'array'
-       or jsonb_typeof(v_agent -> 'skills') is distinct from 'array'
-       or v_budget is null or v_budget < 1 or v_budget > 5000 then
-      raise exception 'import_agent_pack: invalid agent entry' using errcode = '22023';
-    end if;
+    v_action := v_agent ->> 'action';
+    v_budget := ((v_agent -> 'daily_budget_cents')::text)::integer; -- validated in the first pass
 
-    if (v_agent ->> 'action') = 'create' then
+    if v_action = 'create' then
       if exists (select 1 from public.agents a where a.workspace_id = p_workspace_id and a.name = v_name) then
         raise exception 'import_agent_pack: an agent now exists' using errcode = '40001';
       end if;
@@ -154,7 +182,7 @@ begin
       values (p_workspace_id, v_name, v_agent ->> 'role', v_agent ->> 'model', v_agent ->> 'thinking_effort',
               v_agent ->> 'prompt', v_budget)
       returning id into v_agent_id;
-    else
+    elsif v_action = 'update' then
       v_agent_id := null;
       select a.id, a.archived_at into v_agent_id, v_existing_archived
         from public.agents a where a.workspace_id = p_workspace_id and a.name = v_name for update;
@@ -166,6 +194,8 @@ begin
          set role = v_agent ->> 'role', model = v_agent ->> 'model', thinking_effort = v_agent ->> 'thinking_effort',
              prompt = v_agent ->> 'prompt', daily_budget_cents = v_budget
        where workspace_id = p_workspace_id and id = v_agent_id;
+    else
+      raise exception 'import_agent_pack: invalid agent entry' using errcode = '22023';
     end if;
 
     -- Skills by name, within this workspace only.
@@ -196,17 +226,38 @@ begin
     end loop;
 
     -- A failed trifecta lint: imported, then disabled (archived) in the same transaction, with the reason on record.
-    if nullif(v_agent ->> 'disabled_reason', '') is not null then
-      update public.agents set archived_at = now() where workspace_id = p_workspace_id and id = v_agent_id;
+    -- The lint runs again here on what the agent actually holds now (an existing agent's earlier grants plus the
+    -- pack's), so an update that completes the trifecta is archived like a new agent. The key to leg mapping mirrors
+    -- packages/shared/src/agents/trifecta-lint.ts (LEG_CAPABILITIES); keep the two in step.
+    v_reason := nullif(v_agent ->> 'disabled_reason', '');
+    select coalesce(array_agg(ac.capability), '{}') into v_held
+      from public.agent_capabilities ac where ac.workspace_id = p_workspace_id and ac.agent_id = v_agent_id;
+    if v_held && array['web.search', 'web.browse']
+       and v_held && array['vault.read_private', 'vault.read']
+       and v_held && array['message.send_outbound', 'integration.write'] then
+      v_reason := coalesce(v_reason, 'trifecta_combination');
+    end if;
+    if v_reason is not null then
+      update public.agents set archived_at = coalesce(archived_at, now())
+       where workspace_id = p_workspace_id and id = v_agent_id;
       v_disabled := v_disabled + 1;
     end if;
 
+    -- Names in the event are stripped of control, zero-width and direction-override characters, so the event row
+    -- and anything that prints it cannot reorder or hide text. The agent row keeps the name as given.
+    v_clean_name := left(
+      regexp_replace(v_agent ->> 'name',
+        '[\u0001-\u001F\u007F-\u009F​-‏ -‮⁠-⁩﻿]', '', 'g'),
+      120);
+    if v_clean_name = '' then
+      v_clean_name := '?';
+    end if;
     v_agent_ids := v_agent_ids || v_agent_id;
-    v_agent_names := v_agent_names || (v_agent ->> 'name');
+    v_agent_names := v_agent_names || v_clean_name;
     v_outcomes := v_outcomes || jsonb_build_array(jsonb_build_object(
-      'name', v_agent ->> 'name',
-      'action', v_agent ->> 'action',
-      'disabled_reason', nullif(v_agent ->> 'disabled_reason', '')
+      'name', v_clean_name,
+      'action', v_action,
+      'disabled_reason', v_reason
     ));
   end loop;
 

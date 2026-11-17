@@ -182,6 +182,56 @@ export function inspectPackText(
   return { ok: true, value };
 }
 
+/** True for text the database cannot store: a NUL character or a lone (unpaired) surrogate. */
+function hasUnstorableText(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit === 0) return true;
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) index += 1;
+      else return true;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) return true;
+  }
+  return false;
+}
+
+/**
+ * Every field (and object key) whose text holds a NUL or a lone surrogate, as a path plus a fixed message. Such text
+ * cannot be stored (jsonb and text columns refuse it), so the file is refused here with a clean 422 instead of a
+ * database error. Never repeats the text. Bounded: stops at MAX_REPORTED_ISSUES.
+ */
+function findInvalidText(root: unknown): PackRejectionIssue[] {
+  const found: PackRejectionIssue[] = [];
+  const visit = (value: unknown, path: string): void => {
+    if (found.length >= MAX_REPORTED_ISSUES) return;
+    if (typeof value === "string") {
+      if (hasUnstorableText(value)) {
+        found.push({
+          path: safeText(path, 200),
+          message: "Contains a NUL character or an invalid Unicode sequence.",
+        });
+      }
+    } else if (Array.isArray(value)) {
+      value.forEach((item, index) => {
+        visit(item, path === "" ? String(index) : `${path}.${String(index)}`);
+      });
+    } else if (isPlainObject(value)) {
+      for (const [key, item] of Object.entries(value)) {
+        const next = path === "" ? key : `${path}.${key}`;
+        if (hasUnstorableText(key)) {
+          found.push({
+            path: safeText(next, 200),
+            message: "A field name contains a NUL character or an invalid Unicode sequence.",
+          });
+        } else visit(item, next);
+      }
+    }
+  };
+  visit(root, "");
+  return found;
+}
+
 // ---------------------------------------------------------------- the preview
 
 /** The per-agent daily budget ceiling. One helper so a workspace cap (AGO-40) can replace it later. */
@@ -196,6 +246,8 @@ export interface ExistingPackAgent {
   thinkingEffort: string;
   prompt: string;
   archived: boolean;
+  /** The capability keys the agent holds now (any grant mode). Lets the trifecta lint judge an update. Optional. */
+  capabilities?: readonly string[];
 }
 
 export interface ExistingPackSkill {
@@ -346,11 +398,21 @@ const INTEGRATION_PREFIX = "integration.";
 const TRIFECTA_KEYS = new Set(trifectaMappedKeys());
 const COMPARED_AGENT_FIELDS = ["role", "model", "thinkingEffort", "prompt"] as const;
 
+/** The longest prefix of whole code points that fits `maxUnits` UTF-16 units (never splits a surrogate pair). */
+function truncateByCodePoint(value: string, maxUnits: number): string {
+  let out = "";
+  for (const char of value) {
+    if (out.length + char.length > maxUnits) break;
+    out += char;
+  }
+  return out;
+}
+
 /** `<name> (imported)`, then `(imported 2)`, ...: the first name not in `taken`, within the name length limit. */
 export function renamedCopyName(name: string, taken: ReadonlySet<string>): string {
   for (let n = 1; ; n += 1) {
     const suffix = n === 1 ? " (imported)" : ` (imported ${String(n)})`;
-    const candidate = `${name.slice(0, AGENT_NAME_MAX_LENGTH - suffix.length).trimEnd()}${suffix}`;
+    const candidate = `${truncateByCodePoint(name, AGENT_NAME_MAX_LENGTH - suffix.length).trimEnd()}${suffix}`;
     if (!taken.has(candidate)) return candidate;
   }
 }
@@ -479,7 +541,7 @@ function previewAgent(
   }
   // A trifecta that survives the dropped capabilities: a new agent is imported archived. An existing agent is never
   // archived by an import, so for it the agent is left as it is (skipped).
-  const importDisabled: ImportDisabled | null = appliedLint.ok
+  let importDisabled: ImportDisabled | null = appliedLint.ok
     ? null
     : {
         reason: "trifecta_combination",
@@ -488,6 +550,19 @@ function previewAgent(
         ),
       };
   if (importDisabled && action === "update") action = "skip";
+  // An update adds to what the agent already holds, so the lint runs on the union (existing plus applied). A pack
+  // that is harmless alone can still complete the trifecta: the update is applied and the agent is disabled.
+  if (action === "update" && existing && importDisabled === null) {
+    const unionLint = lintTrifecta([...(existing.capabilities ?? []), ...appliedKeys]);
+    if (!unionLint.ok) {
+      importDisabled = {
+        reason: "trifecta_combination",
+        legs: (Object.keys(unionLint.legs) as TrifectaLeg[]).filter(
+          (leg) => unionLint.legs[leg].length > 0,
+        ),
+      };
+    }
+  }
   collect.agentTargets.push(targetName);
 
   return {
@@ -570,7 +645,9 @@ function summarise(
     disabled: 0,
   };
   for (const agent of agents) {
-    if (agent.importDisabled && agent.action === "create") summary.disabled += 1;
+    if (agent.importDisabled && (agent.action === "create" || agent.action === "update")) {
+      summary.disabled += 1;
+    }
     summary.agents[agent.action] += 1;
     if (agent.conflict) summary.conflicts += 1;
     for (const capability of agent.capabilities) {
@@ -653,6 +730,17 @@ export type ValidatePackTextResult =
 export function validatePackText(text: string): ValidatePackTextResult {
   const inspected = inspectPackText(text);
   if (!inspected.ok) return inspected;
+  const badText = findInvalidText(inspected.value);
+  if (badText.length > 0) {
+    return {
+      ok: false,
+      error: {
+        code: "invalid_pack",
+        message: `The file is not a valid agent pack (${String(badText.length)} field${badText.length === 1 ? "" : "s"} hold characters that cannot be stored).`,
+        issues: badText,
+      },
+    };
+  }
   const parsed = parseAgentPack(inspected.value);
   if (!parsed.ok) {
     const issues = parsed.issues.slice(0, MAX_REPORTED_ISSUES).map((issue) => ({

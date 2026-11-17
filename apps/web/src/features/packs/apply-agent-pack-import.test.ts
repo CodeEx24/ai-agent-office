@@ -173,6 +173,9 @@ describe("applyAgentPackImport", () => {
     ["40001", "stale"],
     ["22023", "invalid"],
     ["P0002", "invalid"],
+    ["22P02", "invalid"],
+    ["22P05", "invalid"],
+    ["22032", "invalid"],
     ["XX000", "failed"],
   ])("maps SQLSTATE %s to %s without repeating any database text", async (sqlstate, code) => {
     const { client } = fakeClient({ capabilities: CATALOG }, () => ({

@@ -7,9 +7,10 @@ const WORKSPACE_B = "19300000-0000-4000-8000-0000000000b1";
 
 /** The only tables a preview may read, and the only columns of each. */
 const ALLOWED_READS: Record<string, string> = {
-  agents: "name, role, model, thinking_effort, prompt, archived_at",
+  agents: "id, name, role, model, thinking_effort, prompt, archived_at",
   skills: "name, version, body",
   capabilities: "key, tier, scope",
+  agent_capabilities: "agent_id, capability",
 };
 
 type Row = Record<string, unknown>;
@@ -144,6 +145,7 @@ describe("previewAgentPackImport", () => {
     ]);
 
     expect(recorder.reads.map((read) => read.table).sort()).toEqual([
+      "agent_capabilities",
       "agents",
       "capabilities",
       "skills",

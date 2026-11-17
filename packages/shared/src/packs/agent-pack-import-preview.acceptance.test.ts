@@ -476,7 +476,7 @@ describe("AC1/AC2: checksum states", () => {
 
 const CONTROL_NAMES: [string, string][] = [
   ["ESC (ANSI)", "A\u001b[31mred\u001b[0m"],
-  ["NUL", "A\u0000B"],
+  // NUL is not cleaned: since AGO-194 the file is refused (the database cannot store it), see the test below.
   ["C1 control", "A\u0085B\u009fC"],
   ["bidi override", "A\u{202e}evil\u{202c}B\u{2066}x\u{2069}"],
   ["line and paragraph separators", "A\u{2028}B\u{2029}C"],
@@ -512,6 +512,20 @@ describe("untrusted text: names are cleaned and bounded in every field the previ
       expect(everything).toContain("A");
     },
   );
+
+  it("refuses a NUL or a lone surrogate with a clean invalid_pack naming the field (AGO-194)", () => {
+    for (const dirty of ["A\u0000B", "A\ud800B", "A\udc00B"]) {
+      const result = previewAgentPackText(
+        JSON.stringify(packOf({ agents: [agent({ name: "Fine", prompt: dirty })] })),
+        context(),
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe("invalid_pack");
+      expect(result.error.issues?.map((issue) => issue.path)).toEqual(["agents.0.prompt"]);
+      expect(JSON.stringify(result.error)).not.toContain("Fine");
+    }
+  });
 
   it("truncates a 120-character name to at most 80 characters plus an ellipsis", () => {
     const long = "N".repeat(120);

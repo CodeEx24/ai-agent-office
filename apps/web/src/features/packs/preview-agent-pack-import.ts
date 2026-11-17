@@ -67,11 +67,11 @@ export async function loadPackImportContext(
   workspaceId: string,
   conflictRule: ConflictRule,
 ): Promise<PreviewContext> {
-  const [agentRows, skillRows, catalogRows] = await Promise.all([
+  const [agentRows, skillRows, catalogRows, grantRows] = await Promise.all([
     readAll((from, to) =>
       client
         .from("agents")
-        .select("name, role, model, thinking_effort, prompt, archived_at")
+        .select("id, name, role, model, thinking_effort, prompt, archived_at")
         .eq("workspace_id", workspaceId)
         .order("name", { ascending: true })
         .range(from, to),
@@ -92,9 +92,25 @@ export async function loadPackImportContext(
         .order("key", { ascending: true })
         .range(from, to),
     ),
+    // What each existing agent holds now: an update adds to it, so the trifecta lint judges the union.
+    readAll((from, to) =>
+      client
+        .from("agent_capabilities")
+        .select("agent_id, capability")
+        .eq("workspace_id", workspaceId)
+        .order("agent_id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
 
+  const heldByAgent = new Map<string, string[]>();
+  for (const grant of grantRows) {
+    const held = heldByAgent.get(grant.agent_id) ?? [];
+    held.push(grant.capability);
+    heldByAgent.set(grant.agent_id, held);
+  }
   const existingAgents: ExistingPackAgent[] = agentRows.map((row) => ({
+    capabilities: heldByAgent.get(row.id) ?? [],
     name: row.name,
     role: row.role,
     model: row.model,

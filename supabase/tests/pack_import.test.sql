@@ -12,7 +12,7 @@
 -- Run: pnpm exec supabase test db (inside the db lock).
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(40);
+select plan(51);
 
 insert into auth.users (id, instance_id, aud, role, email) values
   ('19400000-0000-4000-8000-00000000000a', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'ago194-o@example.test'),
@@ -165,6 +165,60 @@ select throws_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-0000
    {"name":"Risky","action":"update","role":"r","model":"claude-haiku-5-5","thinking_effort":"medium","prompt":"p",
     "daily_budget_cents":100,"capabilities":[],"skills":[],"disabled_reason":null}]}
   $json$::jsonb)$$, '40001', null, 'an archived agent is never updated by an import');
+
+-- 6b. Hardening (fix round 2): explicit action validation, budget types, the trifecta on an update, clean event names.
+select throws_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('a', 64), $json$
+  {"rule":"new_version","skills":[],"agents":[
+   {"name":"Scout","role":"r","model":"claude-haiku-5-5","thinking_effort":"medium","prompt":"p",
+    "daily_budget_cents":100,"capabilities":[],"skills":[]}]}
+  $json$::jsonb)$$, '22023', null, 'an agent entry with no action is refused');
+select throws_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('a', 64), $json$
+  {"rule":"new_version","skills":[],"agents":[
+   {"name":"Scout","action":null,"role":"r","model":"claude-haiku-5-5","thinking_effort":"medium","prompt":"p",
+    "daily_budget_cents":100,"capabilities":[],"skills":[]}]}
+  $json$::jsonb)$$, '22023', null, 'an agent entry with a null action is refused');
+select throws_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('a', 64), $json$
+  {"rule":"new_version","agents":[],"skills":[{"name":"Citing","body":"overwritten?"}]}
+  $json$::jsonb)$$, '22023', null, 'a skill entry with no action is refused');
+select is((select version || ':' || body from public.skills where name = 'Citing' and workspace_id = '194aaaaa-0000-4000-8000-000000000001'),
+  '2:Cite with page numbers.', 'a skill with no action was not written');
+select throws_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('a', 64), $json$
+  {"rule":"skip","skills":[],"agents":[
+   {"name":"Texty","action":"create","role":"r","model":"claude-haiku-5-5","thinking_effort":"medium","prompt":"p",
+    "daily_budget_cents":"12","capabilities":[],"skills":[]}]}
+  $json$::jsonb)$$, '22023', null, 'a budget given as text is refused with 22023, not a cast error');
+select throws_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('a', 64), $json$
+  {"rule":"skip","skills":[],"agents":[
+   {"name":"Fraction","action":"create","role":"r","model":"claude-haiku-5-5","thinking_effort":"medium","prompt":"p",
+    "daily_budget_cents":12.5,"capabilities":[],"skills":[]}]}
+  $json$::jsonb)$$, '22023', null, 'a fractional budget is refused with 22023');
+
+-- An update that completes the trifecta is archived: Scout already holds vault.read (private); the pack adds the
+-- untrusted and outbound legs. Outbound is Tier 3 in the starter catalog, so the workspace lowers it for this test.
+reset role;
+update public.capabilities set tier = 2
+ where workspace_id = '194aaaaa-0000-4000-8000-000000000001' and key = 'message.send_outbound';
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"19400000-0000-4000-8000-00000000000a","role":"authenticated"}', true);
+select lives_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('1', 64), $json$
+  {"rule":"new_version","skills":[],"agents":[
+   {"name":"Scout","action":"update","role":"Senior researcher","model":"claude-haiku-5-5","thinking_effort":"medium",
+    "prompt":"Find sources.","daily_budget_cents":500,"capabilities":["web.search","message.send_outbound"],
+    "skills":[],"disabled_reason":null}]}
+  $json$::jsonb)$$, 'an update that completes the trifecta is applied');
+select isnt((select archived_at from public.agents where name = 'Scout' and workspace_id = '194aaaaa-0000-4000-8000-000000000001'),
+  null, 'the agent that holds all three trifecta legs after the update is archived');
+select is((select detail -> 'agents' -> 0 ->> 'disabled_reason' from public.pack_events where checksum = repeat('1', 64)),
+  'trifecta_combination', 'the event names the trifecta as the reason');
+
+-- Names in the event carry no direction override or zero-width characters.
+select lives_ok($$select public.import_agent_pack('194aaaaa-0000-4000-8000-000000000001', repeat('2', 64),
+  jsonb_build_object('rule', 'skip', 'skills', '[]'::jsonb, 'agents', jsonb_build_array(jsonb_build_object(
+    'name', 'Zed' || chr(8238) || 'x' || chr(8203), 'action', 'create', 'role', 'r', 'model', 'claude-haiku-5-5',
+    'thinking_effort', 'medium', 'prompt', 'p', 'daily_budget_cents', 100, 'capabilities', '[]'::jsonb,
+    'skills', '[]'::jsonb, 'disabled_reason', null))))$$, 'an agent name with bidi and zero-width characters is imported');
+select is((select (agent_names::text || detail::text) ~ (chr(8238) || '|' || chr(8203)) from public.pack_events where checksum = repeat('2', 64)),
+  false, 'the event row holds neither the direction override nor the zero-width space');
 
 -- 7. Isolation: the other workspace was never touched.
 reset role;

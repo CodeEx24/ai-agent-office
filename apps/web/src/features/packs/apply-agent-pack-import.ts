@@ -72,6 +72,9 @@ const UNIQUE_VIOLATION = "23505";
 const SERIALIZATION_FAILURE = "40001";
 const INVALID_PARAMETER = "22023";
 const NO_DATA_FOUND = "P0002";
+const INVALID_TEXT_REPRESENTATION = "22P02";
+const UNTRANSLATABLE_CHARACTER = "22P05";
+const INVALID_JSON_TEXT = "22032";
 
 function codeOf(error: { code?: string }): ApplyPackImportErrorCode {
   switch (error.code) {
@@ -81,8 +84,13 @@ function codeOf(error: { code?: string }): ApplyPackImportErrorCode {
     case UNIQUE_VIOLATION:
     case SERIALIZATION_FAILURE:
       return "stale";
+    // Invalid input, including a value the database cannot cast or store (a bad number, NUL or an invalid Unicode
+    // sequence): the caller's data, not a server fault.
     case INVALID_PARAMETER:
     case NO_DATA_FOUND:
+    case INVALID_TEXT_REPRESENTATION:
+    case UNTRANSLATABLE_CHARACTER:
+    case INVALID_JSON_TEXT:
       return "invalid";
     default:
       return "failed";
