@@ -83,7 +83,7 @@ The checksum is checked here: `verifyPackChecksum` answers `missing`, `valid` or
 
 ### API
 
-`POST /api/agent-packs/import/preview?workspace_id=<uuid>` with `Content-Type: application/json` and the pack file as the body. Unknown query parameters are a 400. Answers are `Cache-Control: private, no-store`.
+`POST /api/agent-packs/import/preview?workspace_id=<uuid>&conflict=skip|rename|new_version` (the rule defaults to `skip`; the apply route takes the same query) with `Content-Type: application/json` and the pack file as the body. Unknown query parameters are a 400. Answers are `Cache-Control: private, no-store`.
 
 | Status | Meaning |
 |---|---|
@@ -223,6 +223,25 @@ flowchart LR
   Build --> Out[preview: create, update, skip, tiers, flags, conflicts, references, blockers]
 ```
 
+Import (apply) flow (AGO-194; the API route is the only caller so far, the command-line `--apply` is AGO-195):
+
+```mermaid
+flowchart LR
+  Api["POST import/route.ts"] --> Guard["rejectAgentCredential, Zod query, requireWorkspaceRole owner"]
+  Guard --> Body["readLimitedBody 5 MB"]
+  Body --> Apply["applyAgentPackImport"]
+  Apply --> Check["validatePackText"]
+  Check --> Load["loadPackImportContext (SELECT only, RLS)"]
+  Load --> Plan["buildImportPlan"]
+  Plan --> Rpc["import_agent_pack (one transaction)"]
+  Rpc --> Rows[("agents, skills, agent_skills, agent_capabilities")]
+  Rpc --> Events[("pack_events, kind import")]
+  Rows -.trigger.-> Modes[("agent_mode_changes")]
+  Rpc --> Out["report + eventId"]
+```
+
+`buildImportPlan` and the preview are built from the same outcome, so a dry run with the same `conflict` rule shows what the apply does. The database function does not trust the plan: it checks the human owner session, validates every entry, reads tiers from its own catalog and writes everything or nothing.
+
 `parseAgentPack` migrates first (version check and upgrade steps), then validates the shape, then runs the cross-field rules and the secret scan. Nothing is read from or written to a database or the network.
 
 ## Main functions and files
@@ -255,10 +274,14 @@ flowchart LR
 | import preview tests | `packages/shared/src/packs/agent-pack-import-preview.test.ts`, `apps/web/src/features/packs/{preview-agent-pack-import,read-limited-body}.test.ts`, `.../cli/run-pack-import.test.ts`, `apps/web/src/app/api/agent-packs/import/preview/route.test.ts` | Limits, preview rules, no writes (a recording client), body reading, route statuses, CLI behaviour. |
 | live preview test | `apps/web/src/app/api/agent-packs/import/preview/route.integration.test.ts` | Runs the real route, role gate and loader against the local Supabase stack as real throw-away users (8 tests): owner succeeds with identical row counts before and after, member, viewer, stranger and another workspace's owner get 403, signed out gets 401, no cross-workspace leak. Skipped unless `E2E_SUPABASE=1`. |
 | `import_agent_pack` | `supabase/migrations/20261117030001_ago_194_pack_import.sql` | The import writer: SECURITY DEFINER, empty `search_path`, human session and owner role checked inside, one transaction for skills, agents, grants and the event. Reads tiers from the catalog; the only mode it writes is Strict (new agents, and the reset of an updated agent). |
+| `loadPackImportContext` | `apps/web/src/features/packs/preview-agent-pack-import.ts` | Reads the workspace as the caller in pages (agents with their mode and grants, skills, catalog) and returns the context both the preview and the apply plan from. |
+| `jsonError`, `NO_STORE`, `REJECTION_STATUS` | `apps/web/src/features/packs/import-route-support.ts` | Response helpers shared by the preview and the apply route. |
+| `applyPackImportQuerySchema` | `apps/web/src/features/packs/preview-request.ts` | The query of the apply route (same schema as the preview, including `conflict`). |
+| `CONFLICT_RULES`, `DEFAULT_CONFLICT_RULE`, `renamedCopyName`, `PACK_INVISIBLE_RANGES`, `isInvisibleCodePoint`, `stripInvisibleText` | `packages/shared/src/packs/agent-pack-import-preview.ts` | The three rules and the default; the copy name on whole graphemes; the one invisible-character set that the SQL scrub is tested against. |
 | `buildImportPlan`, `ImportPlan` | `packages/shared/src/packs/agent-pack-import-plan.ts` (import from `@ago/shared/pack-import-plan`) | Turns the same outcome the preview is built from into the exact rows to write (skipped items omitted). |
 | `applyAgentPackImport`, `ApplyPackImportError` | `apps/web/src/features/packs/apply-agent-pack-import.ts` | Validates, loads the workspace as the caller, plans, then makes the one `import_agent_pack` call and maps the database error to a fixed code. |
 | `POST` | `apps/web/src/app/api/agent-packs/import/route.ts` | Thin route: human-only guard, JSON check, query, owner role before the body is read, size-limited body, apply, status mapping. |
-| import apply tests | `packages/shared/src/packs/agent-pack-import-plan.test.ts`, `apps/web/src/features/packs/apply-agent-pack-import{,.live}.test.ts`, `apps/web/src/app/api/agent-packs/import/route.test.ts`, `supabase/tests/pack_import.test.sql`, `scripts/ago-194-rollback.test.mjs` | Plan per rule, preview equals apply, route statuses, the SQL function (principals, atomicity, isolation), the live run against the local stack (`RUN_DB_TESTS=1`), and the rollback round trip. |
+| import apply tests | `packages/shared/src/packs/agent-pack-import-plan.test.ts`, `apps/web/src/features/packs/apply-agent-pack-import{,.live}.test.ts`, `apps/web/src/app/api/agent-packs/import/route.test.ts`, `packages/shared/src/packs/agent-pack-import-{hardening,hostile-text.acceptance}.test.ts`, `apps/web/src/features/packs/apply-agent-pack-import.{acceptance,acceptance2,acceptance3}.live.test.ts`, `supabase/tests/pack_import.test.sql`, `scripts/ago-194-rollback{,.acceptance3}.test.mjs` | Plan per rule, preview equals apply, route statuses, the SQL function (principals, atomicity, isolation), the live run against the local stack (`RUN_DB_TESTS=1`), and the rollback round trip. |
 | tests | `packages/shared/src/packs/agent-pack*.test.ts`, `apps/web/src/features/packs/**/*.test.ts`, `apps/web/src/app/api/agent-packs/export/route.test.ts`, `supabase/tests/pack_events.test.sql` | Schema, migration, secret scan, JSON Schema staleness, export, checksum, route, CLI, no-service-role scan, table rules. |
 | live test | `apps/web/src/app/api/agent-packs/export/route.integration.test.ts` | Runs the real route, role check, loader, `record_pack_export` and CLI against the local Supabase stack as real throw-away users (42 tests). Skipped unless `E2E_SUPABASE=1`, so plain `pnpm test` needs no database. |
 
@@ -271,7 +294,7 @@ flowchart LR
 - **Timing tests are growth-ratio checks.** The tests that guard linear cost compare run time at two input sizes (4x the text must cost under 11x the time, best of 5 runs, 2 ms floor), not a fixed number of milliseconds, so they do not fail on slow CI machines.
 - **Versions.** `packVersion` is required. A newer version is refused with "update the app"; a gap in the chain or a step that does not bump the version is an error on `packVersion`. Migration does not mutate its input.
 - **Untrusted text.** All pack text (prompts, skills, notes) is data, never instructions to the platform.
-- **Not checked by the format.** Model allowlist, budget cap, capability tiers and Strict mode are not part of the schema; the import preview (AGO-193) checks and reports them, and applying a pack must enforce them again.
+- **Not checked by the format.** Model allowlist, budget cap, capability tiers and Strict mode are not part of the schema; the import preview (AGO-193) checks and reports them, and the import (AGO-194) enforces them again: the plan drops what is not allowed and the database function re-reads every tier from the catalog.
 - **Export edge cases.** A grant whose catalog row is gone is refused (`invalid_pack`) rather than exported with a guessed scope. A repeated agent id counts once. Archived agents are exported only when named. A failed event write fails the whole export.
 - **Running the live export test.** It needs the local stack and the database lock, and only runs with `E2E_SUPABASE=1`:
   `node scripts/db-lock.mjs acquire <KEY>`, `pnpm exec supabase db reset`, then `E2E_SUPABASE=1 pnpm --filter @ago/web exec vitest run src/app/api/agent-packs/export/route.integration.test.ts`, then `node scripts/db-lock.mjs release <KEY>`. Without the flag the file is skipped.
