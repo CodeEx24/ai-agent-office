@@ -2,14 +2,19 @@ import type { HandoffChain, HandoffParty, NarrowedPermissions } from "@ago/share
 
 /**
  * Persistence port for handoffs (AGO-81). A handoff IS a task row: `taskId` is the new task. The Postgres
- * implementation arrives with the schema slot (new columns on `tasks`, written only by a `SECURITY DEFINER`
- * function for `service_role`; agent roles can never write `requesterMemberId` or `narrowed`). Until then the
- * in-memory store in `handoff-store.test-helpers.ts` is the only implementation.
+ * implementation is `pg-handoff-store.ts` (new columns on `tasks`, written only by `SECURITY DEFINER` functions for
+ * `service_role`; agent roles can never write `requesterMemberId` or `narrowed`). The in-memory store in
+ * `handoff-store.test-helpers.ts` is test-only.
  */
 export interface HandoffRecord {
   readonly taskId: string;
   readonly workspaceId: string;
   readonly fromAgentId: string;
+  /**
+   * The sender's run when inserting: the database reads the sender and the chain from it, so a stored sender id is
+   * never trusted. Null on a record read back (the run is not kept on the task).
+   */
+  readonly senderRunId: string | null;
   readonly toAgentId: string;
   /** The human member the whole chain acts for. Copied from the root task, never from agent input. */
   readonly requesterMemberId: string;

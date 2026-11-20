@@ -7,7 +7,7 @@ import { createClaudeProvider } from "./claude-provider.js";
 import { createModelRouter, createPgAgentModelSource } from "./model-routing.js";
 import { createPgPolicySource } from "../policy/index.js";
 import { createRunEventEmitter, createPgRunEventStore } from "../events/index.js";
-import { createHandoffWiring, createUnavailableHandoffStore } from "../handoff/index.js";
+import { createHandoffWiring, createPgHandoffStore } from "../handoff/index.js";
 import { createPgCredentialStore } from "../identity/index.js";
 import { createPgKillSwitchGuard } from "../kill-switch/index.js";
 import { createPgGrantedCapabilitySource, createToolOffer } from "./tool-offer.js";
@@ -39,12 +39,11 @@ export function createProductionAgentExecutor(options: {
     return undefined;
   }
   // AGO-81: handoffs are tasks. The policy hook clamps a handoff run to the intersection of both agents' grants, and
-  // `handoff_task` is the only way an agent gives work to another. The Postgres store lands with the schema slot;
-  // until then the store is fail-closed (no handoff exists, `handoff_task` is refused).
+  // `handoff_task` is the only way an agent gives work to another. A handoff is a task row written by a database function.
   const policySource = createPgPolicySource(pool);
   const handoff = createHandoffWiring({
     source: policySource,
-    store: createUnavailableHandoffStore(),
+    store: createPgHandoffStore(pool),
     emitterFor: (context) =>
       createRunEventEmitter({
         workspaceId: context.workspaceId,

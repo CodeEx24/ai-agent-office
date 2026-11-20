@@ -68,6 +68,7 @@ export async function createHandoff(
     taskId,
     workspaceId: sender.workspaceId,
     fromAgentId: sender.agentId,
+    senderRunId: sender.runId,
     toAgentId: decision.request.to_agent_id,
     requesterMemberId: decision.chain.requesterMemberId,
     path: decision.chain.path,

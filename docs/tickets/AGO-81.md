@@ -4,7 +4,7 @@ Links
 - Ticket: https://stratyge.atlassian.net/browse/AGO-81
 - PRs: https://github.com/CodeEx24/ai-agent-office/pull/91
 - Related: AGO-148 (identity, done), AGO-34 (policy engine, done), AGO-160 (claims), AGO-188 (cross-department requests, unblocked by this), AGO-117 (Manager splits goals, follows this)
-- Status: In review (draft PR 91). Spec accepted 2026-11-20; schema slot not yet granted (persistence follow-up)
+- Status: In review (draft PR 91). Spec accepted 2026-11-20; schema slot granted and used 2026-11-20 (migration, Postgres store, pgTAP)
 
 ## Overview
 Handoffs are tasks. A sending agent creates a task for another agent; the receiver gets the smaller permission set and the original human requester's identity. Free-form agent chat does not exist. Epic EP-17, wave 3, risk **high** (authorization between agents).
@@ -47,10 +47,15 @@ Everything is a pure, deterministic function plus a thin worker port, so the sch
 
 ## Deviations (2026-11-20)
 - The `handoff_task` tool reuses `tasks.manage` (tier 1) instead of a new `tasks.handoff` capability: a new catalog row needs a seed migration, which waits for the schema slot.
-- **Wiring done (2026-11-20, SCOPE granted by the coordinator).** `apps/worker/src/agent/wire.ts` registers `handoff_task` in the production tool registry and uses `createHandoffPolicyHook` as the policy hook, through `createHandoffWiring` (`apps/worker/src/handoff/handoff-wiring.ts`) so the edit in `wire.ts` is one small block (AGO-85 has the same grant in that file; the second branch to merge does a mechanical merge). Until the Postgres store lands, the store is the fail-closed `createUnavailableHandoffStore()`: no handoff exists, so every run keeps its own grants, and `handoff_task` is refused. `acceptHandoff` is not called by the run loop yet (needs the Postgres store to find the task a run belongs to).
+- **Wiring done (2026-11-20, SCOPE granted by the coordinator).** `apps/worker/src/agent/wire.ts` registers `handoff_task` in the production tool registry and uses `createHandoffPolicyHook` as the policy hook, through `createHandoffWiring` (`apps/worker/src/handoff/handoff-wiring.ts`) so the edit in `wire.ts` is one small block (AGO-85 has the same grant in that file; the second branch to merge does a mechanical merge). The store is now `createPgHandoffStore(pool)` (see the persistence entry below). `createUnavailableHandoffStore()` stays as a fail-closed store for tests. `acceptHandoff` is not called by the run loop yet: starting the receiver's run for a handoff task belongs to the queue and is a follow-up.
 - Design item 6 (agent-token rejection test) needs no new test: no route is added, and `hasAgentCredential` is already covered by AGO-148.
 - The behavioural half of the no-chat proof checks that only the task row is written and a free-form field is refused. The untrusted-data wrapping of the task text at the receiver belongs to the context builder (AGO-23) and is not re-tested here.
-- Persistence (D5) is NOT built: the owner has not granted the schema slot yet (ask again after PR 88 merges). The Postgres store, the `tasks` columns, the `SECURITY DEFINER` function and the pgTAP tests are follow-up work in this ticket once the slot is granted.
+- **Persistence built (2026-11-20, schema slot granted after PR 88 merged).** Migration `20261120020001_ago_81_agent_handoffs.sql` (rollback in `supabase/rollbacks/`), `pg-handoff-store.ts` (replaces the fail-closed store in `agent/wire.ts`), pgTAP `supabase/tests/agent_handoffs.test.sql` and a live-DB test `pg-handoff-store.integration.test.ts`.
+  - D5 changes: two columns beyond the plan, `handoff_path uuid[]` (the chain, so it is stored rather than re-derived by walking parents) and `handoff_run_id` (the receiver's accepting run, so `findByRun` is one indexed lookup). Two functions, `create_handoff_task` and `accept_handoff_task`, executable by `service_role` only (the AGO-160 convention: `EXECUTE` grants, no in-function role check; the worker connects as the database owner).
+  - The function does not trust the worker: it reads the sender from the run, derives the requester and chain from the sender's own task, and refuses a narrowed set wider than the sender's current grants (capability, tier, mode). Depth, cycle and self handoff are also table CHECK constraints.
+  - `HandoffRecord` gained `senderRunId` (null on a record read back), so the database can derive the sender from the run.
+  - The party's data scope is empty: agents have no stored vault scope yet, so no data passes on in a handoff until a scope source exists (with AGO-188). Empty is the safe direction.
+  - Remaining budget is the agent's daily budget minus today's UTC usage; it is read at handoff time, not reserved (D3 says reserved; reserving belongs with the budget ledger and is a follow-up).
 
 ## Boundaries
 - **Always:** scope by workspace_id; policy check before every tool call; Zod at the boundary; intersect, never union.
@@ -61,13 +66,19 @@ Everything is a pure, deterministic function plus a thin worker port, so the sch
 None for humans. One new agent tool (`handoff_task`).
 
 ## Database changes
-Deferred to the schema slot (D5). A rollback file will accompany it. None in the first commits.
+Migration `supabase/migrations/20261120020001_ago_81_agent_handoffs.sql`, rollback `supabase/rollbacks/20261120020001_ago_81_agent_handoffs.down.sql`.
+- `public.tasks`: `parent_task_id`, `handoff_from_agent_id`, `requester_member_id`, `handoff_depth` (1..3), `handoff_path uuid[]`, `handoff_grants jsonb`, `handoff_run_id`; all null on an ordinary task, all-or-none CHECK, composite foreign keys (workspace scoped), unique index on `(workspace_id, handoff_run_id)`.
+- No handoff column is in any grant for `anon` or `authenticated`. RLS on `tasks` is unchanged.
+- `public.create_handoff_task(...)` and `public.accept_handoff_task(...)`: SECURITY DEFINER, `search_path = ''`, `EXECUTE` for `service_role` only.
+- No cycle: a CHECK compares the (at most four) path entries pairwise; no helper function exists, because one would be executable by anon and fail the RLS catalog tests.
 
 ## Dependencies on other tickets
 AGO-148 (credential claims, read-only), AGO-34 (policy engine, read-only), AGO-160 (claims, read-only), AGO-164 (event schemas, D6).
 
 ## Known limitations
-- Until the migration lands, handoffs persist only in the in-memory store; in production the store is fail-closed (no handoff can be created).
+- A party's data scope is empty (agents have no stored vault scope yet), so a handoff passes on no data scope until AGO-188 adds one.
+- Budget is read at handoff time, not reserved against the sender.
+- Nothing starts the receiver's run for a handoff task yet, so `acceptHandoff` is not called by the run loop; the queue follow-up does that.
 - The `handoff_task` tool reuses capability `tasks.manage` (tier 1) instead of a new `tasks.handoff` capability, which would need a catalog seed. Accepted by the coordinator. Any agent that may manage tasks can therefore start a handoff; the handoff rule, not the capability, bounds what it passes on.
 - Data scope is modelled as path prefixes; richer scopes belong to AGO-188.
 

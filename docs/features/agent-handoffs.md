@@ -8,7 +8,7 @@ Agents never chat. One agent gives work to another only by creating a **task** f
 None yet. A handoff is a worker feature; a chain view is a follow-up.
 
 ## Data model
-Handoff state is a task row plus a stored chain (`HandoffRecord`): task id, sender, receiver, `requesterMemberId`, `path`, `depth`, the narrowed permissions, and the task title and description. Persistence is behind the `HandoffStore` port. **The Postgres implementation and its migration are not in this version** (they wait for the schema slot); the in-memory store in `handoff-store.test-helpers.ts` is test-only.
+Handoff state is a task row plus a stored chain (`HandoffRecord`): task id, sender, receiver, `requesterMemberId`, `path`, `depth`, the narrowed permissions, and the task title and description. Persistence is behind the `HandoffStore` port. The Postgres implementation (`pg-handoff-store.ts`) stores a handoff as a `tasks` row with extra handoff columns (parent, sender, requester, depth, path, narrowed grants, accepting run). Two database functions (`create_handoff_task`, `accept_handoff_task`, `service_role` only) are the only writers: they read the sender from the run, derive the requester and chain from the sender's own task, and refuse a narrowed set wider than what the sender holds. No handoff column is writable by an agent token or a person. The in-memory store in `handoff-store.test-helpers.ts` is test-only.
 
 ## Data flow
 ```mermaid
@@ -44,14 +44,16 @@ flowchart LR
 | `createHandoff`, `acceptHandoff` | `apps/worker/src/handoff/create-handoff.ts` | Writes the task row, emits the events |
 | `createHandoffTool` | `apps/worker/src/handoff/handoff-tool.ts` | The `handoff_task` agent tool (capability `tasks.manage`, tier 1) |
 | `HandoffStore` | `apps/worker/src/handoff/handoff-store.ts` | Persistence port |
-| `createHandoffWiring`, `createUnavailableHandoffStore` | `apps/worker/src/handoff/handoff-wiring.ts` | The policy hook and tool that `agent/wire.ts` registers; fail-closed store until Postgres |
+| `createHandoffWiring`, `createUnavailableHandoffStore` | `apps/worker/src/handoff/handoff-wiring.ts` | The policy hook and tool that `agent/wire.ts` registers; a fail-closed store for tests |
+| `createPgHandoffStore` | `apps/worker/src/handoff/pg-handoff-store.ts` | Postgres store: reads parties and chains, writes only through the two functions |
+| `create_handoff_task`, `accept_handoff_task` | `supabase/migrations/20261120020001_ago_81_agent_handoffs.sql` | The only writers of the handoff columns; re-check the rules in SQL |
 
 ## Run events
 `handoff.created` and `handoff.accepted` gained optional `from_agent_id`, `task_id`, `on_behalf_of` and `depth` (set by the worker from the stored chain). Old events without them still parse.
 
 ## Known limits
-- No Postgres store or migration yet: `tasks` needs `parent_task_id`, `handoff_from_agent_id`, `requester_member_id`, `handoff_depth` and a narrowed-grants snapshot, written only server-side. Until then handoffs exist only in the in-memory test store.
-- The production run loop is wired (`agent/wire.ts` uses `createHandoffPolicyHook` and registers `handoff_task`), but with a fail-closed store until the Postgres store lands: no handoff exists, so runs keep their own grants and `handoff_task` is refused. The run loop does not call `acceptHandoff` yet.
+- The production run loop is wired (`agent/wire.ts` uses `createHandoffPolicyHook` and registers `handoff_task`) with the Postgres store. Nothing starts the receiver's run for a handoff task yet, so the run loop does not call `acceptHandoff`; the queue follow-up does that. Until a run is linked, a handoff task exists but no run is clamped by it.
+- A party's data scope is empty (agents have no stored vault scope yet), so a handoff passes on no data scope until AGO-188 adds one. Budget is read at handoff time, not reserved against the sender.
 - A dedicated `tasks.handoff` capability was not added (it needs a catalog seed); the tool reuses `tasks.manage`, so any agent allowed to manage tasks can start a handoff. The handoff rule bounds what it passes on.
 - Data scope is a list of path prefixes; richer scopes belong to AGO-188.
 
