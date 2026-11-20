@@ -49,6 +49,14 @@ describe("approvals page opened from an agent card", () => {
     expect(screen.getByTestId("inbox-stub")).toBeInTheDocument();
   });
 
+  it("the cue offers no way to decide, and an empty inbox still shows the cue", async () => {
+    inbox.value = { workspaceId: "w1", cards: [], canDecide: true, generatedAtMs: 0 };
+    await renderPage({ approval: "decided-1" });
+    const cue = screen.getByTestId("approval-link-not-pending");
+    expect(cue.querySelector("button, a, input")).toBeNull();
+    expect(cue).toHaveAttribute("role", "status");
+  });
+
   it("shows no cue without the query, or with an invalid one", async () => {
     await renderPage({});
     expect(screen.queryByTestId("approval-link-not-pending")).toBeNull();
