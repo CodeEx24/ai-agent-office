@@ -439,6 +439,100 @@ test.describe("AGO-146: task board (local stack)", () => {
     expect((await svcRows("tasks", `workspace_id=eq.${workspaceId}&select=id`)).length).toBe(14);
   });
 
+  test("round 2: approval link name and tap target, waiting-on-you banner", async ({
+    page,
+    baseURL,
+  }) => {
+    if (!baseURL) throw new Error("baseURL is not configured");
+    const owner = await createUser("board-banner");
+    const workspaceId = await onboard(owner, "Banner Co");
+    const agent = await hireAgent(owner, workspaceId, uniq("Worker"));
+    const tOld = await task(workspaceId, "Banner approval older", { agent_id: agent.id });
+    const tNew = await task(workspaceId, "Banner approval newer", { agent_id: agent.id });
+    const runOld = await startRun(workspaceId, tOld, agent);
+    const approvalOld = await requestApproval(workspaceId, runOld, agent, 2);
+    const runNew = await startRun(workspaceId, tNew, agent);
+    const approvalNew = await requestApproval(workspaceId, runNew, agent, 1);
+
+    await signInWithSessionCookie(page.context(), baseURL, owner);
+
+    // ---- Link name and 44 px hit area at 375 px, light and dark ---------------------------------------------------
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.goto("/app/board");
+    await live(page);
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await expect(page.locator("html")).toHaveClass(scheme === "dark" ? /dark/ : /^((?!dark).)*$/);
+      for (const title of ["Banner approval older", "Banner approval newer"]) {
+        const link = page.getByRole("link", { name: `Open the approval for ${title}` });
+        await expect(link).toHaveCount(1);
+        await link.evaluate((el) => {
+          el.scrollIntoView({ block: "center" });
+        });
+        const box = await link.boundingBox();
+        expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+        if (SHOTS_DIR && title === "Banner approval older") {
+          await page.screenshot({
+            path: join(SHOTS_DIR, `AGO-146-R2-step-01-link-name-and-hit-area-375-${scheme}.png`),
+          });
+        }
+      }
+    }
+    await page.emulateMedia({ colorScheme: "light" });
+    await expect(
+      page.getByRole("link", { name: "Open the approval for Banner approval older" }),
+    ).toHaveAttribute("href", new RegExp(`approval=${approvalOld}#`));
+
+    // ---- Banner at 1280 px, visible without scrolling -------------------------------------------------------------
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/app/board");
+    await live(page);
+    const banner = page.getByTestId("board-waiting-banner");
+    await expect(banner).toHaveText("2 tasks are waiting on you. Jump to Waiting on you");
+    await expect(banner).toBeInViewport({ ratio: 1 });
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    await shot(page, "AGO-146-R2-step-02-banner-visible-1280", { dark: true });
+
+    // ---- The jump link brings the Waiting on you column into view -------------------------------------------------
+    await banner.getByRole("link", { name: "Jump to Waiting on you" }).click();
+    await expect(page).toHaveURL(/#board-column-waiting_on_you-title$/);
+    await expect(
+      column(page, "waiting_on_you").getByRole("heading", { name: /Waiting on you/ }),
+    ).toBeInViewport({ ratio: 1 });
+    await shot(page, "AGO-146-R2-step-03-after-jump-waiting-column-in-view", { dark: true });
+
+    // ---- The banner follows the board: fewer waiting, then none ---------------------------------------------------
+    await event(runOld, workspaceId, "approval.decided", {
+      approval_id: approvalOld,
+      outcome: "approved",
+      decided_by: "human",
+      payload_hash: hex64(),
+    });
+    await expect(banner).toHaveText("1 task is waiting on you. Jump to Waiting on you", {
+      timeout: 20_000,
+    });
+    await event(runNew, workspaceId, "approval.decided", {
+      approval_id: approvalNew,
+      outcome: "approved",
+      decided_by: "human",
+      payload_hash: hex64(),
+    });
+    await expect(banner).toHaveCount(0, { timeout: 20_000 });
+    await shot(page, "AGO-146-R2-step-04-banner-gone-nothing-waiting-1280", { dark: true });
+
+    // ---- A board with nothing waiting has no banner ---------------------------------------------------------------
+    const quiet = await createUser("board-quiet");
+    const quietWs = await onboard(quiet, "Quiet Co");
+    await task(quietWs, "Only an inbox task");
+    await page.context().clearCookies();
+    await signInWithSessionCookie(page.context(), baseURL, quiet);
+    await page.goto("/app/board");
+    await live(page);
+    await expect(cardIn(page, "inbox", "Only an inbox task")).toBeVisible();
+    await expect(page.getByTestId("board-waiting-banner")).toHaveCount(0);
+    await shot(page, "AGO-146-R2-step-05-no-banner-when-nothing-waits-1280", { dark: true });
+  });
+
   test("an empty board, the loading state, and other people's boards", async ({
     page,
     baseURL,
