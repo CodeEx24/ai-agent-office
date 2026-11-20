@@ -45,6 +45,13 @@ Everything is a pure, deterministic function plus a thin worker port, so the sch
 | D6 | Run events | extend `handoff.created` / `handoff.accepted` with optional `from_agent_id`, `task_id`, `on_behalf_of`, `depth` (additive, optional, `.strict()` kept). This edits `packages/shared/src/events/run-events.ts`, outside the listed owned paths: **SCOPE ask** | owner (via coordinator), 2026-11-20: accepted |
 | D7 | Free text in `handoff.created.reason` | keep as the existing bounded field but forbid it from carrying task text: set to a fixed code in the handoff module | owner (via coordinator), 2026-11-20: accepted |
 
+## Deviations (2026-11-20)
+- The `handoff_task` tool reuses `tasks.manage` (tier 1) instead of a new `tasks.handoff` capability: a new catalog row needs a seed migration, which waits for the schema slot.
+- The `handoff_task` tool is built and tested but not registered in the production tool registry, and the run loop does not yet call `createHandoffPolicyHook` / `acceptHandoff` (wiring in `apps/worker/src/agent/wire.ts` is outside the owned paths; follow-up).
+- Design item 6 (agent-token rejection test) needs no new test: no route is added, and `hasAgentCredential` is already covered by AGO-148.
+- The behavioural half of the no-chat proof checks that only the task row is written and a free-form field is refused. The untrusted-data wrapping of the task text at the receiver belongs to the context builder (AGO-23) and is not re-tested here.
+- Persistence (D5) is NOT built: the owner has not granted the schema slot yet (ask again after PR 88 merges). The Postgres store, the `tasks` columns, the `SECURITY DEFINER` function and the pgTAP tests are follow-up work in this ticket once the slot is granted.
+
 ## Boundaries
 - **Always:** scope by workspace_id; policy check before every tool call; Zod at the boundary; intersect, never union.
 - **Ask first:** the migration (schema slot), the `run-events.ts` edit.
