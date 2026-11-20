@@ -3,7 +3,8 @@
 Ticket: https://stratyge.atlassian.net/browse/AGO-23
 PRs: https://github.com/CodeEx24/ai-agent-office/pull/80
 Related: blocked by AGO-145 (context builder, done) · unblocks AGO-24 (quarantined reader), AGO-187 (webhooks) · live-model red team is AGO-129 (follow-up)
-Type: Feature · Risk: High · Status: In review
+Follow-ups: AGO-231 (one shared invisible-character set), AGO-129 (red team against a live model)
+Type: Feature · Risk: High · Status: Merged
 
 ## Overview
 
@@ -113,4 +114,10 @@ AGO-129 live-model injection red team.
 
 ## Outcome
 
-Feature guide: [docs/features/untrusted-content.md](../features/untrusted-content.md). The rest is filled at merge.
+Feature guide: [docs/features/untrusted-content.md](../features/untrusted-content.md).
+
+- Merged via PR #80 after 5 rounds (rounds 4 and 5 past the cap, accepted under the owner's standing rule; recorded above). Final approver decision: APPROVE (round 5).
+- Pre-merge re-gate on the branch re-synced with main (3222352): all 7 checks PASS. An earlier re-gate failed only in live-database worker tests while other tickets ran DB work without the lock; the clean re-run passed.
+- Deviation: none from the accepted design. The per-prompt random id is the primary boundary; tag escaping is a second layer (owner q2, 2026-11-17).
+- Known limitation: visible look-alike characters are not normalised; the per-prompt id still holds (see Known limitations).
+- Follow-ups: AGO-231 (one shared invisible-character set across modules), AGO-129 (live-model red team in CI).
