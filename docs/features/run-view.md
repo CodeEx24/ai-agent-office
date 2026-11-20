@@ -48,7 +48,9 @@ flowchart LR
 | `createRunLogFeed` | `run-view/run-log-feed.ts` | Live stream, catch-up, gap fill, reconnect. |
 | `RunView` | `run-view/RunView.tsx` | The screen. |
 | `ExpandableText` | `run-view/ExpandableText.tsx` | Plain-text rendering with a cut and an expand control. |
-| `createRunLiveSource` | `run-view/live-source.ts` | The browser stream source (see limitations). |
+| `createRunLiveSource` | `run-view/live-source.ts` | The browser stream source: `createSupabaseOfficeSource` over the user-scoped browser client (AGO-150), built from the public URL and anon key. `null` without them ("Not live"). |
+| `describeBudgetStop` | `run-view/budget-stop-text.ts` | Title, "Used X of Y" and next step for each budget scope. |
+| `AppNotFound` | `app/app/not-found.tsx` | Not-found page inside the app shell. |
 
 ## Rules and edge cases
 - **Untrusted text.** Agent messages, error text and tool names are rendered as plain text nodes only: no HTML, no Markdown, no links. Text over 280 characters is cut with a "Show more" control.
@@ -62,8 +64,9 @@ flowchart LR
 
 ## Known limitations
 - **Tool inputs and results are not shown.** The events hold only hashes; the scrubbed text lives in `private.run_checkpoints`, which the web app cannot read. A follow-up must store it somewhere members can read (needs the schema slot).
-- **Live updates need the browser Supabase client.** `createRunLiveSource` returns `null` until `apps/web/src/lib/supabase/browser.ts` (AGO-150) is on `main`; until then the page shows the log the server read, marked "Not live". Wiring is `createSupabaseOfficeSource(browserClient)`.
-- A run with more than 5,000 events loads the rest in the browser through the catch-up read.
+- **Realtime cold start.** Right after `supabase db reset` the first insert may not be pushed. The feed recovers on the next row or a reconnect (the catch-up read). `createSupabaseOfficeSource` drops a pushed row silently if its run lookup throws.
+- **The budget banner follows the event, not the outcome.** The worker can record a `ledger` budget event and carry on, and the page would still say the run was stopped.
+- A run with more than 5,000 events loads the rest in the browser through the catch-up read. The page is marked cut only when a further row exists, so a run of exactly 5,000 is complete.
 
 ## How to extend it
 - New event type: add its label in `describe()` in `run-log.ts`; until then it shows as a visible "Unrecognised event" line.
