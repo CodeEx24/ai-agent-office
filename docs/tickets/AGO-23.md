@@ -71,6 +71,7 @@ AGO-145 (context builder, done). AGO-167 (tool results as retrieved items). Unbl
 | Boundary format | static tag + escaping / per-prompt random id | per-prompt random id, escaping kept for any tag-like sequence whatever id it carries (q2) | owner, 2026-11-17 |
 | Datamarking | none / mark whitespace in web and email text | none; possible follow-up only if the AGO-129 red team shows a need (q3) | owner, 2026-11-17 |
 | Boundary id strength | - | at least 96 bits of crypto randomness per prompt, never derived from content or run ids; not in logs or run_events beyond what is already stored for the prompt | owner build note, 2026-11-17 |
+| Round 4 past the round cap | escalate / allow one more round limited to the round 3 finding | round 4 approved, limited to the single round 3 CHANGES finding (C0/C1 control characters bypass the gap predicates) | owner via standing rule (keep accepting the recommended options; precedent AGO-37), 2026-11-20 |
 
 ## Known limitations
 Visible look-alikes that NFKD does not fold (Cyrillic letters in the tag name, a different bracket) are not escaped; accepted in review round 1 because they read as another word, carry no valid id and the boundary rule still holds.
@@ -81,6 +82,9 @@ Security review found the tag gap pattern missed invisible characters outside `p
 
 ## Review round 2 fix (2026-11-17)
 The tester found the round 1 regexes backtracked (quadratic to n^2.7 on a `<` followed by a long run of combining marks, hitting `stripPartialDelimiter` on every truncated item). The regexes are replaced by a single-pass scanner over the NFKD copy: set-lookup predicates (`isHidden`, `isGap`), a small matcher for the tag name, and a scan from each `<` that stops at the next `<`, so work is linear. Behaviour is unchanged (all earlier normalisation and injection tests pass untouched); output is still built from the NFKD copy and recomposed with NFC, so no offset mapping back to the original is needed. New time-bound tests (100k characters, under 200 ms, both functions, six hostile shapes, plus a doubling check).
+
+## Review round 3 fix (2026-11-20)
+Both reviewers found C0/C1 control characters (60 code points, including U+0085, which is White_Space but not JS `s`) were not gap characters, so `</untrusted<U+0001>data>` was not escaped. Fix: `p{Cc}` added to `HIDDEN_CHAR` and `p{White_Space}` used for the space predicate in `untrusted.ts`. Control characters added to the hidden-character corpus (per-character tests) and to the property-test alphabet and reference copy; 28 tests fail without the fix. Nothing else changed.
 
 ## Follow-up tasks
 AGO-129 live-model injection red team.

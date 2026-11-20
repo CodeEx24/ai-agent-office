@@ -60,12 +60,12 @@ const MAX_SOURCE_LENGTH = 200;
 /**
  * Characters that can sit between the letters of our tag name, or between `<`, `/` and the name,
  * without changing how a reader sees it: whitespace, `_` and `-`, and every invisible or combining
- * character (format characters, Default_Ignorable_Code_Point such as variation selectors, Hangul
+ * character (control characters incl. C1 such as U+0085, format characters, Default_Ignorable_Code_Point such as variation selectors, Hangul
  * fillers, the combining grapheme joiner and tag characters, and combining marks). Detection runs on
  * the NFKD form, so a precomposed letter with an accent is a letter plus a mark that this class skips.
  */
-const HIDDEN_CHAR = /^[\p{Cf}\p{Default_Ignorable_Code_Point}\p{Mn}\p{Me}]$/u;
-const SPACE_CHAR = /^\s$/u;
+const HIDDEN_CHAR = /^[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\p{Mn}\p{Me}]$/u;
+const SPACE_CHAR = /^\p{White_Space}$/u;
 /** The tag name without its underscore: letters only, compared case-insensitively. */
 const TAG_LETTERS = UNTRUSTED_TAG.replace("_", "");
 

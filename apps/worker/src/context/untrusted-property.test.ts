@@ -43,9 +43,9 @@ function createRng(seed: number): () => number {
  * only in this test file, to compare outputs on non-pathological input; the product must not use it
  * (it backtracks quadratically on a `<` followed by a long run of combining marks).
  */
-const REF_HIDDEN = String.raw`\p{Cf}\p{Default_Ignorable_Code_Point}\p{Mn}\p{Me}`;
-const REF_LEAD = String.raw`[\s${REF_HIDDEN}]*`;
-const REF_GAP = String.raw`[\s${REF_HIDDEN}_-]*`;
+const REF_HIDDEN = String.raw`\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\p{Mn}\p{Me}`;
+const REF_LEAD = String.raw`[\p{White_Space}${REF_HIDDEN}]*`;
+const REF_GAP = String.raw`[\p{White_Space}${REF_HIDDEN}_-]*`;
 const REF_LETTERS = "untrusteddata".split("");
 const REF_TAG_LOOKALIKE = new RegExp(
   String.raw`<(?=${REF_LEAD}/?${REF_LEAD}${REF_LETTERS.join(REF_GAP)})`,
@@ -137,6 +137,10 @@ const HIDDEN_ALPHABET = [
   "‮",
   "\u{E0041}",
 ];
+// C0 and C1 control characters (incl. U+0085, which is White_Space but not JS \s), added in round 4.
+HIDDEN_ALPHABET.push(
+  ...[0x00, 0x01, 0x1b, 0x7f, 0x85, 0x9f].map((code) => String.fromCharCode(code)),
+);
 const SPACE_ALPHABET = [" ", "\t", "\n", " ", " "];
 const GAP_ALPHABET = [...HIDDEN_ALPHABET, ...SPACE_ALPHABET, "_", "-"];
 const LETTERS = Array.from("untrusted_data");
