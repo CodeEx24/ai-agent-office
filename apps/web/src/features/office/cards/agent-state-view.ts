@@ -1,4 +1,4 @@
-import { AGENT_OFFICE_STATES, type AgentOfficeStateName } from "@ago/shared";
+import { AGENT_OFFICE_STATES, type AgentOfficeStateName } from "@ago/shared/office";
 
 /** The shape each state is drawn with. Color is never the only signal: every state has its own shape and label. */
 export type AgentStateShape = "circle-dash" | "gear" | "bubble" | "link" | "bell" | "triangle";

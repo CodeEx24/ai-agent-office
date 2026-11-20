@@ -4,7 +4,7 @@ import {
   createOfficeState,
   type OfficeCursor,
   type OfficeState,
-} from "@ago/shared";
+} from "@ago/shared/office";
 
 import type {
   OfficeEventSource,
