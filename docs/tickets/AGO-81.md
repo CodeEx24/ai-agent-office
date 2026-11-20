@@ -47,7 +47,7 @@ Everything is a pure, deterministic function plus a thin worker port, so the sch
 
 ## Deviations (2026-11-20)
 - The `handoff_task` tool reuses `tasks.manage` (tier 1) instead of a new `tasks.handoff` capability: a new catalog row needs a seed migration, which waits for the schema slot.
-- The `handoff_task` tool is built and tested but not registered in the production tool registry, and the run loop does not yet call `createHandoffPolicyHook` / `acceptHandoff` (wiring in `apps/worker/src/agent/wire.ts` is outside the owned paths; follow-up).
+- **Wiring done (2026-11-20, SCOPE granted by the coordinator).** `apps/worker/src/agent/wire.ts` registers `handoff_task` in the production tool registry and uses `createHandoffPolicyHook` as the policy hook, through `createHandoffWiring` (`apps/worker/src/handoff/handoff-wiring.ts`) so the edit in `wire.ts` is one small block (AGO-85 has the same grant in that file; the second branch to merge does a mechanical merge). Until the Postgres store lands, the store is the fail-closed `createUnavailableHandoffStore()`: no handoff exists, so every run keeps its own grants, and `handoff_task` is refused. `acceptHandoff` is not called by the run loop yet (needs the Postgres store to find the task a run belongs to).
 - Design item 6 (agent-token rejection test) needs no new test: no route is added, and `hasAgentCredential` is already covered by AGO-148.
 - The behavioural half of the no-chat proof checks that only the task row is written and a free-form field is refused. The untrusted-data wrapping of the task text at the receiver belongs to the context builder (AGO-23) and is not re-tested here.
 - Persistence (D5) is NOT built: the owner has not granted the schema slot yet (ask again after PR 88 merges). The Postgres store, the `tasks` columns, the `SECURITY DEFINER` function and the pgTAP tests are follow-up work in this ticket once the slot is granted.
@@ -67,7 +67,8 @@ Deferred to the schema slot (D5). A rollback file will accompany it. None in the
 AGO-148 (credential claims, read-only), AGO-34 (policy engine, read-only), AGO-160 (claims, read-only), AGO-164 (event schemas, D6).
 
 ## Known limitations
-- Until the migration lands, handoffs persist only in the in-memory store.
+- Until the migration lands, handoffs persist only in the in-memory store; in production the store is fail-closed (no handoff can be created).
+- The `handoff_task` tool reuses capability `tasks.manage` (tier 1) instead of a new `tasks.handoff` capability, which would need a catalog seed. Accepted by the coordinator. Any agent that may manage tasks can therefore start a handoff; the handoff rule, not the capability, bounds what it passes on.
 - Data scope is modelled as path prefixes; richer scopes belong to AGO-188.
 
 ## Testing notes

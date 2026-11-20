@@ -44,14 +44,15 @@ flowchart LR
 | `createHandoff`, `acceptHandoff` | `apps/worker/src/handoff/create-handoff.ts` | Writes the task row, emits the events |
 | `createHandoffTool` | `apps/worker/src/handoff/handoff-tool.ts` | The `handoff_task` agent tool (capability `tasks.manage`, tier 1) |
 | `HandoffStore` | `apps/worker/src/handoff/handoff-store.ts` | Persistence port |
+| `createHandoffWiring`, `createUnavailableHandoffStore` | `apps/worker/src/handoff/handoff-wiring.ts` | The policy hook and tool that `agent/wire.ts` registers; fail-closed store until Postgres |
 
 ## Run events
 `handoff.created` and `handoff.accepted` gained optional `from_agent_id`, `task_id`, `on_behalf_of` and `depth` (set by the worker from the stored chain). Old events without them still parse.
 
 ## Known limits
 - No Postgres store or migration yet: `tasks` needs `parent_task_id`, `handoff_from_agent_id`, `requester_member_id`, `handoff_depth` and a narrowed-grants snapshot, written only server-side. Until then handoffs exist only in the in-memory test store.
-- `handoff_task` is not registered in the production tool registry yet, and the run loop does not yet call `createHandoffPolicyHook` or `acceptHandoff`.
-- A dedicated `tasks.handoff` capability was not added (it needs a catalog seed); the tool reuses `tasks.manage`.
+- The production run loop is wired (`agent/wire.ts` uses `createHandoffPolicyHook` and registers `handoff_task`), but with a fail-closed store until the Postgres store lands: no handoff exists, so runs keep their own grants and `handoff_task` is refused. The run loop does not call `acceptHandoff` yet.
+- A dedicated `tasks.handoff` capability was not added (it needs a catalog seed); the tool reuses `tasks.manage`, so any agent allowed to manage tasks can start a handoff. The handoff rule bounds what it passes on.
 - Data scope is a list of path prefixes; richer scopes belong to AGO-188.
 
 ## How to extend it
