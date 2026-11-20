@@ -113,4 +113,4 @@ AGO-129 live-model injection red team.
 
 ## Outcome
 
-Filled at merge.
+Feature guide: [docs/features/untrusted-content.md](../features/untrusted-content.md). The rest is filled at merge.
