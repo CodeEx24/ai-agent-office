@@ -36,3 +36,4 @@ export * from "./claims/index.js";
 export * from "./office/index.js";
 export * from "./vault/index.js";
 export * from "./tool-servers/index.js";
+export * from "./egress/index.js";
