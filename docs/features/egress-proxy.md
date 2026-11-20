@@ -40,7 +40,8 @@ The proxy and the network are labelled `ago.egress=true` and `ago.egress.run=<ru
 ## Tests
 - `egress-proxy.test.ts`, `egress-config.test.ts` and the shared schema test always run: normalisation, matching, address ranges, an in-process proxy with a stub resolver (blocks logged with the exact object, redirects not followed, rebinding, mixed answers, Host mismatch, CONNECT), the allowlist loader, container flags.
 - `egress.docker.test.ts` runs real containers and checks the proxy from outside the sandbox: bypass probes from inside the sandbox all fail; an allowlisted host works through the proxy; every other host gets a 403 with a logged reason and the target server records only the allowed hits; an empty allowlist blocks all; a killed proxy means no direct connection; no container or network is left behind. It skips with a printed reason when Docker or the images are missing. It never calls a real third-party host (the target is a local container).
-- Test-only knobs (`unsafeAllowAddressesForTests`, `addHostsForTests`) exist on the runner options and are not reachable from the allowlist file.
+- `egress-acceptance.test.ts` and `egress-acceptance.docker.test.ts` are the acceptance suites (log content, caps, real resolver, abort cleanup, no egress means no network). The docker suites skip in CI until Docker-in-CI (AGO-238).
+- Test-only knobs exist on the runner options (`unsafeAllowEgressAddressesForTests`, `egressAddHostsForTests`; they reach the proxy as `unsafeAllowAddressesForTests` and `addHostsForTests`). They are not reachable from the allowlist file.
 
 ## Known limits
 Needs Docker on the worker host. A client can still lie about SNI inside an allowed CONNECT tunnel. Each egress run starts its own proxy (about a second). The allowlist is a file: no UI or per-workspace storage yet. `run_code` is not wired to egress; that belongs with AGO-85. Docker-in-CI for the real-container suite is AGO-238.

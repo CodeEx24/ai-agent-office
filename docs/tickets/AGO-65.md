@@ -72,8 +72,23 @@ Unit (always run): host normalisation, wildcard matching, address-range blocking
 - Wire egress into `run_code` through workspace settings and capability gating (AGO-85).
 - Docker-in-CI job for the real-container suites (already AGO-238).
 
+## Follow-ups (from the approval, non-blocking)
+Raise as tickets or attach to AGO-85 / AGO-129.
+- (a) Reject wildcards over multi-label public suffixes such as `*.co.uk` (today only single-label TLD wildcards are refused), or document that a wildcard must name a registrable domain.
+- (b) Allow CONNECT only to 443 (or a separate `connectPorts` subset), or check the Host header inside the tunnel. Strip the hop-by-hop headers named in `Connection:` in both `forward` and `stripHopByHop`.
+- (c) Throw if the test-only runner options (`unsafeAllowEgressAddressesForTests`, `egressAddHostsForTests`) are set while `NODE_ENV=production`.
+- (d) When AGO-85 wires the provider into the tool loop, add a test proving that model tool arguments cannot fill `SandboxRequest.egress`.
+- (e) Inspect SNI inside allowed CONNECT tunnels (needs its own TLS-interception decision).
+- (f) Add a "save as UTF-8 without BOM" line to `docs/actions/set-egress-allowlist.md`, or strip a leading BOM in the loader (today a BOM fails closed: deny all with a warning).
+- Write down a minimum Docker version in `docs/features/egress-proxy.md` (CVE-2024-29018, embedded DNS); the dev host runs Docker 29.8.2, which is not affected.
+- Rate-limit or aggregate blocked-decision log lines before AGO-104 log shipping.
+- Trim the proxy stderr tail out of the `runtime_unavailable` message that `run_code` would return to the model.
+- The real upstream DNS path through Docker's embedded resolver is never exercised in tests (it fails closed).
+- One internal network per run can exhaust Docker's address pools under load (fails closed).
+- Wiring: AGO-85 must call `createFileEgressAllowlistProvider` and `createEgressDecisionLogger`, and keep `egress` out of model input.
+
 ## Outcome
-(empty until merge)
+Feature guides: [docs/features/egress-proxy.md](../features/egress-proxy.md) and the egress section of [docs/features/sandbox.md](../features/sandbox.md). Merge pending.
 
 ## Decisions
 | Decision | Who | When |
