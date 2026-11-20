@@ -54,6 +54,9 @@ export interface RunViewProps {
   readonly isCut?: boolean;
   /** A stream source for tests; the browser uses the real one. `null` means no live updates. */
   readonly source?: OfficeEventSource | null;
+  /** The PUBLIC Supabase settings (URL and anon key, read on the server) the browser source is built from. */
+  readonly supabaseUrl?: string;
+  readonly supabaseAnonKey?: string;
 }
 
 /** Ticks once a second while `isActive`, starting from the server's clock. */
@@ -71,13 +74,21 @@ function useNow(serverNowMs: number, isActive: boolean): number {
   return nowMs;
 }
 
-export function RunView({ run, initialRows, serverNowMs, isCut = false, source }: RunViewProps) {
+export function RunView({
+  run,
+  initialRows,
+  serverNowMs,
+  isCut = false,
+  source,
+  supabaseUrl,
+  supabaseAnonKey,
+}: RunViewProps) {
   const [initialState] = useState(() =>
     applyRunRows(createRunLogState(run.workspaceId, run.id), initialRows),
   );
   const [logState, setLogState] = useState(initialState);
   const [resolvedSource] = useState<OfficeEventSource | null>(() =>
-    source === undefined ? createRunLiveSource() : source,
+    source === undefined ? createRunLiveSource(supabaseUrl, supabaseAnonKey) : source,
   );
   const [feedStatus, setFeedStatus] = useState<RunFeedStatus>(
     resolvedSource === null ? "stopped" : "connecting",

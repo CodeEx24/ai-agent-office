@@ -7,6 +7,7 @@ import { RunView } from "../../../../features/runs/run-view/RunView";
 import { loadRunView } from "../../../../features/runs/run-view/load-run-view";
 import { getActiveWorkspace } from "../../../../features/workspaces/workspace-access";
 
+import { getSupabasePublicEnv } from "../../../../lib/env";
 import { parseInput } from "../../../../lib/validation/parse-input";
 
 const paramsSchema = z.object({ runId: z.uuid() });
@@ -27,6 +28,8 @@ export default async function RunPage({ params }: { readonly params: Promise<{ r
   const result = await loadRunView(workspace.id, runId);
   if (result.kind === "not_found") notFound();
 
+  const { url, anonKey } = getSupabasePublicEnv();
+
   return (
     <main className="mx-auto grid max-w-4xl gap-6 p-8 [&>*]:min-w-0">
       <RunView
@@ -34,6 +37,8 @@ export default async function RunPage({ params }: { readonly params: Promise<{ r
         initialRows={result.rows}
         serverNowMs={result.serverNowMs}
         isCut={result.isCut}
+        supabaseUrl={url}
+        supabaseAnonKey={anonKey}
       />
     </main>
   );
