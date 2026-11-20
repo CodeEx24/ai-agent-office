@@ -4,7 +4,7 @@ import {
   selectAgentStates,
   type AgentOfficeState,
   type OfficeState,
-} from "@ago/shared";
+} from "@ago/shared/office";
 
 import { createOfficeRealtime } from "../realtime/office-realtime";
 import type { OfficeRealtime, OfficeRealtimeOptions } from "../realtime/office-realtime";
