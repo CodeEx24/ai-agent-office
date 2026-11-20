@@ -41,6 +41,8 @@ export const HIDDEN_TAG_CHARS: Readonly<Record<string, string>> = {
   "C0 control DEL": String.fromCharCode(0x7f),
   "C1 next line": String.fromCharCode(0x85),
   "C1 application program command": String.fromCharCode(0x9f),
+  "braille pattern blank": String.fromCodePoint(0x2800),
+  "musical symbol null notehead": String.fromCodePoint(0x1d159),
   "combining enclosing circle": "⃝",
 };
 

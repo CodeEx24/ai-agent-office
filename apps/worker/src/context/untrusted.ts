@@ -59,19 +59,27 @@ const MAX_SOURCE_LENGTH = 200;
 
 /**
  * Characters that can sit between the letters of our tag name, or between `<`, `/` and the name,
- * without changing how a reader sees it: whitespace, `_` and `-`, and every invisible or combining
- * character (control characters incl. C1 such as U+0085, format characters, Default_Ignorable_Code_Point such as variation selectors, Hangul
- * fillers, the combining grapheme joiner and tag characters, and combining marks). Detection runs on
- * the NFKD form, so a precomposed letter with an accent is a letter plus a mark that this class skips.
+ * without changing how a reader sees it: whitespace, `_` and `-`, and these invisible or combining
+ * classes: control characters (Cc, incl. C1 such as U+0085), format characters (Cf),
+ * Default_Ignorable_Code_Point (variation selectors, Hangul fillers, the combining grapheme joiner,
+ * tag characters), combining marks (Mn, Me), plus the blank-rendering characters no Unicode
+ * category covers (`EXPLICIT_BLANKS`). It is a named list, not "every invisible character": a new
+ * blank glyph must be added by hand (one shared invisible-character set is follow-up AGO-231).
+ * Detection runs on the NFKD form, so a precomposed letter with an accent is a letter plus a mark
+ * that this class skips.
  */
 const HIDDEN_CHAR = /^[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\p{Mn}\p{Me}]$/u;
+/** Blank-rendering code points outside those classes: U+2800 braille pattern blank, U+1D159 musical null notehead. */
+const EXPLICIT_BLANKS: ReadonlySet<number> = new Set([0x2800, 0x1d159]);
 const SPACE_CHAR = /^\p{White_Space}$/u;
 /** The tag name without its underscore: letters only, compared case-insensitively. */
 const TAG_LETTERS = UNTRUSTED_TAG.replace("_", "");
 
 /** Whitespace or an invisible/combining character: may sit between `<`, `/` and the name. */
 function isHidden(ch: string): boolean {
-  return HIDDEN_CHAR.test(ch) || SPACE_CHAR.test(ch);
+  return (
+    HIDDEN_CHAR.test(ch) || SPACE_CHAR.test(ch) || EXPLICIT_BLANKS.has(ch.codePointAt(0) ?? -1)
+  );
 }
 
 /** Everything `isHidden` accepts, plus `_` and `-`: may sit between the letters of the name. */
