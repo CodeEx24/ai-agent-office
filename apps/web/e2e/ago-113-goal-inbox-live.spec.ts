@@ -255,4 +255,174 @@ test.describe("AGO-113: goal inbox (local stack)", () => {
     expect(attempt.status).toBeGreaterThanOrEqual(400);
     expect(await goalsIn(w.workspaceId)).toHaveLength(1);
   });
+
+  // ---- Round 2 ----
+
+  /** Resolves any CSS colour (oklch, lab, ...) to sRGB through a canvas pixel, so contrast can be computed. */
+  async function placeholderContrast(page: Page) {
+    return page.evaluate(() => {
+      const textarea = document.querySelector("textarea");
+      if (!textarea) throw new Error("no textarea");
+      const toRgba = (css: string): [number, number, number, number] => {
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) throw new Error("no canvas");
+        ctx.clearRect(0, 0, 1, 1);
+        ctx.fillStyle = css;
+        ctx.fillRect(0, 0, 1, 1);
+        const d = ctx.getImageData(0, 0, 1, 1).data;
+        return [d[0] ?? 0, d[1] ?? 0, d[2] ?? 0, (d[3] ?? 0) / 255];
+      };
+      const lum = ([r, g, b]: number[]) => {
+        const f = (v: number) => {
+          const c = v / 255;
+          return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * f(r ?? 0) + 0.7152 * f(g ?? 0) + 0.0722 * f(b ?? 0);
+      };
+      const placeholder = getComputedStyle(textarea, "::placeholder");
+      const raw = placeholder.color;
+      const fg = toRgba(raw);
+      // The box is transparent, so the colour behind the placeholder is the page background.
+      let bgCss = "rgba(0, 0, 0, 0)";
+      for (let el: Element | null = textarea; el; el = el.parentElement) {
+        const c = getComputedStyle(el).backgroundColor;
+        if (toRgba(c)[3] > 0) {
+          bgCss = c;
+          break;
+        }
+      }
+      const bg = toRgba(bgCss);
+      const l1 = lum(fg);
+      const l2 = lum(bg);
+      const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+      return {
+        raw,
+        alpha: fg[3],
+        opacity: placeholder.opacity,
+        bg: bgCss,
+        ratio,
+        textColor: getComputedStyle(textarea).color,
+      };
+    });
+  }
+
+  test("R2C1: the dashboard links to the goal inbox and the link lands on /app/goals", async ({
+    page,
+    baseURL,
+  }) => {
+    const w = await world();
+    await signIn(page, baseURL, w.member);
+    await page.goto("/app");
+    const link = page.getByRole("link", { name: "Goals", exact: true });
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute("href", "/app/goals");
+    // It sits with the other section links.
+    for (const name of ["Agents", "Skills", "Approvals"]) {
+      await expect(page.getByRole("link", { name, exact: true })).toBeVisible();
+    }
+    await shoot(page, "r2c1-01-dashboard-with-goals-link");
+
+    await link.click();
+    await expect(page).toHaveURL(/\/app\/goals$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Goals" })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Goal", exact: true })).toBeVisible();
+    await shoot(page, "r2c1-02-landed-on-goals");
+  });
+
+  test("R2C2: the empty goal box shows a visible placeholder in light and dark", async ({
+    page,
+    baseURL,
+  }) => {
+    const w = await world();
+    await signIn(page, baseURL, w.member);
+    await page.goto("/app/goals");
+    const box = page.getByRole("textbox", { name: "Goal", exact: true });
+    await expect(box).toHaveValue("");
+    const placeholderText = "What should the team achieve? The Manager will turn it into tasks.";
+    await expect(box).toHaveAttribute("placeholder", placeholderText);
+
+    const seen: Record<string, unknown> = {};
+    for (const scheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${scheme}\\b`));
+      const info = await placeholderContrast(page);
+      seen[scheme] = info;
+      // Not the transparent default the round-1 review found: a real colour, with visible opacity.
+      expect(info.alpha, `${scheme}: placeholder is not transparent`).toBeGreaterThan(0.5);
+      expect(info.raw, scheme).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+      expect(Number(info.opacity), `${scheme}: placeholder opacity`).toBeGreaterThan(0.5);
+      // A muted tone, but it must stay legible against the page (WCAG AA 4.5:1).
+      expect(info.ratio, `${scheme}: contrast ${info.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(
+        4.5,
+      );
+      const dir = process.env.E2E_SCREENSHOT_DIR;
+      if (dir) {
+        await page.screenshot({
+          path: path.join(dir, `r2c2-01-empty-box-placeholder-${scheme}.png`),
+          fullPage: true,
+        });
+        await box.screenshot({ path: path.join(dir, `r2c2-02-empty-box-closeup-${scheme}.png`) });
+      }
+    }
+    test
+      .info()
+      .annotations.push({ type: "placeholder-colours", description: JSON.stringify(seen) });
+    await page.emulateMedia({ colorScheme: "light" });
+  });
+
+  test("R2C3: with no Manager, the message offers a Create a Manager agent link that opens agent creation", async ({
+    page,
+    baseURL,
+  }) => {
+    const w = await world();
+    await signIn(page, baseURL, w.nomanager);
+    await page.goto("/app/goals");
+    await expect(page.getByTestId("goal-create-manager-link")).toHaveCount(0);
+    await page.getByRole("textbox", { name: "Goal", exact: true }).fill(GOAL);
+    await page.getByRole("button", { name: "Submit goal" }).click();
+
+    await expect(page.getByTestId("goal-form-error")).toHaveText(GOAL_MESSAGES.noManager);
+    const link = page.getByTestId("goal-create-manager-link");
+    await expect(link).toBeVisible();
+    await expect(link).toHaveText("Create a Manager agent");
+    await expect(link).toHaveAttribute("href", "/app/agents/new");
+    await shoot(page, "r2c3-01-no-manager-with-link");
+
+    await link.click();
+    await expect(page).toHaveURL(/\/app\/agents\/new$/);
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await shoot(page, "r2c3-02-agent-creation-page");
+    expect(await goalsIn(w.noManagerWorkspaceId)).toHaveLength(0);
+  });
+
+  test("R2C4: the counter ignores zero-width characters", async ({ page, baseURL }) => {
+    const w = await world();
+    await signIn(page, baseURL, w.member);
+    await page.goto("/app/goals");
+    const box = page.getByRole("textbox", { name: "Goal", exact: true });
+    // The counter is aria-hidden, so it is found by its text.
+    const counter = page.getByText(/^\d+\/5000$/);
+    await expect(counter).toHaveText("0/5000");
+    await shoot(page, "r2c4-01-counter-empty");
+
+    const zeroWidth = [0x200b, 0x200c, 0x200d, 0x2060, 0xfeff].map(cp).join("");
+    await box.fill(zeroWidth.repeat(4));
+    await expect(box).not.toHaveValue("");
+    await expect(counter).toHaveText("0/5000");
+    await shoot(page, "r2c4-02-zero-width-only-counter-zero");
+
+    // Visible characters still count, the invisible ones between them do not.
+    await box.fill(`a${cp(0x200b)}b${cp(0xfeff)}c`);
+    await expect(counter).toHaveText("3/5000");
+    await shoot(page, "r2c4-03-mixed-counter-three");
+
+    // And the box still refuses the zero-width-only goal.
+    await box.fill(zeroWidth);
+    await page.getByRole("button", { name: "Submit goal" }).click();
+    await expect(page.getByTestId("goal-field-error")).toHaveText(GOAL_MESSAGES.required);
+    await expect(counter).toHaveText("0/5000");
+    expect(await goalsIn(w.workspaceId)).toHaveLength(0);
+  });
 });
