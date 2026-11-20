@@ -43,6 +43,7 @@ flowchart LR
 | `approvalHref`, `approvalLinkQuerySchema` | `cards/approval-link.ts` | The link and the page's query schema. |
 | `ApprovalLinkNotice` | `cards/ApprovalLinkNotice.tsx` | The "no longer pending" note. |
 | `createSupabaseBrowserClient` | `lib/supabase/browser.ts` | Shared browser client: takes the URL and anon key as arguments, reads no env. |
+| `@ago/shared/office` | `packages/shared/package.json` (export `./office`) | Subpath with only the office contract (states, events, reducer). Client code imports values from here. |
 
 ## Rules and edge cases
 - Agent text (names, reason codes) is rendered as plain text, never as HTML or Markdown.
@@ -51,6 +52,10 @@ flowchart LR
 - The cards never read `run_events` themselves.
 - A missing or invalid `approval` query changes nothing; a failed inbox load shows no "no longer pending" note (it cannot know).
 
+## Client-bundle rule
+The root `@ago/shared` barrel also exports the server env schema, so a browser file importing a value from it would carry the server env names into the client bundle. Everything client-reachable under `features/office` and `lib/supabase/browser.ts` therefore imports values from `@ago/shared/office`. Type-only imports from the root are fine (erased). `cards/client-imports.test.ts` fails on a value import from the root barrel, on `lib/env`, `@ago/shared/client-env` or `process.env`. The server page reads the public settings and passes them down as props.
+
 ## How to extend it
+- New client-side office code: import values from `@ago/shared/office`, never the root barrel.
 - New state: change the AGO-124 contract first, then add its entry to `AGENT_STATE_VIEWS` (the table will not compile without it).
 - Another surface (mobile flat view, AGO-172): reuse `AgentCardGrid` with a source, or `AgentCard` alone.
