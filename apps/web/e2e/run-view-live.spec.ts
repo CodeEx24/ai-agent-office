@@ -132,6 +132,33 @@ test.describe("AGO-153: run view (local stack)", () => {
     return { owner, workspaceId, agent };
   }
 
+  /**
+   * Realtime cold start: right after `supabase db reset` the Realtime service can report the channel as subscribed
+   * (the page shows "Live") yet not push the first inserts for a while. Before the test writes the rows it asserts on,
+   * insert rows into a second run of the workspace (the page ignores them) until a pushed `run_events` INSERT frame has
+   * reached the browser. Nothing of the run under test is touched. The frame listener must be set up before `goto`.
+   */
+  function watchRealtimePushes(page: Page): { readonly hasPush: () => boolean } {
+    let seen = false;
+    page.on("websocket", (socket) => {
+      socket.on("framereceived", (frame) => {
+        // A pushed row, not the subscribe reply (which also names postgres_changes).
+        const text = String(frame.payload);
+        if (text.includes('"table":"run_events"') && text.includes('"type":"INSERT"')) seen = true;
+      });
+    });
+    return { hasPush: () => seen };
+  }
+
+  async function warmRealtime(w: World, watch: { readonly hasPush: () => boolean }): Promise<void> {
+    const probe = await newRun(w);
+    for (let i = 0; i < 40 && !watch.hasPush(); i += 1) {
+      await probe.ev("message.emitted", { role: "system", summary: "realtime warm-up probe" });
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    expect(watch.hasPush(), "Realtime pushed no row within 80 s of the page going Live").toBe(true);
+  }
+
   test("AC1: the log updates live without a reload, and catches up after a dropped connection", async ({
     page,
     baseURL,
@@ -153,6 +180,7 @@ test.describe("AGO-153: run view (local stack)", () => {
       sockets.push({ close: () => ws.close() });
     });
 
+    const pushes = watchRealtimePushes(page);
     await page.goto(`/app/runs/${run.id}`);
     await expect(page.getByRole("heading", { name: /^Run [0-9a-f]{8}$/ })).toBeVisible();
     await expect(page.getByTestId("run-short-id")).toHaveAttribute("title", run.id);
@@ -165,6 +193,7 @@ test.describe("AGO-153: run view (local stack)", () => {
       `/app/agents/${String(w.agent.id)}`,
     );
     await expect(feed(page)).toHaveText("Live", { timeout: 30_000 });
+    await warmRealtime(w, pushes);
     await expect(phase(page)).toHaveText("Running");
     await expect(logRows(page)).toHaveCount(3);
     await page.evaluate(() => {
@@ -468,6 +497,7 @@ test.describe("AGO-153: run view (local stack)", () => {
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
       );
       expect(sideways, `horizontal overflow at ${String(width)}px`).toBeLessThanOrEqual(0);
+      await shot(page, `ROUND2-OVERFLOW-failed-${String(width)}-collapsed`);
       const more = page.locator("main [role=alert]").getByRole("button", { name: /Show more/ });
       await more.click();
       const expanded = await page.evaluate(
@@ -476,6 +506,7 @@ test.describe("AGO-153: run view (local stack)", () => {
       expect(expanded, `horizontal overflow, expanded, at ${String(width)}px`).toBeLessThanOrEqual(
         0,
       );
+      await shot(page, `ROUND2-OVERFLOW-failed-${String(width)}-expanded`);
       await page.reload();
     }
     await shot(page, "STATES-step-06-failed");
@@ -509,7 +540,164 @@ test.describe("AGO-153: run view (local stack)", () => {
       await expect(page.getByRole("link", { name: "Back to the office" })).toBeVisible();
       await expect(page.getByTestId("run-phase")).toHaveCount(0);
       await expect(page.getByText("Atlas")).toHaveCount(0);
+      // Still inside the signed-in app shell, with links back.
+      await expect(page.getByTestId("signed-in-email")).toBeVisible();
+      await expect(page.getByRole("link", { name: "Back to the office" })).toHaveAttribute(
+        "href",
+        "/app/office",
+      );
+      await expect(page.getByRole("link", { name: "See your agents" })).toHaveAttribute(
+        "href",
+        "/app/agents",
+      );
       await shot(page, `STATES-step-${step}-not-found`);
     }
+    // The link back works.
+    await page.getByRole("link", { name: "See your agents" }).click();
+    await expect(page).toHaveURL(/\/app\/agents$/);
+  });
+
+  test("round 2: stale banner while the live connection is down, then recovery", async ({
+    page,
+    baseURL,
+    context,
+  }) => {
+    if (!baseURL) throw new Error("baseURL is not configured");
+    const w = await setup("runview-stale");
+    const run = await newRun(w);
+    await run.ev("run.started", {}, 120);
+    await run.ev("step.started", { step: 1 }, 110);
+    await signInWithSessionCookie(context, baseURL, w.owner);
+
+    const sockets: { close: () => Promise<void> }[] = [];
+    let blockReconnect = false;
+    await context.routeWebSocket(/realtime/, (ws) => {
+      // Held down: refuse every attempt at once (a network that is down), so the client keeps retrying and fails.
+      if (blockReconnect) {
+        void ws.close();
+        return;
+      }
+      ws.connectToServer();
+      sockets.push({ close: () => ws.close() });
+    });
+
+    await page.goto(`/app/runs/${run.id}`);
+    await expect(feed(page)).toHaveText("Live", { timeout: 30_000 });
+    await expect(phase(page)).toHaveText("Running");
+    await expect(page.getByTestId("stale-banner")).toHaveCount(0);
+    await expect(page.getByTestId("run-duration")).not.toContainText("(not updating)");
+    const tick = await page.getByTestId("run-duration").innerText();
+    await expect(page.getByTestId("run-duration")).not.toHaveText(tick, { timeout: 5_000 }); // ticking while live
+    await shot(page, "ROUND2-STALE-step-01-live-ticking");
+
+    // Drop the socket and hold it down: banner, "last known", duration frozen and labelled.
+    blockReconnect = true;
+    await Promise.all(sockets.map((s) => s.close()));
+    const banner = page.getByTestId("stale-banner");
+    await expect(banner).toBeVisible({ timeout: 30_000 });
+    await expect(banner).toContainText("This page may be out of date");
+    await expect(phase(page)).toContainText("last known");
+    await expect(page.getByTestId("run-duration")).toContainText("(not updating)");
+    const frozen = await page.getByTestId("run-duration").innerText();
+    await page.waitForTimeout(3000);
+    await expect(page.getByTestId("run-duration")).toHaveText(frozen);
+    await shot(page, "ROUND2-STALE-step-02-banner-frozen-not-updating");
+
+    // Still down a while later: the banner stays and nothing counts up.
+    await page.waitForTimeout(3000);
+    await expect(banner).toBeVisible();
+    await expect(page.getByTestId("run-duration")).toHaveText(frozen);
+    await shot(page, "ROUND2-STALE-step-03-still-down");
+
+    // Recovery: the connection comes back, the banner goes, the duration counts again.
+    blockReconnect = false;
+    await expect(feed(page)).toHaveText("Live", { timeout: 60_000 });
+    await expect(banner).toHaveCount(0);
+    await expect(phase(page)).not.toContainText("last known");
+    await expect(page.getByTestId("run-duration")).not.toContainText("(not updating)");
+    const back = await page.getByTestId("run-duration").innerText();
+    await expect(page.getByTestId("run-duration")).not.toHaveText(back, { timeout: 5_000 });
+    await shot(page, "ROUND2-STALE-step-04-recovered-live");
+  });
+
+  test("round 2: budget stop wording per scope, and the heading and agent link", async ({
+    page,
+    baseURL,
+    context,
+  }) => {
+    if (!baseURL) throw new Error("baseURL is not configured");
+    const w = await setup("runview-budget");
+    const daily = await newRun(w);
+    await daily.ev("run.started", {}, 300);
+    await daily.ev(
+      "budget.exceeded",
+      {
+        scope: "agent_daily",
+        reason: "agent_daily_limit_would_be_exceeded",
+        limit: 500,
+        used: 480,
+      },
+      250,
+    );
+    await daily.ev("run.stopped", { stopped_by: "budget", reason: "budget_exceeded" }, 245);
+    const monthly = await newRun(w);
+    await monthly.ev("run.started", {}, 300);
+    await monthly.ev(
+      "budget.exceeded",
+      {
+        scope: "workspace_monthly",
+        reason: "workspace_monthly_limit_would_be_exceeded",
+        limit: 5000,
+        used: 4990,
+      },
+      250,
+    );
+    await monthly.ev("run.stopped", { stopped_by: "budget", reason: "budget_exceeded" }, 245);
+    const pricing = await newRun(w);
+    await pricing.ev("run.started", {}, 300);
+    await pricing.ev(
+      "budget.exceeded",
+      { scope: "pricing", reason: "model_not_priced", limit: 0, used: 0 },
+      250,
+    );
+    await pricing.ev("run.stopped", { stopped_by: "budget", reason: "budget_exceeded" }, 245);
+    await signInWithSessionCookie(context, baseURL, w.owner);
+    const agentHref = `/app/agents/${String(w.agent.id)}`;
+
+    await page.goto(`/app/runs/${daily.id}`);
+    let budget = page.getByTestId("budget-stop");
+    await expect(budget).toContainText("This run was stopped: the agent reached its daily budget.");
+    await expect(budget).toContainText("Used $4.80 of $5.00 today.");
+    await expect(budget).toContainText("resets at midnight UTC");
+    await expect(budget.getByRole("link", { name: /agent/i })).toHaveAttribute("href", agentHref);
+    await shot(page, "ROUND2-BUDGET-step-01-agent-daily");
+
+    await page.goto(`/app/runs/${monthly.id}`);
+    budget = page.getByTestId("budget-stop");
+    await expect(budget).toContainText(
+      "This run was stopped: the workspace reached its monthly budget.",
+    );
+    await expect(budget).toContainText("Used $49.90 of $50.00 this month.");
+    await expect(budget).toContainText("ask a workspace owner");
+    await expect(budget.getByRole("link")).toHaveCount(0);
+    await expect(budget).not.toContainText(/agent can (raise|change)/i);
+    await shot(page, "ROUND2-BUDGET-step-02-workspace-monthly");
+
+    await page.goto(`/app/runs/${pricing.id}`);
+    budget = page.getByTestId("budget-stop");
+    await expect(budget).toContainText("its budget could not be checked safely");
+    await expect(budget).not.toContainText("Used ");
+    await shot(page, "ROUND2-BUDGET-step-03-pricing-not-a-limit");
+
+    // Heading with the short id, the agent link and the way back; the link goes to the agent page.
+    await expect(page.getByRole("heading", { name: /^Run [0-9a-f]{8}$/ })).toBeVisible();
+    await expect(page.getByTestId("run-short-id")).toHaveAttribute("title", pricing.id);
+    await expect(page.getByRole("link", { name: "Back to the office" })).toHaveAttribute(
+      "href",
+      "/app/office",
+    );
+    await shot(page, "ROUND2-HEADING-step-01-short-id-agent-link");
+    await page.getByRole("link", { name: String(w.agent.name) }).click();
+    await expect(page).toHaveURL(new RegExp(`${agentHref}$`));
   });
 });
