@@ -69,6 +69,7 @@ function harness(opts: Opts = {}) {
     source,
     logger,
     vault: { getVaultMap: () => Promise.resolve(opts.vault ?? []) },
+    createBoundaryId: () => "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
     ...(opts.maxChars === undefined ? {} : { maxChars: opts.maxChars }),
   });
   return {
@@ -83,23 +84,24 @@ const TAG_LIKE = /<[\s\p{Cf}]*\/?[\s\p{Cf}]*untrusted[\s\p{Cf}_-]*data/iu;
 /** Walk the user message the way a strict parser would: every open must close, and no nesting. */
 function parseBlocks(text: string): { source: string; body: string }[] {
   const blocks: { source: string; body: string }[] = [];
-  const open = /<untrusted_data source="([A-Za-z0-9:_./@-]*)">\n/g;
+  const open = /<untrusted_data id="([0-9a-f]+)" source="([A-Za-z0-9:_./@-]*)">\n/g;
   let cursor = 0;
   for (;;) {
     open.lastIndex = cursor;
     const start = open.exec(text);
     if (start === null) break;
     const bodyStart = start.index + start[0].length;
-    const end = text.indexOf("\n</untrusted_data>", bodyStart);
+    const close = `\n</untrusted_data id="${start[1] ?? ""}">`;
+    const end = text.indexOf(close, bodyStart);
     expect(end, "every opening tag has a closing tag").toBeGreaterThan(-1);
     const body = text.slice(bodyStart, end);
     expect(body, "no raw tag inside a block").not.toMatch(TAG_LIKE);
-    blocks.push({ source: start[1] ?? "", body });
-    cursor = end + "\n</untrusted_data>".length;
+    blocks.push({ source: start[2] ?? "", body });
+    cursor = end + close.length;
   }
   // Outside the blocks there must be no stray tag either.
   const outside = text.replace(
-    /<untrusted_data source="[^"]*">\n[\s\S]*?\n<\/untrusted_data>/g,
+    /<untrusted_data id="[0-9a-f]+" source="[^"]*">\n[\s\S]*?\n<\/untrusted_data id="[0-9a-f]+">/g,
     "",
   );
   expect(outside).not.toMatch(TAG_LIKE);
@@ -235,9 +237,9 @@ describe("AGO-145 QA: AC2 untrusted wrapping", () => {
     const ctx = await harness({ retrieved: [{ source: "tool:web", content: homoglyph }] }).build();
     const blocks = parseBlocks(ctx.messages[0]?.content ?? "");
     expect(blocks.find((b) => b.source === "tool:web")?.body).toContain("т");
-    expect((ctx.messages[0]?.content ?? "").match(/<\/untrusted_data>/g)?.length).toBe(
-      blocks.length,
-    );
+    expect(
+      (ctx.messages[0]?.content ?? "").match(/<\/untrusted_data id="[0-9a-f]+">/g)?.length,
+    ).toBe(blocks.length);
   });
 
   it("AC2: every block is labelled and the system rules say blocks are data", async () => {
@@ -288,7 +290,8 @@ describe("AGO-145 QA: AC3 size cap and truncation log", () => {
   }));
 
   it("AC3: the output never exceeds the cap, for many caps", async () => {
-    for (const cap of [1_200, 1_500, 2_000, 3_000, 5_000, 10_000]) {
+    // The smallest cap is above the never-cut rules (which now carry the AGO-23 boundary sentence).
+    for (const cap of [1_500, 1_800, 2_000, 3_000, 5_000, 10_000]) {
       const ctx = await harness({
         skills: manySkills,
         vault,

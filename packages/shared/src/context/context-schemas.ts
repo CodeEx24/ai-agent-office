@@ -75,8 +75,17 @@ export const vaultMapEntrySchema = z.strictObject({
 });
 export type VaultMapEntry = z.infer<typeof vaultMapEntrySchema>;
 
-/** Retrieved content (a vault note, a tool result, ...). Always untrusted. `source` is a short label. */
+/** What a retrieved item is (AGO-23). It becomes the prefix of the block's source label. */
+export const RETRIEVED_KINDS = ["web", "email", "note", "tool"] as const;
+export const retrievedKindSchema = z.enum(RETRIEVED_KINDS);
+export type RetrievedKind = z.infer<typeof retrievedKindSchema>;
+
+/**
+ * Retrieved content (a vault note, a web page, an email, a tool result, ...). Always untrusted.
+ * `source` is a short label; with a `kind`, the block is labeled `<kind>:<source>`.
+ */
 export const retrievedItemSchema = z.strictObject({
+  kind: retrievedKindSchema.optional(),
   source: z.string().min(1).max(CONTEXT_SOURCE_MAX_LENGTH),
   content: z.string().max(CONTEXT_TEXT_MAX_LENGTH),
 });
