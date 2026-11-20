@@ -1,6 +1,15 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomInt } from "node:crypto";
 
+import type { EgressDecision } from "@ago/shared";
+
+import {
+  proxyEnvironment,
+  removeLeftoverEgressResources,
+  startEgressProxy,
+  type EgressSession,
+} from "../egress/egress-launcher.js";
+
 import {
   SANDBOX_IMAGE,
   resolveSandboxLimits,
@@ -22,6 +31,14 @@ const CLEANUP_TIMEOUT_MS = 15_000;
 export interface DockerRunnerOptions {
   readonly image?: string;
   readonly dockerBinary?: string;
+  /** Receives every egress proxy decision (allowed and blocked) for runs that have an `egress` allowlist. */
+  readonly onEgressDecision?: (decision: EgressDecision) => void;
+  /** Overrides the pinned egress proxy image (tests only). */
+  readonly egressImage?: string;
+  /** TEST ONLY: exact IPs the egress proxy may reach although they are private (a local target container). */
+  readonly unsafeAllowEgressAddressesForTests?: readonly string[];
+  /** TEST ONLY: `name:ip` entries for the egress proxy's /etc/hosts. */
+  readonly egressAddHostsForTests?: readonly string[];
 }
 
 /**
@@ -43,8 +60,20 @@ export function buildDockerRunArgs(input: {
    * run gets its own random uid: then `nproc` bounds this run alone and cannot be exhausted by (or starve) another.
    */
   readonly uid?: number;
+  /**
+   * Egress (AGO-65). Absent: `--network none`. Present: the container joins only the proxy's internal network
+   * (no gateway, no route to anything but the proxy) and gets the proxy environment variables.
+   */
+  readonly egress?: { readonly networkName: string; readonly proxyUrl: string };
 }): string[] {
   const { limits } = input;
+  const proxyEnv =
+    input.egress === undefined
+      ? []
+      : Object.entries(proxyEnvironment(input.egress.proxyUrl)).flatMap(([key, value]) => [
+          "--env",
+          `${key}=${value}`,
+        ]);
   const uid = String(input.uid ?? NOBODY_UID);
   const memory = `${String(limits.memoryMb)}m`;
   const nofile = String(limits.maxOpenFiles);
@@ -67,7 +96,7 @@ export function buildDockerRunArgs(input: {
     "-i",
     "--init",
     "--network",
-    "none",
+    input.egress?.networkName ?? "none",
     "--ipc",
     "none",
     "--read-only",
@@ -99,6 +128,7 @@ export function buildDockerRunArgs(input: {
     "/work",
     "--env",
     "HOME=/work",
+    ...proxyEnv,
     input.image,
     ...program,
   ];
@@ -139,6 +169,30 @@ export function createDockerSandboxRunner(options: DockerRunnerOptions = {}): Sa
         return denied("invalid_request", `input files could not be packed: ${describe(error)}`);
       }
       const name = `ago-sbx-${randomBytes(8).toString("hex")}`;
+
+      // Egress (AGO-65): the proxy must be ready before the sandbox exists. If it is not, nothing runs and
+      // there is no fallback to a direct network. The proxy is torn down on every path below.
+      let egress: EgressSession | undefined;
+      if (request.egress !== undefined) {
+        const started = await startEgressProxy({
+          runId: request.runId,
+          workspaceId: request.workspaceId,
+          allowlist: request.egress,
+          onDecision: options.onEgressDecision,
+          image: options.egressImage,
+          dockerBinary: docker,
+          unsafeAllowAddressesForTests: options.unsafeAllowEgressAddressesForTests,
+          addHostsForTests: options.egressAddHostsForTests,
+        });
+        if (!started.ok) {
+          return denied("runtime_unavailable", `egress proxy unavailable: ${started.message}`);
+        }
+        egress = started.session;
+        if (wasAborted(request.signal)) {
+          await egress.stop();
+          return denied("aborted", "the run was stopped");
+        }
+      }
       const args = buildDockerRunArgs({
         name,
         runId: request.runId,
@@ -147,6 +201,7 @@ export function createDockerSandboxRunner(options: DockerRunnerOptions = {}): Sa
         command: request.command,
         hasFiles: files.length > 0,
         uid: 100_000 + randomInt(0, 900_000),
+        egress,
       });
 
       const out: Captured = { chunks: [], bytes: 0 };
@@ -156,6 +211,7 @@ export function createDockerSandboxRunner(options: DockerRunnerOptions = {}): Sa
       try {
         child = spawn(docker, args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
       } catch (error) {
+        await egress?.stop();
         return denied("runtime_unavailable", describe(error));
       }
 
@@ -254,6 +310,7 @@ export function createDockerSandboxRunner(options: DockerRunnerOptions = {}): Sa
         request.signal?.removeEventListener("abort", onAbort);
         // Every exit path: success, deny, timeout, crash. Idempotent; a no-op when nothing was created.
         await removeContainer(docker, name);
+        await egress?.stop();
       }
     },
   };
@@ -263,7 +320,8 @@ export function createDockerSandboxRunner(options: DockerRunnerOptions = {}): Sa
 export async function removeLeftoverSandboxContainers(dockerBinary = "docker"): Promise<number> {
   const ids = await listSandboxContainers(dockerBinary);
   for (const id of ids) await removeContainer(dockerBinary, id);
-  return ids.length;
+  // Egress proxies and their internal networks (AGO-65) go after the sandboxes that used them.
+  return ids.length + (await removeLeftoverEgressResources(dockerBinary));
 }
 
 /** Ids of every sandbox container, running or not. `runId` narrows it to one run. */
@@ -336,6 +394,11 @@ function runDocker(
       done(code);
     });
   });
+}
+
+/** A function, so TypeScript does not narrow `signal.aborted` across the awaits in `run()`. */
+function wasAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }
 
 function describe(error: unknown): string {
