@@ -20,12 +20,12 @@ export function ExpandableText({
   const isLong = text.length > limit;
   const shown = isLong && !isExpanded ? `${text.slice(0, limit)}…` : text;
   return (
-    <div className="grid gap-1">
-      <p className="text-sm break-words whitespace-pre-wrap">{shown}</p>
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-1">
+      <p className="text-sm wrap-anywhere whitespace-pre-wrap">{shown}</p>
       {isLong ? (
         <button
           type="button"
-          className="w-fit text-xs font-medium text-primary underline-offset-2 hover:underline"
+          className="min-h-6 w-fit py-1 text-xs font-medium text-primary underline-offset-2 hover:underline"
           aria-expanded={isExpanded}
           onClick={() => {
             setIsExpanded((value) => !value);

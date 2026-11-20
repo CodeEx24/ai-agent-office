@@ -156,7 +156,9 @@ describe("usage matches the stored events (AC2)", () => {
     expect(screen.getByTestId("usage-output")).toHaveTextContent("800");
     expect(screen.getByTestId("usage-cost")).toHaveTextContent("$0.19");
     expect(screen.getByTestId("usage-calls")).toHaveTextContent("2");
-    expect(screen.getByRole("alert")).toHaveTextContent("Stopped by the budget (run)");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "This run was stopped: it reached its token budget.",
+    );
     expect(screen.getByTestId("run-phase")).toHaveTextContent("Stopped");
   });
 
@@ -182,12 +184,54 @@ describe("usage matches the stored events (AC2)", () => {
 });
 
 describe("duration", () => {
-  it("ticks while the run is running", async () => {
-    renderRun(opening, null);
+  it("ticks while the run is running and the feed is live", async () => {
+    const source = renderRun();
+    await flush();
+    source?.setStatus("subscribed");
     await flush();
     expect(screen.getByTestId("run-duration")).toHaveTextContent("28 s");
     await flush(5_000);
     expect(screen.getByTestId("run-duration")).toHaveTextContent("33 s");
+    expect(screen.queryByTestId("stale-banner")).toBeNull();
+  });
+
+  it("stops ticking and says so when the feed drops, then ticks again once it is back", async () => {
+    const source = renderRun();
+    await flush();
+    source?.setStatus("subscribed");
+    await flush(2_000);
+    source?.setStatus("closed");
+    await flush();
+    const frozen = screen.getByTestId("run-duration").textContent;
+    expect(screen.getByTestId("stale-banner")).toHaveTextContent("may be out of date");
+    expect(screen.getByTestId("stale-banner")).toHaveTextContent("reconnecting");
+    expect(screen.getByTestId("run-phase")).toHaveTextContent("last known");
+    expect(screen.getByTestId("run-duration")).toHaveTextContent("not updating");
+    await flush(5_000);
+    // Reconnect attempts may have run, but the channel stayed closed: still stale, still not counting.
+    expect(screen.getByTestId("run-duration").textContent).toBe(frozen);
+
+    source?.setStatus("subscribed");
+    await flush();
+    expect(screen.getByTestId("feed-status")).toHaveTextContent("Live");
+    expect(screen.queryByTestId("stale-banner")).toBeNull();
+  });
+
+  it("with no live stream, a running run is shown as last known and the duration does not count", async () => {
+    renderRun(opening, null);
+    await flush();
+    expect(screen.getByTestId("stale-banner")).toHaveTextContent("Live updates are not connected");
+    expect(screen.getByTestId("run-phase")).toHaveTextContent("Running · last known");
+    expect(screen.getByTestId("run-duration")).toHaveTextContent("28 s (not updating)");
+    await flush(5_000);
+    expect(screen.getByTestId("run-duration")).toHaveTextContent("28 s (not updating)");
+  });
+
+  it("shows no stale banner for a finished run even without a stream", async () => {
+    renderRun(stoppedByBudgetRows(), null);
+    await flush();
+    expect(screen.queryByTestId("stale-banner")).toBeNull();
+    expect(screen.getByTestId("run-phase")).not.toHaveTextContent("last known");
   });
 
   it("is fixed for a finished run", async () => {
@@ -281,7 +325,7 @@ describe("untrusted text", () => {
       <RunView run={baseRun()} initialRows={rows} serverNowMs={NOW} source={null} />,
     );
     await flush();
-    expect(container.querySelector("img, script, b, a")).toBeNull();
+    expect(container.querySelector("img, script, b, a:not([href^='/app/'])")).toBeNull();
     expect(screen.getAllByText(hostile).length).toBeGreaterThan(0);
     expect(screen.getByText("<b>tool</b>")).toBeInTheDocument();
   });

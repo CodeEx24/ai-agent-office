@@ -154,7 +154,16 @@ test.describe("AGO-153: run view (local stack)", () => {
     });
 
     await page.goto(`/app/runs/${run.id}`);
-    await expect(page.getByRole("heading", { name: "Run", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^Run [0-9a-f]{8}$/ })).toBeVisible();
+    await expect(page.getByTestId("run-short-id")).toHaveAttribute("title", run.id);
+    await expect(page.getByRole("link", { name: "Back to the office" })).toHaveAttribute(
+      "href",
+      "/app/office",
+    );
+    await expect(page.getByRole("link", { name: String(w.agent.name) })).toHaveAttribute(
+      "href",
+      `/app/agents/${String(w.agent.id)}`,
+    );
     await expect(feed(page)).toHaveText("Live", { timeout: 30_000 });
     await expect(phase(page)).toHaveText("Running");
     await expect(logRows(page)).toHaveCount(3);
@@ -244,9 +253,14 @@ test.describe("AGO-153: run view (local stack)", () => {
 
     await page.goto(`/app/runs/${run.id}`);
     await expect(phase(page)).toContainText("Stopped");
-    await expect(page.locator("main [role=alert]")).toContainText("Stopped by the budget");
-    await expect(page.locator("main [role=alert]")).toContainText("used its token budget");
-    await expect(page.locator("main [role=alert]")).toContainText("Used 4000 of 4000");
+    const budget = page.getByTestId("budget-stop");
+    await expect(budget).toContainText("This run was stopped: it reached its token budget.");
+    await expect(budget).toContainText("Used 4,000 tokens of 4,000 tokens.");
+    await expect(budget).toContainText("Next step:");
+    await expect(budget.getByRole("link", { name: /agent/i })).toHaveAttribute(
+      "href",
+      `/app/agents/${String(w.agent.id)}`,
+    );
     const sum = await storedUsage(run.id);
     expect(sum).toEqual({ input: 1200 + 4321 + 15, output: 300 + 876 + 5, cents: 122, calls: 3 });
     await expect(page.getByTestId("usage-input")).toHaveText(fmt(sum.input));
@@ -272,6 +286,7 @@ test.describe("AGO-153: run view (local stack)", () => {
     await page.goto(`/app/runs/${free.id}`);
     await expect(page.getByTestId("usage-cost")).toHaveText("not reported");
     await expect(page.getByText("no recorded cost")).toBeVisible();
+    await expect(page.getByText("1 model call has no recorded cost")).toBeVisible();
     await expect(page.getByTestId("usage-input")).toHaveText("10");
     await shot(page, "AGO-153-AC2-step-03-no-cost-reported");
 
@@ -408,7 +423,7 @@ test.describe("AGO-153: run view (local stack)", () => {
     const log = page.getByTestId("run-log");
     await expect(log).toContainText(HOSTILE_IMG);
     await expect(log).toContainText(HOSTILE_SCRIPT);
-    expect(await page.locator("main img, main script, main a").count()).toBe(0);
+    expect(await page.locator("main img, main script, [data-testid=run-log] a").count()).toBe(0);
     expect(await page.evaluate(() => window.__xss)).toBeUndefined();
     await shot(page, "STATES-step-02-hostile-text-is-plain");
 
@@ -446,6 +461,23 @@ test.describe("AGO-153: run view (local stack)", () => {
     await expect(
       page.locator("main [role=alert]").getByRole("button", { name: /Show more/ }),
     ).toBeVisible();
+    // A long unbroken failure message must wrap inside the page, never scroll sideways, on a phone and on a desktop.
+    for (const width of [375, 1280]) {
+      await page.setViewportSize({ width, height: 800 });
+      const sideways = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(sideways, `horizontal overflow at ${String(width)}px`).toBeLessThanOrEqual(0);
+      const more = page.locator("main [role=alert]").getByRole("button", { name: /Show more/ });
+      await more.click();
+      const expanded = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(expanded, `horizontal overflow, expanded, at ${String(width)}px`).toBeLessThanOrEqual(
+        0,
+      );
+      await page.reload();
+    }
     await shot(page, "STATES-step-06-failed");
 
     // ---- completed: fixed 3 min ----
@@ -473,7 +505,8 @@ test.describe("AGO-153: run view (local stack)", () => {
     ] as const) {
       const response = await page.goto(path);
       expect(response?.status()).toBe(404);
-      await expect(page.getByText("This page could not be found")).toBeVisible();
+      await expect(page.getByRole("heading", { name: "We couldn't find that page" })).toBeVisible();
+      await expect(page.getByRole("link", { name: "Back to the office" })).toBeVisible();
       await expect(page.getByTestId("run-phase")).toHaveCount(0);
       await expect(page.getByText("Atlas")).toHaveCount(0);
       await shot(page, `STATES-step-${step}-not-found`);

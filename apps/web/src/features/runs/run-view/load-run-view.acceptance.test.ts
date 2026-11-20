@@ -177,4 +177,15 @@ describe("loadRunView: only this run's rows", () => {
     expect(result.rows).toHaveLength(MAX_RUN_VIEW_EVENTS);
     expect(result.rows.at(-1)?.seq).toBe(MAX_RUN_VIEW_EVENTS);
   });
+
+  it("does not flag a run of exactly the row cap as cut: nothing is left to load", async () => {
+    const events = Array.from({ length: MAX_RUN_VIEW_EVENTS }, (_, index) =>
+      ev(index + 1, "run.started"),
+    );
+    const { client } = store({ runs: [run()], agents: [], run_events: events });
+    const result = await loadRunView(WORKSPACE_ID, RUN_ID, client);
+    if (result.kind !== "ok") throw new Error("expected ok");
+    expect(result.rows).toHaveLength(MAX_RUN_VIEW_EVENTS);
+    expect(result.isCut).toBe(false);
+  });
 });

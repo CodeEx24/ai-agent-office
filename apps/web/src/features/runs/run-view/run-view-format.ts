@@ -35,6 +35,11 @@ export function isRunActive(phase: RunPhase | "unknown"): boolean {
   return phase === "running";
 }
 
+/** True once the run can no longer change (finished, failed or stopped), so a missing live feed cannot hide news. */
+export function isRunEnded(phase: RunPhase | "unknown"): boolean {
+  return phase === "completed" || phase === "failed" || phase === "stopped";
+}
+
 /**
  * Elapsed time of the run in ms, or null before it started. Ends at the finish time; while paused it freezes at the
  * moment of the pause; only a running run keeps counting up to `nowMs`.

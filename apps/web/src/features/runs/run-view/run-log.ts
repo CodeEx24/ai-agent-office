@@ -159,10 +159,13 @@ export interface RunLogView {
 
 const MICROS_PER_CENT = 10_000;
 
-/** A usage event's cost in micros: `cost_micros` when present, else `cost_cents` converted. */
+/**
+ * A usage event's cost in micros: `cost_cents` (exactly what the worker settled against the AGO-40 ledger) when
+ * present, else `cost_micros`.
+ */
 function costMicrosOf(payload: { cost_micros?: number; cost_cents?: number }): number | null {
-  if (payload.cost_micros !== undefined) return payload.cost_micros;
   if (payload.cost_cents !== undefined) return payload.cost_cents * MICROS_PER_CENT;
+  if (payload.cost_micros !== undefined) return payload.cost_micros;
   return null;
 }
 

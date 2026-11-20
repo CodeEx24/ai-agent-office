@@ -70,7 +70,10 @@ const HOSTILE = [
   "https://example.invalid/phish",
 ].join(" ");
 
-const MARKUP_SELECTOR = "img, script, a, b, strong, em, i, code, h1 + p, iframe, svg, style";
+// Untrusted text must never become an element. The page's own navigation links (always under /app/) are allowed; any
+// other link, such as a javascript: or http(s) one coming from agent text, still fails.
+const MARKUP_SELECTOR =
+  "img, script, a:not([href^='/app/']), b, strong, em, i, code, h1 + p, iframe, svg, style";
 
 describe("AC1: the log updates live", () => {
   it("shows several rows pushed one after another without a reload, in seq order", async () => {
@@ -280,8 +283,9 @@ describe("AC2: cost and tokens match the stored usage", () => {
     );
     expect(screen.getByTestId("usage-cost")).toHaveTextContent(`$${(cents / 100).toFixed(2)}`);
     const banner = screen.getByRole("alert");
-    expect(banner).toHaveTextContent("Stopped by the budget (run)");
-    expect(banner).toHaveTextContent("Used 4000 of 4000");
+    expect(banner).toHaveTextContent("This run was stopped: it reached its token budget.");
+    expect(banner).toHaveTextContent("Used 4,000 tokens of 4,000 tokens.");
+    expect(banner).toHaveTextContent("Next step:");
     expect(screen.getByTestId("run-phase")).toHaveTextContent("Stopped");
   });
 
@@ -292,7 +296,7 @@ describe("AC2: cost and tokens match the stored usage", () => {
     expect(cost).toHaveTextContent("not reported");
     expect(cost.textContent).not.toMatch(/\$0|^0/);
     expect(screen.getByTestId("usage-input")).toHaveTextContent("750");
-    expect(screen.getByText(/2 model call\(s\) have no recorded cost/)).toBeInTheDocument();
+    expect(screen.getByText(/2 model calls have no recorded cost/)).toBeInTheDocument();
   });
 
   it("shows $0.00 only for a call that recorded a cost of zero", async () => {
@@ -306,7 +310,7 @@ describe("AC2: cost and tokens match the stored usage", () => {
     show([...opening, usageEvent(4, 100, 10, 5), usageEvent(5, 100, 10)]);
     await flush();
     expect(screen.getByTestId("usage-cost")).toHaveTextContent("$0.05");
-    expect(screen.getByText(/1 model call\(s\) have no recorded cost/)).toBeInTheDocument();
+    expect(screen.getByText(/1 model call has no recorded cost/)).toBeInTheDocument();
   });
 
   it("shows zero tokens and no cost for a run with no usage events", async () => {
@@ -446,7 +450,7 @@ describe("untrusted text is plain text", () => {
     ]);
     await flush();
     expect(container.textContent).not.toContain("w".repeat(500));
-    expect(screen.getByText(/1 event\(s\) were not recognised/)).toBeInTheDocument();
+    expect(screen.getByText(/1 event was not recognised/)).toBeInTheDocument();
     expect(screen.getByText(/Unrecognised event \(message\.emitted\)/)).toBeInTheDocument();
   });
 

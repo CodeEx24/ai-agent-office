@@ -7,12 +7,12 @@ Code: `apps/web/src/features/runs/run-view/`, route `apps/web/src/app/app/runs/[
 `/app/runs/<run id>` shows one run: its live log, steps, tool calls, tokens, cost and duration. It only reads. Nothing on the page can change a run.
 
 ## Screens
-- **Header:** state (Queued, Running, Paused, Completed, Failed, Stopped), live status (Live, Catching up, Reconnecting, Not live), agent, duration, steps, start time (UTC).
+- **Header:** "Run" plus a short id (the full id is the tooltip), a link back to the office, state (Queued, Running, Paused, Completed, Failed, Stopped), live status (Live, Catching up, Reconnecting, Not live), the agent (a link to its page), duration, steps, start time (UTC).
 - **Usage:** input tokens, output tokens, cost, model calls.
-- **Banners:** stopped by the budget (scope, plain reason, used of limit), failed (reason and message), paused, "some events have not arrived yet", unrecognised events.
+- **Banners:** "This page may be out of date" (shown while the feed is down for a run that has not ended; the phase reads "last known" and the duration stops), stopped by the budget (what limit, used of limit, and a next step), failed (reason and message), paused, "some events have not arrived yet", unrecognised events.
 - **Tool calls:** tool name, tier, status (including denied by policy and waiting for approval), duration, policy reason, error code and message.
 - **Log:** every event in order with its time and a short label; agent messages and error text underneath.
-- **Not found:** a missing run, a run of another workspace and a malformed id show the same page and no data.
+- **Not found:** a missing run, a run of another workspace and a malformed id show the same page and no data. It is the app-shell not-found page with links to the office and the agents.
 
 ## Data model
 No tables or migrations. Sources, all read as the signed-in user under RLS:
@@ -52,7 +52,10 @@ flowchart LR
 
 ## Rules and edge cases
 - **Untrusted text.** Agent messages, error text and tool names are rendered as plain text nodes only: no HTML, no Markdown, no links. Text over 280 characters is cut with a "Show more" control.
-- **Duration.** From the start event to the end event; ticks every second only while running; frozen at the pause time while paused; fixed once finished.
+- **Duration.** From the start event to the end event; ticks every second only while running and the feed is live; frozen at the pause time while paused; fixed once finished; frozen and marked "(not updating)" while the feed is down.
+- **Long text.** Wraps anywhere, so an unbroken string never scrolls the page sideways.
+- **Budget stops.** Units follow the ledger: per run counts tokens, the agent's daily and the workspace's monthly budgets count money. Only people can change a budget; the banner says who.
+- **Screen readers.** Phase changes are announced through a polite live region.
 - **Hashes.** Tool call input and output hashes are not shown (they are not content).
 - **Unknown events.** An event this version does not know, or whose payload does not match, is a visible "Unrecognised event" line and never an error.
 - No service-role key; every query names the workspace.

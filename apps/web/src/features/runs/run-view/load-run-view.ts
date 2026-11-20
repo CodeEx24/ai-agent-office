@@ -84,7 +84,19 @@ export async function loadRunView(
     if (error) throw new RunViewLoadError(error);
     rows.push(...data);
     if (data.length < RUN_VIEW_PAGE_SIZE) break;
-    if (rows.length >= MAX_RUN_VIEW_EVENTS) isCut = true;
+  }
+  if (rows.length >= MAX_RUN_VIEW_EVENTS) {
+    // The cap was reached: only say "cut" when at least one more row exists (a run of exactly the cap is complete).
+    const { data: more, error: moreError } = await supabase
+      .from("run_events")
+      .select("seq")
+      .eq("workspace_id", access.workspaceId)
+      .eq("run_id", run.id)
+      .gt("seq", rows.at(-1)?.seq ?? 0)
+      .order("seq", { ascending: true })
+      .limit(1);
+    if (moreError) throw new RunViewLoadError(moreError);
+    isCut = more.length > 0;
   }
 
   return {
