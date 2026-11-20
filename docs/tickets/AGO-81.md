@@ -2,9 +2,9 @@
 
 Links
 - Ticket: https://stratyge.atlassian.net/browse/AGO-81
-- PRs: (pending)
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/91
 - Related: AGO-148 (identity, done), AGO-34 (policy engine, done), AGO-160 (claims), AGO-188 (cross-department requests, unblocked by this), AGO-117 (Manager splits goals, follows this)
-- Status: In progress. Spec accepted 2026-11-20 (all recommendations D1-D7; run-events edit approved; schema slot NOT yet granted: ask again after PR 88 merges)
+- Status: In review (draft PR 91). Spec accepted 2026-11-20; schema slot not yet granted (persistence follow-up)
 
 ## Overview
 Handoffs are tasks. A sending agent creates a task for another agent; the receiver gets the smaller permission set and the original human requester's identity. Free-form agent chat does not exist. Epic EP-17, wave 3, risk **high** (authorization between agents).
