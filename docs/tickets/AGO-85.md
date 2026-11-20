@@ -1,10 +1,10 @@
 # AGO-85 - Gate risky capabilities on prerequisites
 
-Status: In progress (record accepted 2026-11-20)
+Status: In review (record accepted 2026-11-20)
 
 ## Links
 - Ticket: [AGO-85](https://stratyge.atlassian.net/browse/AGO-85) (US-114), epic EP-17, wave 3
-- PRs: (pending)
+- PRs: [#92](https://github.com/CodeEx24/ai-agent-office/pull/92) (draft)
 - Related: AGO-71 (sandbox), AGO-65 (egress proxy), AGO-157 (credential broker), AGO-47 (payload-hash approvals), AGO-125 (capability catalog), AGO-34 (policy engine), AGO-133 (unblocked by this), AGO-113 / AGO-81 (schema queue ahead of this), AGO-240/241/242/238 (egress follow-ups)
 
 ## Overview
