@@ -635,13 +635,13 @@ describe.skipIf(!live)("AGO-81 handoff chain rules (live database)", { timeout: 
       expect(await store().spentCentsOnTask(ws, task.taskId)).toBe(7);
     });
 
-    it("fails closed on a cost too large for the ledger: the query errors rather than reporting a small number", async () => {
+    it("a cost too large for the ledger never raises 22003: the cast sits inside a CASE, so it counts as 0 (round 3)", async () => {
       const task = await handoffWithBudget(400);
       await cost(task.runId, 7);
       await usage(task.runId, { cost_cents: "99999999999999999999999" });
-      await expect(store().spentCentsOnTask(ws, task.taskId)).rejects.toBeDefined();
-      // The hook lets that error reach the loop, which denies the call.
-      await expect(hook().check(toolCall, contextFor(task.runId, B))).rejects.toBeDefined();
+      await usage(task.runId, { cost_cents: "1234567890123" }); // 13 digits: outside ^[0-9]{1,12}$
+      await expect(store().spentCentsOnTask(ws, task.taskId)).resolves.toBe(7);
+      expect((await hook().check(toolCall, contextFor(task.runId, B))).decision).toBe("allow");
     });
 
     it("allows a call while spending is below the cap and denies it when spending equals the cap", async () => {

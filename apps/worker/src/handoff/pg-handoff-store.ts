@@ -177,11 +177,13 @@ export function createPgHandoffStore(db: Queryable): HandoffStore {
 
     async spentCentsOnTask(workspaceId, taskId): Promise<number> {
       const result = await db.query(
-        `select coalesce(sum((e.payload ->> 'cost_cents')::bigint), 0) as spent
+        // The cast sits inside the CASE, so a value that is not 1..12 digits is never cast (Postgres may run a select-list
+        // expression before the WHERE filter, and a huge number would raise 22003). Such a value counts as 0 here.
+        `select coalesce(sum(case when (e.payload ->> 'cost_cents') ~ '^[0-9]{1,12}$'
+                                  then (e.payload ->> 'cost_cents')::bigint else 0 end), 0) as spent
            from public.run_events e
            join public.runs r on r.workspace_id = e.workspace_id and r.id = e.run_id
-          where e.workspace_id = $1 and r.task_id = $2 and e.type = 'budget.usage'
-            and (e.payload ->> 'cost_cents') ~ '^[0-9]+$'`,
+          where e.workspace_id = $1 and r.task_id = $2 and e.type = 'budget.usage'`,
         [workspaceId, taskId],
       );
       const raw = result.rows[0] as { spent?: unknown } | undefined;

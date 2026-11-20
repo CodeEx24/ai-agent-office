@@ -62,6 +62,11 @@ Everything is a pure, deterministic function plus a thin worker port, so the sch
   - The budget is bounded in SQL (`0 <= budget <= sender remaining`, or the parent's on hop 2+; whole non-negative cents only) and enforced at tool-call time: the policy hook denies (`handoff_budget_exhausted`) once the `budget.usage` cost of the runs on the task reaches the narrowed budget.
   - The database refuses a non-empty `dataScope`, validates tier (0..4) and mode, and requires the requester to be an active member (`removed_at is null`). A missing sender is `sender_not_found`.
   - Table: the path CHECK rejects a NULL entry; indexes on `handoff_from_agent_id` and `requester_member_id`. Same migration, rollback updated.
+- **Round 3 (review r2 fixes, 2026-11-20).**
+  - Budget is checked BEFORE each model call: `withHandoffBudget` (`handoff-budget-guard.ts`) wraps the AGO-40 `BudgetGuard` (no second reservation mechanism) and refuses when spend so far plus the call's worst case (`worstCaseCostCents`) would pass the narrowed budget (`handoff_budget_would_be_exceeded`). No price or a store error is a refusal. The loop passes `runId` to `reserve`; `wire.ts` wraps the guard. The tool-call hook check (`handoff_budget_exhausted`) stays. Concurrent runs on one task read settled spend, so two in-flight calls can both pass; the agent's own reservation still bounds each agent.
+  - Hop 2+ is capped by the parent's REMAINING budget (parent budget minus its task's `budget.usage` spend) in `createHandoff` and `create_handoff_task`.
+  - `spentCentsOnTask` and the function cast `cost_cents` inside `CASE WHEN ... ~ '^[0-9]{1,12}$'`, so a huge value cannot raise 22003 and counts as 0.
+  - Nits: `coalesce` on a missing tier or mode, the run's agent must be the task's assignee, `FOR SHARE` on the parent row.
 
 ## Boundaries
 - **Always:** scope by workspace_id; policy check before every tool call; Zod at the boundary; intersect, never union.

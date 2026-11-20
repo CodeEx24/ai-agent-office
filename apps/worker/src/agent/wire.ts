@@ -7,7 +7,7 @@ import { createClaudeProvider } from "./claude-provider.js";
 import { createModelRouter, createPgAgentModelSource } from "./model-routing.js";
 import { createPgPolicySource } from "../policy/index.js";
 import { createRunEventEmitter, createPgRunEventStore } from "../events/index.js";
-import { createHandoffWiring, createPgHandoffStore } from "../handoff/index.js";
+import { createHandoffWiring, createPgHandoffStore, withHandoffBudget } from "../handoff/index.js";
 import { createPgCredentialStore } from "../identity/index.js";
 import { createPgKillSwitchGuard } from "../kill-switch/index.js";
 import { createPgGrantedCapabilitySource, createToolOffer } from "./tool-offer.js";
@@ -41,9 +41,10 @@ export function createProductionAgentExecutor(options: {
   // AGO-81: handoffs are tasks. The policy hook clamps a handoff run to the intersection of both agents' grants, and
   // `handoff_task` is the only way an agent gives work to another. A handoff is a task row written by a database function.
   const policySource = createPgPolicySource(pool);
+  const handoffStore = createPgHandoffStore(pool);
   const handoff = createHandoffWiring({
     source: policySource,
-    store: createPgHandoffStore(pool),
+    store: handoffStore,
     emitterFor: (context) =>
       createRunEventEmitter({
         workspaceId: context.workspaceId,
@@ -96,11 +97,18 @@ export function createProductionAgentExecutor(options: {
     killSwitch: createPgKillSwitchGuard(pool),
     // AGO-40: the money budgets (agent daily, workspace monthly) are checked before every model call. A ledger that
     // cannot answer refuses the call, so a database fault stops spending rather than lifting the limit.
-    budget: createBudgetGuard({
-      store: createPgBudgetStore(pool),
-      onStoreError: (error) => {
-        logger.error({ err: error }, "budget ledger error; the model call is refused");
+    // AGO-81: a run on a handoff task is also held to the budget its sender passed on, before each call.
+    budget: withHandoffBudget(
+      createBudgetGuard({
+        store: createPgBudgetStore(pool),
+        onStoreError: (error) => {
+          logger.error({ err: error }, "budget ledger error; the model call is refused");
+        },
+      }),
+      handoffStore,
+      (error) => {
+        logger.error({ err: error }, "handoff budget check error; the model call is refused");
       },
-    }),
+    ),
   });
 }

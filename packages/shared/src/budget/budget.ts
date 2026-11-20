@@ -131,6 +131,7 @@ export const BUDGET_STOP_REASONS = [
   "budget_check_failed",
   "call_cost_overran_reservation",
   "call_outcome_unknown_charged",
+  "handoff_budget_would_be_exceeded",
 ] as const;
 export type BudgetStopReason = (typeof BUDGET_STOP_REASONS)[number];
 
@@ -149,4 +150,6 @@ export const BUDGET_STOP_MESSAGES: Readonly<Record<BudgetStopReason, string>> = 
     "A model call cost more than was reserved for it, so the run was stopped.",
   call_outcome_unknown_charged:
     "A model call ended without a clear answer from the provider, so it may have been billed. Its full reserved cost was counted as spent.",
+  handoff_budget_would_be_exceeded:
+    "The next model call could have taken the handed-off task past the budget its sender passed on, so it was not made.",
 };

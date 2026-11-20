@@ -146,6 +146,33 @@ describe("a handoff is never wider than what the sender was handed (2-hop and 3-
     expect(store.records[1]?.narrowed.budgetCents).toBe(100);
   });
 
+  it("hop 2+ is capped by the parent's REMAINING budget (budget minus what its task already spent)", async () => {
+    const { store, hop, take } = setup();
+    const one = await hop(RUN.A, A, B, { requested: { budget_cents: 100 } });
+    if (!one.ok) throw new Error(`setup failed: ${one.reason}`);
+    await take(RUN.B, B, one.taskId);
+    store.setSpentCents(WS, one.taskId, 60);
+    // 100 - 60 = 40 left: 41 is wider, 40 is fine, and no request gets the remaining 40.
+    expect(await hop(RUN.B, B, C, { requested: { budget_cents: 41 } })).toEqual({
+      ok: false,
+      reason: "widening_budget",
+    });
+    expect((await hop(RUN.B, B, C, { requested: { budget_cents: 40 } })).ok).toBe(true);
+    const defaulted = await hop(RUN.B, B, C);
+    expect(defaulted.ok).toBe(true);
+    expect(store.records.at(-1)?.narrowed.budgetCents).toBe(40);
+  });
+
+  it("a parent that spent its whole budget cannot hand anything on", async () => {
+    const { store, hop, take } = setup();
+    const one = await hop(RUN.A, A, B, { requested: { budget_cents: 100 } });
+    if (!one.ok) throw new Error(`setup failed: ${one.reason}`);
+    await take(RUN.B, B, one.taskId);
+    store.setSpentCents(WS, one.taskId, 150); // an overrun never goes negative
+    expect((await hop(RUN.B, B, C)).ok).toBe(false);
+    expect(store.records).toHaveLength(1);
+  });
+
   it("a sender that does not exist is sender_not_found, not archived", async () => {
     const { hop } = setup();
     expect(await hop(RUN.A, "ffffffff-ffff-4fff-8fff-ffffffffffff", B)).toEqual({

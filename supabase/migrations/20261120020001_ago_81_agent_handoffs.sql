@@ -120,6 +120,7 @@ declare
   v_effective bigint;
   v_used bigint;
   v_limit bigint;
+  v_parent_spent bigint;
 begin
   if p_workspace_id is null or p_run_id is null or p_task_id is null or p_to_agent_id is null
      or p_requester_member_id is null or p_path is null or p_depth is null or p_grants is null then
@@ -147,7 +148,12 @@ begin
   if not found or v_run.task_id is null then
     raise exception 'run not found or has no task' using errcode = 'P0002';
   end if;
-  select * into v_parent from public.tasks where workspace_id = p_workspace_id and id = v_run.task_id;
+  -- FOR SHARE: the parent row cannot change under this call (its grants are read below).
+  select * into v_parent from public.tasks where workspace_id = p_workspace_id and id = v_run.task_id for share;
+  -- The run's agent is the task's assignee: a run on someone else's task is not a sender we can read a chain from.
+  if v_parent.agent_id is distinct from v_run.agent_id then
+    raise exception 'the run does not belong to the task''s agent' using errcode = 'P0002';
+  end if;
   if not found then
     raise exception 'task not found' using errcode = 'P0002';
   end if;
@@ -206,7 +212,15 @@ begin
      and b.period_start = (now() at time zone 'utc')::date;
   v_limit := greatest(0, v_effective - v_used);
   if v_parent.handoff_from_agent_id is not null then
-    v_limit := least(v_limit, (v_parent.handoff_grants ->> 'budgetCents')::bigint);
+    -- The parent's REMAINING budget: its budget minus what the runs on its task already spent (budget.usage events;
+    -- a cost that is not 1..12 digits counts as 0, and the cast sits inside the CASE so it never runs on a huge value).
+    select coalesce(sum(case when (e.payload ->> 'cost_cents') ~ '^[0-9]{1,12}$'
+                             then (e.payload ->> 'cost_cents')::bigint else 0 end), 0)
+      into v_parent_spent
+      from public.run_events e
+      join public.runs r on r.workspace_id = e.workspace_id and r.id = e.run_id
+     where e.workspace_id = p_workspace_id and r.task_id = v_parent.id and e.type = 'budget.usage';
+    v_limit := least(v_limit, greatest(0, (v_parent.handoff_grants ->> 'budgetCents')::bigint - v_parent_spent));
   end if;
   if v_budget > v_limit then
     raise exception 'the handoff is wider than the sender (budget)' using errcode = '22023';
@@ -219,8 +233,8 @@ begin
   -- what A did not pass on to B.
   for v_capability in select * from jsonb_array_elements(p_grants -> 'capabilities') loop
     if jsonb_typeof(v_capability) is distinct from 'object'
-       or (v_capability ->> 'tier') !~ '^[0-4]$'
-       or (v_capability ->> 'mode') not in ('automatic', 'approval') then
+       or coalesce((v_capability ->> 'tier') !~ '^[0-4]$', true)
+       or coalesce((v_capability ->> 'mode') not in ('automatic', 'approval'), true) then
       raise exception 'bad handoff grants' using errcode = '22023';
     end if;
     if v_parent.handoff_from_agent_id is not null and not exists (

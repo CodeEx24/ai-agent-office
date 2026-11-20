@@ -52,7 +52,11 @@ export async function createHandoff(
   ]);
   if (loadedSender === null) return { ok: false, reason: "sender_not_found" };
   if (chain === null) return { ok: false, reason: "no_requester" };
-  const senderParty = parent === null ? loadedSender : limitToHandoff(loadedSender, parent);
+  // The parent's REMAINING budget (its budget minus what the runs on its task already spent), not its static one.
+  const parentSpent =
+    parent === null ? 0 : await deps.store.spentCentsOnTask(sender.workspaceId, parent.taskId);
+  const senderParty =
+    parent === null ? loadedSender : limitToHandoff(loadedSender, parent, parentSpent);
 
   const toAgentId = receiverIdOf(input);
   const receiver =
@@ -133,7 +137,11 @@ export async function acceptHandoff(
  * (same rules as `clampToHandoff`: stricter tier, approval wins), the smaller budget and the overlapping data scope.
  * So on hop 2 or later B cannot pass on to C anything A did not pass on to B.
  */
-function limitToHandoff(party: HandoffParty, parent: HandoffRecord): HandoffParty {
+function limitToHandoff(
+  party: HandoffParty,
+  parent: HandoffRecord,
+  parentSpentCents: number,
+): HandoffParty {
   const grants = party.grants.flatMap((grant): HandoffGrant[] => {
     const passed = parent.narrowed.capabilities.find(
       (candidate) => candidate.capabilityKey === grant.capabilityKey,
@@ -150,7 +158,10 @@ function limitToHandoff(party: HandoffParty, parent: HandoffRecord): HandoffPart
   return {
     ...party,
     grants,
-    budgetCents: Math.min(party.budgetCents, parent.narrowed.budgetCents),
+    budgetCents: Math.min(
+      party.budgetCents,
+      Math.max(0, parent.narrowed.budgetCents - parentSpentCents),
+    ),
     dataScope: intersectDataScopes(party.dataScope, parent.narrowed.dataScope),
   };
 }

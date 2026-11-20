@@ -129,6 +129,46 @@ select lives_ok(
        '{"capabilities":[{"capabilityKey":"vault.read","tier":0,"mode":"automatic"}],"budgetCents":10,"dataScope":[]}'::jsonb) $$,
   'hop 3: the narrowed set passes on');
 
+-- Round 3: hop 2+ is capped by the parent's REMAINING budget. Task a1 (budget 100) already spent 60 on run b1; a huge or
+-- non-numeric cost in the same task must not raise (the cast sits inside a CASE) and counts as 0.
+reset role;
+insert into public.run_events (workspace_id, run_id, type, payload) values
+  ('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b1', 'budget.usage', '{"cost_cents": 60}'::jsonb),
+  ('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b1', 'budget.usage', '{"cost_cents": 99999999999999999999}'::jsonb),
+  ('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b1', 'budget.usage', '{"cost_cents": "abc"}'::jsonb);
+set local role service_role;
+select throws_ok(
+  $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b1', '82000000-0000-4000-8000-0000000006e1',
+       '82000000-0000-4000-8000-0000000002a3', 't', '', '82000000-0000-4000-8000-0000000001a1',
+       array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2', '82000000-0000-4000-8000-0000000002a3']::uuid[], 2,
+       '{"capabilities":[],"budgetCents":41,"dataScope":[]}'::jsonb) $$,
+  '22023', null, 'hop 2: a budget above the parent''s REMAINING budget (100 - 60) is refused');
+select lives_ok(
+  $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b1', '82000000-0000-4000-8000-0000000006e2',
+       '82000000-0000-4000-8000-0000000002a3', 'h2b', '', '82000000-0000-4000-8000-0000000001a1',
+       array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2', '82000000-0000-4000-8000-0000000002a3']::uuid[], 2,
+       '{"capabilities":[],"budgetCents":40,"dataScope":[]}'::jsonb) $$,
+  'hop 2: exactly the parent''s remaining budget works, and a huge or non-numeric cost does not raise');
+
+-- A run whose agent is not the task's assignee is not a sender (round 3).
+reset role;
+insert into public.runs (id, workspace_id, task_id, agent_id) values
+  ('82000000-0000-4000-8000-0000000007e9', '82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000006a0', '82000000-0000-4000-8000-0000000002a4');
+set local role service_role;
+select throws_ok(
+  $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007e9', '82000000-0000-4000-8000-0000000006e3',
+       '82000000-0000-4000-8000-0000000002a2', 't', '', '82000000-0000-4000-8000-0000000001a1',
+       array['82000000-0000-4000-8000-0000000002a4', '82000000-0000-4000-8000-0000000002a2']::uuid[], 1,
+       '{"capabilities":[],"budgetCents":1,"dataScope":[]}'::jsonb) $$,
+  'P0002', null, 'a run on a task assigned to another agent is refused');
+-- A grant with no tier or no mode is a bad grant, not a silent pass.
+select throws_ok(
+  $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007a1', '82000000-0000-4000-8000-0000000006e4',
+       '82000000-0000-4000-8000-0000000002a2', 't', '', '82000000-0000-4000-8000-0000000001a1',
+       array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2']::uuid[], 1,
+       '{"capabilities":[{"capabilityKey":"vault.read"}],"budgetCents":1,"dataScope":[]}'::jsonb) $$,
+  '22023', 'bad handoff grants', 'a capability with no tier or mode is refused with the clear error');
+
 -- The requester must still be an active member: a task created by R, then R is removed.
 reset role;
 insert into public.tasks (id, workspace_id, title, agent_id, created_by) values
