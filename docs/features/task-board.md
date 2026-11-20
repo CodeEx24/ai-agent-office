@@ -8,7 +8,8 @@ A read-only board of every task in the workspace, in six columns: **Inbox, Assig
 
 ## Screens
 - `/app/board` (any member, owner or viewer): the six columns. Wide screens: a horizontally scrollable row. Narrow screens: columns stack.
-- Each card: the task title, why it is in its column ("Running", "Paused", "Waiting for your approval", ...), the agent, and (when blocked on an approval) an **Open the approval** link.
+- Each card: the task title, why it is in its column ("Running", "Paused", "Waiting for your approval", ...), the agent, and (when blocked on an approval) an **Open the approval** link. The link is named after its task for screen readers and is 44 px tall.
+- A banner above the columns, "N tasks are waiting on you. Jump to Waiting on you", shows only when something waits and jumps to that column. The columns region is keyboard focusable.
 - Visible states: *Loading* until the stream is up, an empty message per column, "No tasks yet" for an empty workspace, "Couldn't refresh the tasks. Showing the last list, retrying..." when a read fails, and the same stream notices as the agent cards ("Reconnecting...", "Catching up...").
 - `/app` has a **Board** link next to Goals and Agents.
 
