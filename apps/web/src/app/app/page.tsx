@@ -39,6 +39,9 @@ export default async function WorkspaceHomePage() {
             <Link href="/app/agents" className="text-sm text-primary underline underline-offset-4">
               Agents
             </Link>
+            <Link href="/app/office" className="text-sm text-primary underline underline-offset-4">
+              Office
+            </Link>
             <Link href="/app/skills" className="text-sm text-primary underline underline-offset-4">
               Skills
             </Link>

@@ -10,6 +10,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./office": {
+      "types": "./dist/office/index.d.ts",
+      "default": "./dist/office/index.js"
+    },
     "./client-env": {
       "types": "./dist/env/client-entry.d.ts",
       "default": "./dist/env/client-entry.js"

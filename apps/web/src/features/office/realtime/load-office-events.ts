@@ -3,7 +3,7 @@ import {
   officeEventRecordSchema,
   type OfficeCursor,
   type OfficeEventRecord,
-} from "@ago/shared";
+} from "@ago/shared/office";
 
 import type { OfficeEventSource } from "./office-event-source";
 
