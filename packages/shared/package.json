@@ -26,6 +26,10 @@
       "types": "./dist/agents/agent-limits.d.ts",
       "default": "./dist/agents/agent-limits.js"
     },
+    "./goal-limits": {
+      "types": "./dist/goals/goal-limits.d.ts",
+      "default": "./dist/goals/goal-limits.js"
+    },
     "./agent-templates": {
       "types": "./dist/agents/agent-templates.d.ts",
       "default": "./dist/agents/agent-templates.js"
