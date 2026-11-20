@@ -69,7 +69,8 @@ export function BoardTaskCard({ card }: { card: BoardCard }) {
           <Link
             href={approvalHref(card.approvalId)}
             data-testid="board-card-approval-link"
-            className="font-medium text-primary underline underline-offset-4"
+            aria-label={`Open the approval for ${card.title}`}
+            className="-my-1 inline-flex min-h-11 items-center rounded-sm font-medium text-primary underline underline-offset-4 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
             Open the approval
           </Link>
@@ -111,6 +112,7 @@ export function TaskBoard({
   const view = useMemo(() => (data === null ? null : deriveBoard(data, office)), [data, office]);
   const isLoading = view === null || status === "idle" || status === "connecting";
   const notice = streamNotice(status);
+  const waitingCount = view?.columns.waiting_on_you.length ?? 0;
   const total =
     view === null ? 0 : BOARD_COLUMN_IDS.reduce((n, id) => n + view.columns[id].length, 0);
 
@@ -138,8 +140,22 @@ export function TaskBoard({
           No tasks yet. Submit a goal and the Manager will plan tasks that show up here.
         </p>
       ) : null}
+      {!isLoading && waitingCount > 0 ? (
+        <p className="text-sm font-medium" data-testid="board-waiting-banner">
+          {waitingCount === 1 ? "1 task is" : `${String(waitingCount)} tasks are`} waiting on you.{" "}
+          <a
+            href="#board-column-waiting_on_you-title"
+            className="-my-1 inline-flex min-h-11 items-center rounded-sm text-primary underline underline-offset-4 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          >
+            Jump to Waiting on you
+          </a>
+        </p>
+      ) : null}
       <div
         data-testid="board"
+        role="region"
+        aria-label="Task board columns"
+        tabIndex={0}
         className="grid gap-4 md:flex md:snap-x md:items-start md:overflow-x-auto md:pb-2"
       >
         {BOARD_COLUMN_IDS.map((id) => {
@@ -162,6 +178,7 @@ export function TaskBoard({
                   data-testid="board-column-count"
                 >
                   {isLoading ? "" : cards.length}
+                  {isLoading ? null : <span className="sr-only"> tasks</span>}
                 </span>
               </h2>
               {isLoading ? (

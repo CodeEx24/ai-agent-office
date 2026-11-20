@@ -314,6 +314,46 @@ describe("AC2: Waiting on you lists blocked approvals first", () => {
   });
 });
 
+describe("round 2: Waiting on you is reachable without scrolling", () => {
+  it("shows a banner with the count that jumps to the column, only when something waits", async () => {
+    const source = new ControlledSource([created(), started(), toolCall()]);
+    renderBoard(source);
+    await goLive(source);
+    await waitFor(() => {
+      expect(cardTitles("in_progress")).toEqual(["Write the welcome note"]);
+    });
+    expect(screen.queryByTestId("board-waiting-banner")).toBeNull();
+
+    await act(async () => {
+      source.insert(approvalRequested());
+      await Promise.resolve();
+    });
+    const banner = await screen.findByTestId("board-waiting-banner");
+    expect(banner.textContent).toContain("1 task is waiting on you.");
+    const jump = within(banner).getByRole("link", { name: "Jump to Waiting on you" });
+    expect(jump.getAttribute("href")).toBe("#board-column-waiting_on_you-title");
+    expect(document.getElementById("board-column-waiting_on_you-title")).not.toBeNull();
+
+    await act(async () => {
+      source.insert(approvalDecided());
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("board-waiting-banner")).toBeNull();
+    });
+  });
+
+  it("names each approval link after its task and gives it a tall tap target", async () => {
+    const source = new ControlledSource([created(), started(), toolCall(), approvalRequested()]);
+    renderBoard(source);
+    await goLive(source);
+    const link = await screen.findByRole("link", {
+      name: "Open the approval for Write the welcome note",
+    });
+    expect(link.className).toContain("min-h-11");
+  });
+});
+
 describe("states and safety", () => {
   it("shows loading until the stream is up, then the empty column messages", async () => {
     const source = new ControlledSource();

@@ -436,12 +436,12 @@ describe("edge cases", () => {
     });
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
     expect(headings).toEqual([
-      "Inbox0",
-      "Assigned0",
-      "In progress0",
-      "In review0",
-      "Waiting on you0",
-      "Done0",
+      "Inbox0 tasks",
+      "Assigned0 tasks",
+      "In progress0 tasks",
+      "In review0 tasks",
+      "Waiting on you0 tasks",
+      "Done0 tasks",
     ]);
     expect(screen.getAllByTestId("board-column-empty")).toHaveLength(6);
     expect(screen.queryAllByTestId("board-card")).toHaveLength(0);
