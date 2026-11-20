@@ -4,7 +4,7 @@ Status: In progress (record accepted 2026-11-20)
 
 ## Links
 - Ticket: [AGO-65](https://stratyge.atlassian.net/browse/AGO-65) (US-110), epic EP-17, wave 3
-- PRs: (pending)
+- PRs: [#86](https://github.com/CodeEx24/ai-agent-office/pull/86) (draft)
 - Related: AGO-71 (per-run sandbox, done), AGO-85 (capability prerequisites), AGO-129 (red-team suite), AGO-104 (log shipping), AGO-113 (schema slot)
 
 ## Overview
