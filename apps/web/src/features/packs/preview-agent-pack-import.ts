@@ -1,12 +1,15 @@
 import type { Database } from "@ago/shared";
 import {
+  DEFAULT_CONFLICT_RULE,
   buildImportPreview,
   validatePackText,
   type CatalogCapability,
+  type ConflictRule,
   type ExistingPackAgent,
   type ExistingPackSkill,
   type ImportPreview,
   type PackRejection,
+  type PreviewContext,
 } from "@ago/shared/pack-import-preview";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -55,19 +58,20 @@ async function readAll<Row>(
   throw new PreviewPackImportError();
 }
 
-export async function previewAgentPackImport(
+/**
+ * Reads the workspace state a plan is built from: SELECT only, as the caller, filtered by `workspace_id`. The dry run
+ * and the apply (AGO-194) both call this, so they plan from the same reading.
+ */
+export async function loadPackImportContext(
   client: Client,
-  input: { workspaceId: string; text: string },
-): Promise<PreviewPackImportResult> {
-  const validated = validatePackText(input.text);
-  if (!validated.ok) return validated;
-
-  const { workspaceId } = input;
-  const [agentRows, skillRows, catalogRows] = await Promise.all([
+  workspaceId: string,
+  conflictRule: ConflictRule,
+): Promise<PreviewContext> {
+  const [agentRows, skillRows, catalogRows, grantRows] = await Promise.all([
     readAll((from, to) =>
       client
         .from("agents")
-        .select("name, role, model, thinking_effort, prompt, archived_at")
+        .select("id, name, role, model, thinking_effort, prompt, mode, archived_at")
         .eq("workspace_id", workspaceId)
         .order("name", { ascending: true })
         .range(from, to),
@@ -88,14 +92,33 @@ export async function previewAgentPackImport(
         .order("key", { ascending: true })
         .range(from, to),
     ),
+    // What each existing agent holds now: an update adds to it, so the trifecta lint judges the union.
+    readAll((from, to) =>
+      client
+        .from("agent_capabilities")
+        .select("agent_id, capability")
+        .eq("workspace_id", workspaceId)
+        .order("agent_id", { ascending: true })
+        // A tiebreaker: without it two grants of one agent can swap places between pages and be read twice or missed.
+        .order("capability", { ascending: true })
+        .range(from, to),
+    ),
   ]);
 
+  const heldByAgent = new Map<string, string[]>();
+  for (const grant of grantRows) {
+    const held = heldByAgent.get(grant.agent_id) ?? [];
+    held.push(grant.capability);
+    heldByAgent.set(grant.agent_id, held);
+  }
   const existingAgents: ExistingPackAgent[] = agentRows.map((row) => ({
+    capabilities: heldByAgent.get(row.id) ?? [],
     name: row.name,
     role: row.role,
     model: row.model,
     thinkingEffort: row.thinking_effort,
     prompt: row.prompt,
+    mode: row.mode,
     archived: row.archived_at !== null,
   }));
   const existingSkills: ExistingPackSkill[] = skillRows.map((row) => ({
@@ -109,8 +132,19 @@ export async function previewAgentPackImport(
     scope: row.scope,
   }));
 
-  return {
-    ok: true,
-    preview: buildImportPreview(validated.pack, { existingAgents, existingSkills, catalog }),
-  };
+  return { existingAgents, existingSkills, catalog, conflictRule };
+}
+
+export async function previewAgentPackImport(
+  client: Client,
+  input: { workspaceId: string; text: string; conflictRule?: ConflictRule },
+): Promise<PreviewPackImportResult> {
+  const validated = validatePackText(input.text);
+  if (!validated.ok) return validated;
+  const context = await loadPackImportContext(
+    client,
+    input.workspaceId,
+    input.conflictRule ?? DEFAULT_CONFLICT_RULE,
+  );
+  return { ok: true, preview: buildImportPreview(validated.pack, context) };
 }

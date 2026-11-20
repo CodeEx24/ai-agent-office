@@ -18,6 +18,12 @@ export interface AgentTool {
    * tool without a key.
    */
   readonly capabilityKey?: string;
+  /**
+   * The external tool server this tool comes from (AGO-68). A tool with a server id is offered only while the
+   * workspace has allowlisted that server and its tool list still matches the pinned hash. Left out by
+   * built-ins and by tools the worker itself implements.
+   */
+  readonly serverId?: string;
   /** Validates the model's input. Failing it means the tool is not run. */
   readonly inputSchema: z.ZodType;
   /** JSON Schema sent to the model; must describe the same shape as `inputSchema`. */

@@ -1,6 +1,7 @@
 import { DEFAULT_TIER0_ALLOWLIST } from "./policy-hook.js";
 
 import type { AgentTool } from "./tools.js";
+import type { ToolServerGate } from "../tool-servers/tool-server-gate.js";
 import type { CredentialStore } from "../identity/credential-store.js";
 
 /**
@@ -50,6 +51,12 @@ export function createToolOffer(deps: {
   readonly source: GrantedCapabilitySource;
   /** Tier-0 tool names that need no grant. Defaults to the policy engine's built-ins. */
   readonly builtinTools?: readonly string[];
+  /**
+   * The tool server gate (AGO-68). A tool that names a `serverId` is offered only when it is granted AND this
+   * gate allows its server (allowlisted, pinned, unchanged). With no gate configured such a tool is never
+   * offered. An error from the gate is a deny, never an offer.
+   */
+  readonly serverGate?: ToolServerGate;
 }): ToolOffer {
   const builtins = new Set(deps.builtinTools ?? DEFAULT_TIER0_ALLOWLIST);
   return {
@@ -57,10 +64,29 @@ export function createToolOffer(deps: {
       // A failed read throws: the attempt fails (and is retried) rather than showing a list nobody checked.
       const granted = new Set(await deps.source.grantedCapabilities(scope));
       const offered = new Set<string>();
+      // One gate check per server per call, however many of its tools there are.
+      const verdicts = new Map<string, Promise<boolean>>();
+      const serverAllowed = (serverId: string): Promise<boolean> => {
+        const gate = deps.serverGate;
+        if (gate === undefined) return Promise.resolve(false);
+        let verdict = verdicts.get(serverId);
+        if (verdict === undefined) {
+          verdict = gate.check(scope, serverId).then(
+            (result) => result.ok,
+            () => false,
+          );
+          verdicts.set(serverId, verdict);
+        }
+        return verdict;
+      };
       for (const tool of tools) {
+        const isGranted = tool.capabilityKey !== undefined && granted.has(tool.capabilityKey);
+        if (tool.serverId !== undefined) {
+          if (isGranted && (await serverAllowed(tool.serverId))) offered.add(tool.name);
+          continue;
+        }
         const isBuiltin =
           tool.capabilityKey === undefined && tool.tier === 0 && builtins.has(tool.name);
-        const isGranted = tool.capabilityKey !== undefined && granted.has(tool.capabilityKey);
         if (isBuiltin || isGranted) offered.add(tool.name);
       }
       return offered;

@@ -93,16 +93,21 @@ const TRIFECTA_THREE = [
 ];
 
 describe("AC2: every capability with its tier; Tier 3 and 4 flagged; trifecta flagged", () => {
-  it("blocks the pack and flags each leg when a full trifecta survives in a lower-tier catalog", () => {
+  it("imports the agent disabled and flags each leg when a full trifecta survives in a lower-tier catalog (AGO-194)", () => {
     const preview = previewOf(packOf({ agents: [agent({ capabilities: TRIFECTA_THREE })] }), {
       ...context(),
       catalog: LOW_TIER,
     });
     const scout = preview.agents[0];
-    expect(preview.importable).toBe(false);
-    expect(preview.blockers).toEqual([
-      expect.objectContaining({ code: "trifecta_combination", agent: "Scout" }),
+    expect(preview.importable).toBe(true);
+    expect(preview.blockers).toEqual([]);
+    expect(scout?.importDisabled?.reason).toBe("trifecta_combination");
+    expect([...(scout?.importDisabled?.legs ?? [])].sort()).toEqual([
+      "outbound",
+      "private",
+      "untrusted",
     ]);
+    expect(preview.summary.disabled).toBe(1);
     expect(scout?.capabilities.map((c) => [c.name, c.trifecta, c.status])).toEqual([
       ["web.search", true, "applied"],
       ["vault.read", true, "applied"],
@@ -112,7 +117,7 @@ describe("AC2: every capability with its tier; Tier 3 and 4 flagged; trifecta fl
     expect([...(scout?.trifecta.legs ?? [])].sort()).toEqual(["outbound", "private", "untrusted"]);
   });
 
-  it("also blocks when the outbound leg is integration.write instead of a message", () => {
+  it("also imports disabled when the outbound leg is integration.write instead of a message", () => {
     const preview = previewOf(
       packOf({
         agents: [
@@ -134,8 +139,8 @@ describe("AC2: every capability with its tier; Tier 3 and 4 flagged; trifecta fl
         ],
       },
     );
-    expect(preview.importable).toBe(false);
-    expect(preview.blockers.map((b) => b.code)).toEqual(["trifecta_combination"]);
+    expect(preview.importable).toBe(true);
+    expect(preview.agents[0]?.importDisabled?.reason).toBe("trifecta_combination");
   });
 
   it("does not block when the outbound leg is unknown to the workspace catalog (ignored), but still flags it as declared", () => {
@@ -172,7 +177,7 @@ describe("AC2: every capability with its tier; Tier 3 and 4 flagged; trifecta fl
     expect(preview.agents[0]?.capabilities.some((c) => c.trifecta)).toBe(false);
   });
 
-  it("names only the offending agent as blocked and leaves another agent's flags clean", () => {
+  it("names only the offending agent as disabled and leaves another agent's flags clean", () => {
     const preview = previewOf(
       packOf({
         agents: [
@@ -182,7 +187,7 @@ describe("AC2: every capability with its tier; Tier 3 and 4 flagged; trifecta fl
       }),
       { ...context(), catalog: LOW_TIER },
     );
-    expect(preview.blockers.map((b) => b.agent)).toEqual(["Risky"]);
+    expect(preview.agents.filter((a) => a.importDisabled).map((a) => a.name)).toEqual(["Risky"]);
     const safe = preview.agents.find((a) => a.name === "Safe");
     expect(safe?.trifecta.declared).toBe(false);
     expect(safe?.capabilities.some((c) => c.trifecta)).toBe(false);
@@ -273,8 +278,9 @@ describe("AC3: conflicts and references to set up afterwards", () => {
         },
       ],
     });
+    // An archived agent cannot be edited, so under the default rule it is skipped (AGO-194).
     expect(preview.agents[0]).toMatchObject({
-      action: "update",
+      action: "skip",
       conflict: true,
       existingIsArchived: true,
       changedFields: ["role", "prompt"],
@@ -470,7 +476,7 @@ describe("AC1/AC2: checksum states", () => {
 
 const CONTROL_NAMES: [string, string][] = [
   ["ESC (ANSI)", "A\u001b[31mred\u001b[0m"],
-  ["NUL", "A\u0000B"],
+  // NUL is not cleaned: since AGO-194 the file is refused (the database cannot store it), see the test below.
   ["C1 control", "A\u0085B\u009fC"],
   ["bidi override", "A\u{202e}evil\u{202c}B\u{2066}x\u{2069}"],
   ["line and paragraph separators", "A\u{2028}B\u{2029}C"],
@@ -506,6 +512,20 @@ describe("untrusted text: names are cleaned and bounded in every field the previ
       expect(everything).toContain("A");
     },
   );
+
+  it("refuses a NUL or a lone surrogate with a clean invalid_pack naming the field (AGO-194)", () => {
+    for (const dirty of ["A\u0000B", "A\ud800B", "A\udc00B"]) {
+      const result = previewAgentPackText(
+        JSON.stringify(packOf({ agents: [agent({ name: "Fine", prompt: dirty })] })),
+        context(),
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.code).toBe("invalid_pack");
+      expect(result.error.issues?.map((issue) => issue.path)).toEqual(["agents.0.prompt"]);
+      expect(JSON.stringify(result.error)).not.toContain("Fine");
+    }
+  });
 
   it("truncates a 120-character name to at most 80 characters plus an ellipsis", () => {
     const long = "N".repeat(120);

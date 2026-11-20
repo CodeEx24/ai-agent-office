@@ -109,8 +109,8 @@ select is(
   (select coalesce(array_agg(p.proname::text order by p.proname::text), '{}'::text[]) from pg_proc p
    where p.pronamespace = 'public'::regnamespace and has_function_privilege('authenticated', p.oid, 'EXECUTE')
      and not exists (select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')),
-  array['activate_kill_switch', 'archive_agent', 'create_agent', 'duplicate_agent', 'onboard_current_user', 'record_pack_export', 'release_kill_switch', 'request_run_control', 'set_agent_mode', 'set_agent_run_limits', 'unarchive_agent', 'update_agent'],
-  'authenticated can execute exactly twelve functions in public: create_agent (AGO-141), set_agent_run_limits (AGO-166), update_agent, duplicate_agent, archive_agent, unarchive_agent (AGO-89), set_agent_mode (AGO-99) and activate_kill_switch / release_kill_switch (AGO-84), all owner-checked, record_pack_export (AGO-192) and request_run_control (AGO-86), both member-checked, and onboard_current_user'
+  array['activate_kill_switch', 'archive_agent', 'create_agent', 'duplicate_agent', 'import_agent_pack', 'onboard_current_user', 'record_pack_export', 'release_kill_switch', 'request_run_control', 'set_agent_mode', 'set_agent_run_limits', 'unarchive_agent', 'update_agent'],
+  'authenticated can execute exactly thirteen functions in public: import_agent_pack (AGO-194, owner-checked, human session only), create_agent (AGO-141), set_agent_run_limits (AGO-166), update_agent, duplicate_agent, archive_agent, unarchive_agent (AGO-89), set_agent_mode (AGO-99) and activate_kill_switch / release_kill_switch (AGO-84), all owner-checked, record_pack_export (AGO-192) and request_run_control (AGO-86), both member-checked, and onboard_current_user'
 );
 select is(
   (select coalesce(array_agg(p.proname::text order by p.proname::text), '{}'::text[]) from pg_proc p
