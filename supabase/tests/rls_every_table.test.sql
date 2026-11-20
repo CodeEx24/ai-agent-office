@@ -277,10 +277,10 @@ select is_empty(
 select is_empty(
   $$select t.tbl from (select tbl, count(distinct cmd) n from ago107_t.cases group by tbl) t where t.n <> 4$$,
   'AC2: every table is exercised with select, insert, update and delete');
-select is((select count(*)::int from ago107_t.cases), 92, 'AC2: 23 tables x 4 commands = 88 cases');
+select is((select count(*)::int from ago107_t.cases), 92, 'AC2: 23 tables x 4 commands = 92 cases');
 select is((select count(*)::int from ago107_t.cases c join ago107_t.expected e using (tbl, cmd)), 92, 'AC2: every case has a documented expectation');
 
--- run the 88 cases as each principal
+-- run the 92 cases as each principal
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000001","role":"authenticated"}', true);
 insert into ago107_t.results select 'owner', tbl, cmd, ago107_t.attempt(stmt) from ago107_t.cases;

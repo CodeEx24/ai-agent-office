@@ -19,6 +19,7 @@ create table public.goals (
   constraint goals_text_length check (char_length(text) between 1 and 5000),
   -- At least one visible character: whitespace, non-breaking space and zero-width characters do not count.
   -- Keep this set in step with INVISIBLE in packages/shared/src/goals/goal-limits.ts.
+  -- The class holds whitespace plus U+00A0, U+200B-U+200D, U+2060, U+FEFF, U+00AD and U+180E.
   constraint goals_text_not_blank check (text !~ '^[\s ​-‍⁠﻿­᠎]*$')
 );
 comment on table public.goals is 'Goals members submit to the Manager (AGO-113). Immutable; written only by submit_goal. text is untrusted data.';
@@ -53,6 +54,7 @@ security definer
 set search_path = ''
 as $$
 declare
+  v_claims jsonb := coalesce((select auth.jwt()), '{}'::jsonb);
   v_member_id uuid;
   v_manager_id uuid;
   v_text text;
@@ -60,6 +62,11 @@ declare
 begin
   if (select auth.uid()) is null or p_workspace_id is null then
     raise exception 'sign in to submit a goal' using errcode = '42501';
+  end if;
+  -- Human only: a real person's session, never a token that carries an agent claim (same rule as import_agent_pack).
+  if coalesce(v_claims ->> 'role', '') <> 'authenticated'
+     or v_claims ?| array['agent_id', 'run_id', 'agent_credential'] then
+    raise exception 'a human session is required to submit a goal' using errcode = '42501';
   end if;
   -- A person with an active membership at member level or above. Viewers, removed members and strangers fail here.
   if not private.is_member(p_workspace_id, 'member') then

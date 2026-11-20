@@ -1,7 +1,13 @@
 "use client";
 
 import { useActionState, useId, useState, type SubmitEvent } from "react";
-import { GOAL_TEXT_MAX_LENGTH, checkGoalText } from "@ago/shared/goal-limits";
+import Link from "next/link";
+import {
+  GOAL_MESSAGES,
+  GOAL_TEXT_MAX_LENGTH,
+  checkGoalText,
+  countGoalCharacters,
+} from "@ago/shared/goal-limits";
 import { Button, Label } from "@ago/ui";
 
 import { submitGoalAction } from "./actions";
@@ -10,7 +16,7 @@ import type { GoalInboxState } from "./submit-goal";
 const INITIAL_STATE: GoalInboxState = {};
 
 const FIELD_CLASS =
-  "min-h-32 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive";
+  "min-h-32 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive";
 
 /**
  * The goal inbox form (AGO-113): one text box and a Submit button. An empty goal (nothing, spaces or only
@@ -78,15 +84,26 @@ export function GoalInboxForm({ workspaceId }: { workspaceId: string }) {
             {fieldError}
           </p>
           <p className="shrink-0 text-xs text-muted-foreground" aria-hidden="true">
-            {text.length}/{GOAL_TEXT_MAX_LENGTH}
+            {countGoalCharacters(text)}/{GOAL_TEXT_MAX_LENGTH}
           </p>
         </div>
       </div>
 
       {state.error ? (
-        <p role="alert" className="text-sm text-destructive" data-testid="goal-form-error">
-          {state.error}
-        </p>
+        <div className="grid gap-1">
+          <p role="alert" className="text-sm text-destructive" data-testid="goal-form-error">
+            {state.error}
+          </p>
+          {state.error === GOAL_MESSAGES.noManager ? (
+            <Link
+              href="/app/agents/new"
+              className="text-sm text-primary underline underline-offset-4"
+              data-testid="goal-create-manager-link"
+            >
+              Create a Manager agent
+            </Link>
+          ) : null}
+        </div>
       ) : null}
       {showSuccess ? (
         <p role="status" className="text-sm text-muted-foreground" data-testid="goal-submitted">

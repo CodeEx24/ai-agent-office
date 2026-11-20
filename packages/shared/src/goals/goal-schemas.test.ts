@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { countGoalCharacters } from "./goal-limits.js";
 import {
   GOAL_MESSAGES,
   GOAL_TEXT_MAX_LENGTH,
@@ -14,6 +15,14 @@ const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 describe("normalizeGoalText", () => {
   it("trims, converts CRLF and removes zero-width characters", () => {
     expect(normalizeGoalText("  Ship​ the\r\nplan ﻿ ")).toBe("Ship the\nplan");
+  });
+});
+
+describe("countGoalCharacters", () => {
+  it("ignores zero-width characters, so zero-width-only text counts as 0", () => {
+    expect(countGoalCharacters(String.fromCodePoint(0x200b, 0x200d, 0xfeff, 0x2060))).toBe(0);
+    expect(countGoalCharacters(`ab${String.fromCodePoint(0x200b)}c`)).toBe(3);
+    expect(countGoalCharacters("")).toBe(0);
   });
 });
 

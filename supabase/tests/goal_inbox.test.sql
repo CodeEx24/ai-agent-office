@@ -129,6 +129,17 @@ select is((select count(*)::int from public.tasks where goal_id is not null), 0,
 select set_config('request.jwt.claims', '{"role":"authenticated"}', true);
 select throws_ok($$ select public.submit_goal('113aaaaa-0000-0000-0000-000000000001', 'no user') $$, '42501', null, 'a caller with no user id is refused');
 select throws_ok($$ select public.submit_goal(null, 'no workspace') $$, '42501', null, 'a null workspace is refused');
+-- Human only: a token that carries an agent claim is refused even when its subject is a member of the workspace.
+select set_config('request.jwt.claims', '{"sub":"11300000-0000-0000-0000-00000000000a","role":"authenticated","agent_id":"11300000-0000-0000-0000-0000000000a9"}', true);
+select throws_ok($$ select public.submit_goal('113aaaaa-0000-0000-0000-000000000001', 'agent goal') $$, '42501', null, 'a token with an agent_id claim is refused');
+select set_config('request.jwt.claims', '{"sub":"11300000-0000-0000-0000-00000000000a","role":"authenticated","run_id":"11300000-0000-0000-0000-0000000000b9"}', true);
+select throws_ok($$ select public.submit_goal('113aaaaa-0000-0000-0000-000000000001', 'run goal') $$, '42501', null, 'a token with a run_id claim is refused');
+select set_config('request.jwt.claims', '{"sub":"11300000-0000-0000-0000-00000000000a","role":"authenticated","agent_credential":"x"}', true);
+select throws_ok($$ select public.submit_goal('113aaaaa-0000-0000-0000-000000000001', 'credential goal') $$, '42501', null, 'a token with an agent_credential claim is refused');
+select set_config('request.jwt.claims', '{"sub":"11300000-0000-0000-0000-00000000000a","role":"service_role"}', true);
+select throws_ok($$ select public.submit_goal('113aaaaa-0000-0000-0000-000000000001', 'service goal') $$, '42501', null, 'a token whose role is not authenticated is refused');
+select set_config('request.jwt.claims', '{"sub":"11300000-0000-0000-0000-00000000000a","role":"authenticated"}', true);
+select is((select count(*)::int from public.goals where text in ('agent goal', 'run goal', 'credential goal', 'service goal')), 0, 'a refused agent-claim submit stores nothing');
 
 -- 7. No Manager: refused with P0002 and nothing is stored (workspace C has only a Writer).
 select set_config('request.jwt.claims', '{"sub":"11300000-0000-0000-0000-00000000000c","role":"authenticated"}', true);

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { GOAL_MESSAGES } from "@ago/shared";
+import { GOAL_MESSAGES, GOAL_TEXT_MAX_LENGTH } from "@ago/shared";
 
 const action = vi.hoisted(() => ({ submitGoalAction: vi.fn() }));
 vi.mock("./actions", () => action);
@@ -74,6 +74,34 @@ describe("GoalInboxForm", () => {
     expect(await screen.findByTestId("goal-form-error")).toHaveTextContent(GOAL_MESSAGES.noManager);
     expect(screen.getByLabelText("Goal")).toHaveValue("Grow signups");
     expect(screen.queryByTestId("goal-submitted")).not.toBeInTheDocument();
+  });
+
+  it("links the no-Manager message to agent creation, and only that message", async () => {
+    action.submitGoalAction.mockResolvedValueOnce({ error: GOAL_MESSAGES.noManager });
+    setup();
+    fireEvent.change(screen.getByLabelText("Goal"), { target: { value: "Grow signups" } });
+    await submit();
+    const link = await screen.findByTestId("goal-create-manager-link");
+    expect(link).toHaveAttribute("href", "/app/agents/new");
+
+    action.submitGoalAction.mockResolvedValueOnce({ error: GOAL_MESSAGES.generic });
+    await submit();
+    expect(await screen.findByText(GOAL_MESSAGES.generic)).toBeInTheDocument();
+    expect(screen.queryByTestId("goal-create-manager-link")).not.toBeInTheDocument();
+  });
+
+  it("counts visible characters only: zero-width text shows 0", () => {
+    setup();
+    const zeroWidth = String.fromCodePoint(0x200b, 0x200d, 0xfeff);
+    fireEvent.change(screen.getByLabelText("Goal"), { target: { value: zeroWidth } });
+    expect(screen.getByText(`0/${String(GOAL_TEXT_MAX_LENGTH)}`)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Goal"), { target: { value: `ab${zeroWidth}c` } });
+    expect(screen.getByText(`3/${String(GOAL_TEXT_MAX_LENGTH)}`)).toBeInTheDocument();
+  });
+
+  it("uses the muted-foreground token for the placeholder", () => {
+    setup();
+    expect(screen.getByLabelText("Goal").className).toContain("placeholder:text-muted-foreground");
   });
 
   it("shows a server-side field error under the box", async () => {

@@ -29,6 +29,11 @@ export function normalizeGoalText(text: string): string {
   return text.replace(/\r\n?/g, "\n").replace(INVISIBLE_RE, "").trim();
 }
 
+/** Characters that count toward the limit as the person types: zero-width characters are free (the counter shows 0 for them). */
+export function countGoalCharacters(text: string): number {
+  return text.replace(INVISIBLE_RE, "").length;
+}
+
 /** True when nothing visible is left: empty, whitespace only, or zero-width characters only. */
 export function isGoalTextBlank(text: string): boolean {
   return BLANK_RE.test(text);
