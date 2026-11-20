@@ -1,8 +1,11 @@
 # AGO-71 - Build the per-run sandbox
 
+Status: Merged
+
 ## Links
 - Ticket: [AGO-71](https://stratyge.atlassian.net/browse/AGO-71) (US-112), epic EP-17, wave 3
 - PRs: [#79](https://github.com/CodeEx24/ai-agent-office/pull/79)
+- Follow-ups: AGO-234, AGO-235, AGO-236, AGO-237, AGO-238
 - Related: AGO-167 (tool loop, done), AGO-65 (egress proxy), AGO-85 (capability prerequisites), AGO-129 (red-team suite)
 
 ## Overview
@@ -49,7 +52,19 @@ AGO-167 (tool seam, policy hook). Unblocks AGO-65, AGO-85, AGO-129.
 Real-container tests (no mocks for AC1-AC3), skipped when Docker is unavailable, with file-level timeouts. Escape probes: DNS, raw TCP, HTTP to a host listener, `/var/run/docker.sock`, abstract unix sockets, setuid, mount, ptrace, write outside scratch, read host paths, fork bomb, memory blow-up, CPU spin, sleep past the limit. Each must fail to escape. Unit tests: flag construction, limit clamping, tar path validation, tool error mapping.
 
 ## Outcome
-Built and approved (round 2). Feature guide: [docs/features/sandbox.md](../features/sandbox.md). PR: [#79](https://github.com/CodeEx24/ai-agent-office/pull/79).
+Merged via [#79](https://github.com/CodeEx24/ai-agent-office/pull/79) after 2 rounds (round 1 tester findings fixed; round 2 gate, testers and reviewers all PASS; approver APPROVE). Pre-merge re-gate on the branch re-synced with main: PASS. Feature guide: [docs/features/sandbox.md](../features/sandbox.md).
+
+All 4 acceptance criteria met. Deviations are listed above (no Dockerfile, random unprivileged uid per run, round 2 error mapping).
+
+Known limitations, each tracked as a follow-up:
+- Path segments over 255 UTF-8 bytes are reported as a tar failure instead of `invalid_request`: AGO-234.
+- Container output can reach the host's Docker log driver before the output cap: AGO-235.
+- The `docker inspect` failure branch on an existing container is untested: AGO-236.
+- `run_code` is not registered in `wire.ts` yet; startup cleanup and a policy and approval integration test come with it (relates to AGO-34): AGO-237.
+- The real-container suite skips in CI (no Docker step); the change touches workflows, so the owner merges it: AGO-238.
+- Per-agent sandbox limits in settings and a files-out channel remain open ideas, not yet filed.
+
+Cost of the ticket's agents: see the PR close-out comment.
 
 ## Follow-up tasks
 - Per-agent sandbox limits in settings; files-out channel; Docker-in-CI job (owner merges workflow changes).
