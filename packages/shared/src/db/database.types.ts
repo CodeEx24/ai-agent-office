@@ -395,14 +395,14 @@ isOneToOne: false
                   ]
                 },"pack_events": {
                   Row: {
-                    "agent_ids": (string)[],"agent_names": (string)[],"checksum": string,"created_at": string,"exported_by": string,"id": string,"kind": string,"skill_count": number,"workspace_id": string
+                    "agent_ids": (string)[],"agent_names": (string)[],"checksum": string,"created_at": string,"detail": Json | null,"exported_by": string,"id": string,"kind": string,"skill_count": number,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "agent_ids": (string)[],"agent_names": (string)[],"checksum": string,"created_at"?: string,"exported_by": string,"id"?: string,"kind": string,"skill_count": number,"workspace_id": string
+                    "agent_ids": (string)[],"agent_names": (string)[],"checksum": string,"created_at"?: string,"detail"?: Json | null,"exported_by": string,"id"?: string,"kind": string,"skill_count": number,"workspace_id": string
                   }
                   Update: {
-                    "agent_ids"?: (string)[],"agent_names"?: (string)[],"checksum"?: string,"created_at"?: string,"exported_by"?: string,"id"?: string,"kind"?: string,"skill_count"?: number,"workspace_id"?: string
+                    "agent_ids"?: (string)[],"agent_names"?: (string)[],"checksum"?: string,"created_at"?: string,"detail"?: Json | null,"exported_by"?: string,"id"?: string,"kind"?: string,"skill_count"?: number,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -629,6 +629,9 @@ isOneToOne: false
                            },
 "duplicate_agent":
 { Args: { "p_agent_id": string,"p_name": string,"p_workspace_id": string }; Returns: string
+                           },
+"import_agent_pack":
+{ Args: { "p_checksum": string,"p_plan": Json,"p_workspace_id": string }; Returns: string
                            },
 "onboard_current_user":
 { Args: { "p_workspace_name": string }; Returns: string

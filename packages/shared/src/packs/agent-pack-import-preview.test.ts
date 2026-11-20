@@ -196,7 +196,7 @@ describe("buildImportPreview: agents and skills", () => {
       }),
     );
     expect(preview.agents[0]).toMatchObject({
-      action: "update",
+      action: "skip", // archived: it cannot be edited (AGO-194)
       conflict: true,
       changedFields: ["role", "prompt"],
       existingIsArchived: true,
@@ -292,14 +292,15 @@ describe("buildImportPreview: capabilities, tiers and the trifecta", () => {
     expect(preview.importable).toBe(true);
   });
 
-  it("blocks the pack when a trifecta would remain after ignoring (a catalog with a lower tier)", () => {
+  it("imports the agent disabled when a trifecta would remain after ignoring (a catalog with a lower tier)", () => {
     const lowered = CATALOG.map((c) => (c.key === "message.send_outbound" ? { ...c, tier: 2 } : c));
     const preview = buildImportPreview(
       parsed({ agents: [agent({ capabilities: TRIFECTA })] }),
       context({ catalog: lowered }),
     );
-    expect(preview.importable).toBe(false);
-    expect(preview.blockers).toMatchObject([{ code: "trifecta_combination", agent: "Scout" }]);
+    expect(preview.importable).toBe(true);
+    expect(preview.blockers).toEqual([]);
+    expect(preview.agents[0]?.importDisabled).toMatchObject({ reason: "trifecta_combination" });
   });
 
   it("does not flag two of the three legs", () => {
