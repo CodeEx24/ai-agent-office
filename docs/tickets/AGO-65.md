@@ -30,6 +30,19 @@ Acceptance criteria (verbatim):
 
 **Sandbox integration.** `SandboxRequest` gains optional `egress` (set by worker code, never by the model). Without it: `--network none` exactly as today. With it: proxy first; if it is not ready in time, `denied: runtime_unavailable` (egress proxy unavailable) and no sandbox starts. `run_code` stays with no egress; wiring a workspace setting into the tool belongs with AGO-85 (capability gating).
 
+## Implementation details (as built)
+- `packages/shared/src/egress/`: `egressAllowlistFileSchema` (strict), host pattern schema, block reasons, decision schema, limits (200 hosts, 10 ports per workspace).
+- `apps/worker/src/egress/egress-proxy.ts`: the proxy (`createEgressProxy`, `normalizeHost`, `compileAllowlist`, `isHostAllowed`, `isBlockedAddress`; `main()` runs only when `EGRESS_PROXY_MAIN=1`).
+- `apps/worker/src/egress/egress-launcher.ts`: creates the internal network, starts the proxy by piping the source to `node --input-type=module-typescript -`, waits for `egress.ready`, joins the proxy to `bridge`, parses decisions, cleans up; `removeLeftoverEgressResources()`.
+- `apps/worker/src/egress/allowlist-config.ts`: file provider with deny-all fallbacks.
+- `sandbox-runner.ts` (`SandboxRequest.egress`, validation) and `docker-runner.ts` (internal network plus proxy env instead of `--network none`; `runtime_unavailable` when the proxy is not ready; stop on every path).
+- Docs: `docs/features/egress-proxy.md`, an egress section in `docs/features/sandbox.md`, owner guide `docs/actions/set-egress-allowlist.md`.
+
+## Deviations from the design
+- Two test-only options on the runner (`unsafeAllowEgressAddressesForTests`, `egressAddHostsForTests`) let the real-container tests point fake host names at a local target and exercise the private-address block. They are options of code, not of the allowlist file, and are not set anywhere in production code.
+- `sandbox/index.ts` is unchanged and `run_code` is unchanged (no egress), as the design said; the egress module has its own barrel `egress/index.ts`.
+- The docs/actions list generator (`docs/actions/README.md`) does not exist in this worktree, so the owner to-do list was not regenerated; the guide has its front matter.
+
 ## Boundaries
 - **Always:** default deny; fail closed; resolve-then-check-then-connect to the checked IP; remove proxy container and network on every path; log blocks without secrets.
 - **Ask first:** schema changes, UI for the allowlist, CI changes (Docker-in-CI).
@@ -54,6 +67,7 @@ AGO-71 (done). Unblocks AGO-85 and AGO-129.
 Unit (always run): host normalisation, wildcard matching, address-range blocking, resolver stub (DNS rebinding, mapped IPv6), decision logging (no query strings), allowlist loader (empty, unreadable, invalid, agent cannot widen), argument construction (`--internal`, no `--network bridge` for the sandbox). Real containers (skip with reason when Docker is missing): from inside a sandbox, direct IP, IPv6, outside DNS resolver, alternate ports, CONNECT to a non-allowlisted host, the proxy's own other ports, and the metadata IP all fail; an allowlisted host on a local test server works through the proxy; the non-allowlisted test server records zero connections; a stopped proxy means denied, not direct; no leftover containers or networks. No outbound calls to real third-party hosts; the test target is a local container.
 
 ## Follow-up tasks
+- Inspect the proxy's SNI handling inside allowed CONNECT tunnels (a client can still name a different host in the TLS handshake; only a TLS-intercepting proxy closes this, which needs its own decision).
 - UI and storage for the per-workspace allowlist (needs schema slot).
 - Wire egress into `run_code` through workspace settings and capability gating (AGO-85).
 - Docker-in-CI job for the real-container suites (already AGO-238).

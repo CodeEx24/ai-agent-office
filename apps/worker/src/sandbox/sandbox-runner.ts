@@ -4,6 +4,9 @@
  * only caller of `execute`), and it never widens what the call may do: limits are clamped, never "unlimited".
  */
 
+import type { EgressRuntimeAllowlist } from "../egress/egress-launcher.js";
+import { compileAllowlist } from "../egress/egress-proxy.js";
+
 /**
  * Base image, pinned by digest so a moved tag can never change what code runs in (alpine 3.22).
  * Refresh deliberately: `docker pull alpine:3.22` then copy the new digest here.
@@ -73,6 +76,12 @@ export interface SandboxRequest {
   readonly files?: readonly SandboxFile[];
   readonly limits?: Partial<SandboxLimits>;
   readonly signal?: AbortSignal;
+  /**
+   * Set by worker code from the workspace allowlist (AGO-65), never by the model. Absent means the container
+   * gets `--network none`. Present means its only route is the egress proxy (default deny, this allowlist);
+   * an empty allowlist is valid and allows nothing.
+   */
+  readonly egress?: EgressRuntimeAllowlist;
 }
 
 export type SandboxDenyReason =
@@ -135,6 +144,18 @@ export function validateSandboxRequest(request: SandboxRequest): string | undefi
     total += Buffer.byteLength(file.content, "utf8");
   }
   if (total > MAX_INPUT_BYTES) return "input files are larger than 1 MiB";
+  if (request.egress !== undefined) {
+    const { hosts, ports } = request.egress;
+    if (hosts.length > 200 || ports.length > 10) return "egress allowlist is too large";
+    if (!ports.every((port) => Number.isInteger(port) && port >= 1 && port <= 65_535)) {
+      return "egress allowlist has an invalid port";
+    }
+    try {
+      compileAllowlist(hosts);
+    } catch {
+      return "egress allowlist has an invalid host";
+    }
+  }
   return undefined;
 }
 
