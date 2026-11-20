@@ -48,6 +48,9 @@ AGO-167 (tool seam, policy hook). Unblocks AGO-65, AGO-85, AGO-129.
 ## Testing notes
 Real-container tests (no mocks for AC1-AC3), skipped when Docker is unavailable, with file-level timeouts. Escape probes: DNS, raw TCP, HTTP to a host listener, `/var/run/docker.sock`, abstract unix sockets, setuid, mount, ptrace, write outside scratch, read host paths, fork bomb, memory blow-up, CPU spin, sleep past the limit. Each must fail to escape. Unit tests: flag construction, limit clamping, tar path validation, tool error mapping.
 
+## Outcome
+Built and approved (round 2). Feature guide: [docs/features/sandbox.md](../features/sandbox.md). PR: [#79](https://github.com/CodeEx24/ai-agent-office/pull/79).
+
 ## Follow-up tasks
 - Per-agent sandbox limits in settings; files-out channel; Docker-in-CI job (owner merges workflow changes).
 
