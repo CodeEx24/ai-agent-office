@@ -1,6 +1,11 @@
-import { MAX_PACK_BYTES, type PackRejection } from "@ago/shared/pack-import-preview";
+import { MAX_PACK_BYTES } from "@ago/shared/pack-import-preview";
 import type { NextRequest } from "next/server";
 
+import {
+  REJECTION_STATUS,
+  NO_STORE,
+  jsonError,
+} from "../../../../../features/packs/import-route-support";
 import {
   PreviewPackImportError,
   previewAgentPackImport,
@@ -19,27 +24,8 @@ import {
   searchParamsToRecord,
 } from "../../../../../lib/validation/parse-input";
 
-// Never cache: the answer depends on the caller's session and describes the workspace's agents.
-const NO_STORE = { "Cache-Control": "private, no-store" } as const;
-
-function jsonError(error: string, status: number, extra: object = {}): Response {
-  return Response.json({ error, ...extra }, { status, headers: NO_STORE });
-}
-
-const REJECTION_STATUS: Record<PackRejection["code"], number> = {
-  too_large: 413,
-  too_deep: 422,
-  too_complex: 422,
-  invalid_json: 422,
-  not_a_pack: 422,
-  too_many_agents: 422,
-  too_many_skills: 422,
-  too_many_notes: 422,
-  invalid_pack: 422,
-};
-
 /**
- * POST /api/agent-packs/import/preview?workspace_id=<uuid>: a dry run of importing an agent pack (AGO-193).
+ * POST /api/agent-packs/import/preview?workspace_id=<uuid>&conflict=skip|rename|new_version: a dry run of importing an agent pack (AGO-193).
  * The body is the pack file itself (`Content-Type: application/json`). NOTHING IS WRITTEN: the answer lists what
  * import would create, update or skip, every capability with its risk tier, Tier 3 and 4 and trifecta flags,
  * name conflicts, what to set up afterwards, and what import would ignore and why.
@@ -78,6 +64,7 @@ export async function POST(request: NextRequest) {
     const result = await previewAgentPackImport(client, {
       workspaceId: query.data.workspace_id,
       text: body.text,
+      conflictRule: query.data.conflict,
     });
     if (!result.ok) {
       return jsonError(result.error.code, REJECTION_STATUS[result.error.code], {

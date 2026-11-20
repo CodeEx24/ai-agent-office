@@ -1,10 +1,10 @@
 # Agent packs
 
-Tickets: AGO-191 (created: format v1), AGO-192 (export, checksum, `pack_events`), AGO-193 (import preview, a dry run that writes nothing)
+Tickets: AGO-191 (created: format v1), AGO-192 (export, checksum, `pack_events`), AGO-193 (import preview, a dry run that writes nothing), AGO-194 (import: the apply)
 
 ## What it does
 
-A pack is one JSON file that moves a team of agents and their skills between computers. The code defines the **format (v1)**: how to read a pack, check it, and upgrade an older one. **Export (AGO-192)** writes a pack from the agents you pick, through the API (`POST /api/agent-packs/export`) or the command `pnpm pack:export`; both call the same function. **Import preview (AGO-193)** reads a pack and tells you what an import would create, update, skip or ignore, without writing anything (`POST /api/agent-packs/import/preview` or `pnpm pack:import`). Applying a pack is a later ticket. There is no export or import screen yet (EP-19).
+A pack is one JSON file that moves a team of agents and their skills between computers. The code defines the **format (v1)**: how to read a pack, check it, and upgrade an older one. **Export (AGO-192)** writes a pack from the agents you pick, through the API (`POST /api/agent-packs/export`) or the command `pnpm pack:export`; both call the same function. **Import preview (AGO-193)** reads a pack and tells you what an import would create, update, skip or ignore, without writing anything (`POST /api/agent-packs/import/preview` or `pnpm pack:import`). **Import (AGO-194)** applies a pack in one database transaction (`POST /api/agent-packs/import`); the command-line `--apply` is AGO-195. There is no export or import screen yet (EP-19).
 
 A pack never contains secrets, database ids, run history, approval history, policies, identities or credentials.
 
@@ -67,15 +67,15 @@ The app's own sign-in is passwordless, so your account needs a password for the 
 
 | Part | What it tells you |
 |---|---|
-| `agents[]` | Per agent: `create`, `update` or `skip` (compared on role, model, thinking effort and prompt), whether the name already exists (`conflict`), which fields differ, the budget import would apply, and that it lands in **Strict** mode. |
+| `agents[]` | Per agent: `create`, `update` or `skip` (compared on role, model, thinking effort and prompt), whether the name already exists (`conflict`), which fields differ, the budget import would apply, and that it lands in **Strict** mode. For an `update` of an agent that is Standard or Relaxed now, `resetsModeFrom` names the mode it leaves (the dry run's "mode -> Strict"); it is `null` otherwise. |
 | `agents[].capabilities[]` | Every capability with its **tier from the workspace catalog** (the pack carries no tier), `applied` or `ignored`, and flags for Tier 3 and 4 (`tier3plus`) and a trifecta combination (`trifecta`). Tier 3 and 4, and capabilities the catalog does not know, are **ignored**, never applied. |
 | `skills[]` | `create`, `update` or `skip` by name, with the stored and the pack's version. |
 | `references[]` | What you must set up afterwards: secrets (`secret:<name>`), integrations (`integration.*` capabilities) and departments. Names only. |
 | `ignored[]` | What import would drop and why: Tier 3+ or unknown capabilities, a budget above the cap (the default is used), a non-Strict mode (forced to Strict), a department, notes. |
-| `blockers[]` | Why the pack cannot be imported at all (all-or-nothing): a checksum that does not match, a model that is not on the allowlist, or a trifecta combination that would remain once Tier 3+ is ignored. `importable` is false when any exists. |
+| `blockers[]` | Why the pack cannot be imported at all (all-or-nothing): a checksum that does not match, or a model that is not on the allowlist. `importable` is false when any exists. A trifecta combination is **not** a blocker (AGO-194): the agent is imported archived (disabled) and the preview shows `importDisabled` on it. |
 | `summary` | Counts per action, conflicts, capabilities per tier and the number of Tier 3+ capabilities. |
 
-The checksum is checked here: `verifyPackChecksum` answers `missing`, `valid` or `mismatch`; a mismatch is a blocker. A trifecta that is declared but broken once Tier 3+ is ignored is still flagged, and is a blocker only if it remains. With the starter catalog the outbound leg (`message.send_outbound`, `integration.write`) is Tier 3, so a declared trifecta normally does not remain; the blocker matters for a catalog with lower tiers.
+The checksum is checked here: `verifyPackChecksum` answers `missing`, `valid` or `mismatch`; a mismatch is a blocker. A trifecta that is declared but broken once Tier 3+ is ignored is still flagged; if one remains, the new agent is imported disabled (see Import). With the starter catalog the outbound leg (`message.send_outbound`, `integration.write`) is Tier 3, so a declared trifecta normally does not remain; the disabled import matters for a catalog with lower tiers.
 
 **Budget cap.** Read through one helper, `getPackBudgetCapCents()` (today the agent daily maximum, 5000 cents). When the workspace monthly cap lands (AGO-40) only that helper changes.
 
@@ -83,7 +83,7 @@ The checksum is checked here: `verifyPackChecksum` answers `missing`, `valid` or
 
 ### API
 
-`POST /api/agent-packs/import/preview?workspace_id=<uuid>` with `Content-Type: application/json` and the pack file as the body. Unknown query parameters are a 400. Answers are `Cache-Control: private, no-store`.
+`POST /api/agent-packs/import/preview?workspace_id=<uuid>&conflict=skip|rename|new_version` (the rule defaults to `skip`; the apply route takes the same query) with `Content-Type: application/json` and the pack file as the body. Unknown query parameters are a 400. Answers are `Cache-Control: private, no-store`.
 
 | Status | Meaning |
 |---|---|
@@ -103,9 +103,37 @@ pnpm pack:import --workspace <uuid> --file <pack.json> [--json]
 
 A dry run only; `--apply` prints that applying is not available yet. It signs in **as you** exactly like `pack:export` (same four environment variables, same fixed sign-in failure line, no service-role key), checks the file size before reading it, and checks you are an owner of the workspace. Exit codes: 0 importable, 1 blocked or failed, 2 bad usage or missing variables. The readable summary prints `WARNING: declares a trifecta combination (<legs>)` under any agent that declares one (and notes when it is gone once ignored capabilities are dropped), so the warning is not only in `--json`. A rejected file prints its issues as `path: message`, with the same no-echo rule as the API.
 
+## Import (apply, AGO-194)
+
+**What it does.** `POST /api/agent-packs/import?workspace_id=<uuid>&conflict=skip|rename|new_version` with the pack file as the body. It plans exactly like the dry run (same query, same `buildImportPlan` that the preview is built from), then writes the plan with ONE database call, `import_agent_pack`, which is one transaction: every agent, skill, capability grant and the audit event are written together or none are. The answer is the dry run's report plus `eventId`. Run the dry run with the same `conflict` first: it shows what the apply does.
+
+**Who.** An owner of the workspace; an agent credential is refused first (403). The database function checks the owner role, the workspace and that a signed-in person is calling (an agent has none), so the route is not the only guard.
+
+**What lands.**
+
+| Pack says | Import does |
+|---|---|
+| Any autonomy mode | A new agent is created in **Strict** (the column default and an insert guard). An existing agent that `new_version` updates is **reset to Strict** in the same transaction when it was Standard or Relaxed, because its prompt was replaced; the reset is logged in `agent_mode_changes` (AGO-99) and the event detail records `mode_reset_from`. The dry run shows it as `resetsModeFrom`. Strict is the probation: promoting an agent stays an owner action, logged (AGO-99). |
+| Capabilities of Tier 3 or 4, or not in the catalog | Ignored and reported. The database reads each tier from its own catalog, so a tampered request cannot grant one. A human grants them later through the normal approval flow. Granted capabilities use mode `approval`. |
+| A budget above the cap | The default budget is used and the report says so. |
+| Policies, identities, credentials, secrets | Not part of the format; secret references and departments are reported for you to set up, never applied. |
+| Notes | Not imported (AGO-198). |
+| A trifecta combination that remains | The new agent is created and **archived** (disabled), with the reason `trifecta_combination` in the report and in the event. An owner can unarchive it after review. |
+| An update that completes the trifecta | The lint runs on what the agent will hold: its **current** capabilities plus the ones the pack adds (the loader reads `agent_capabilities`, and the database function checks again from its own tables). If that union has all three legs, the update is applied and the agent is **archived** like a new one, with `trifecta_combination` in the report and the event. If the pack alone is a trifecta, the existing agent is left as it is (skipped). |
+| A name that already exists | One rule for the whole import: `skip` (default, leave it), `rename` (a copy called `<name> (imported)`, then `(imported 2)`), or `new_version` (update the existing agent's role, model, effort, prompt and budget through the normal version history, and add missing skills and capabilities; never remove). An archived agent is skipped. |
+| A skill with an existing name | Never overwritten: with `new_version` a changed body becomes a new skill version (`skill_versions`), an identical body is skipped; with `rename` it is created under a new name. |
+
+**One event.** `pack_events` gets one `import` row with the content checksum, the counts and per agent action and disabled reason. It holds no prompt, skill text or note. A failed import writes no row. Agent names in the row (`agent_names`, `detail`) are cleaned of one shared set of invisible and direction characters (U+0001-001F, U+007F-009F, U+00AD, U+034F, U+061C, U+180E, U+200B-200F, U+2028-202E, U+2060-2064, U+2066-2069, U+FEFF and the tag characters U+E0000-E007F) so printing the row cannot reorder or hide text; the agent itself keeps the name as given. The set is `PACK_INVISIBLE_RANGES` in `packages/shared`; the database lists the same ranges as unicode escapes and a test compares the two. `detail.agents[]` has `mode_reset_from` only for an agent that was reset, and `detail.modes_reset` counts the resets.
+
+**Text the database cannot store.** A NUL character or a lone surrogate anywhere in the pack (a value or a field name) refuses the file at the validation boundary: 422 `invalid_pack`, listing the field path (for example `agents.0.prompt`) and never the text, with no database call. Valid emoji pairs are fine. A `rename` copy is cut on whole grapheme clusters (`Intl.Segmenter`: never in the middle of a surrogate pair, a combining accent or a joined emoji) to stay inside the 120 character name limit.
+
+**The function validates every entry before writing anything.** Each agent and skill entry needs an explicit `action` (`create` or `update` for agents, `create` or `new_version` for skills); a missing, null or unknown action is SQLSTATE 22023, never a fall through to the update branch. A budget must be a whole JSON number from 1 to 5000 (text and fractions are 22023; an exponent form such as `1e2` arrives as the number 100). Role, model, thinking effort and prompt must be strings, `capabilities` and `skills` arrays of at most 50 strings, and `disabled_reason` null or `trifecta_combination`: anything else is 22023 up front, never a not-null or check violation half way through. The apply layer maps 22023, P0002, 22P02, 22P05 and 22032 to 422 and never repeats database text.
+
+**Errors.** 200 the report; 400 bad query; 401 signed out; 403 not an owner or an agent credential; 409 the workspace changed between reading and writing (run the dry run again); 413 over 5 MB; 415 not JSON; 422 not a valid pack, or a blocked pack (the report is returned, nothing was written); 500.
+
 ## Data model
 
-One table: `pack_events`, the append-only export log described above (migration `20261114020001_ago_192_pack_events.sql`, rollback in `supabase/rollbacks/`). Packs themselves are not stored. A pack is plain JSON:
+One table: `pack_events`, the append-only log of pack exports and imports (migration `20261114020001_ago_192_pack_events.sql`, extended by `20261117030001_ago_194_pack_import.sql`; rollbacks in `supabase/rollbacks/`). `kind` is `export` or `import`. An import row also has `detail` (jsonb: the conflict rule, counts, and per agent `{name, action, disabled_reason}`; never pack text) and may list no agents (an import that skipped everything); an export still lists 1 to 100. The import rollback refuses while an `import` row exists, because the table is append-only. Packs themselves are not stored. A pack is plain JSON:
 
 ```json
 {
@@ -195,6 +223,25 @@ flowchart LR
   Build --> Out[preview: create, update, skip, tiers, flags, conflicts, references, blockers]
 ```
 
+Import (apply) flow (AGO-194; the API route is the only caller so far, the command-line `--apply` is AGO-195):
+
+```mermaid
+flowchart LR
+  Api["POST import/route.ts"] --> Guard["rejectAgentCredential, Zod query, requireWorkspaceRole owner"]
+  Guard --> Body["readLimitedBody 5 MB"]
+  Body --> Apply["applyAgentPackImport"]
+  Apply --> Check["validatePackText"]
+  Check --> Load["loadPackImportContext (SELECT only, RLS)"]
+  Load --> Plan["buildImportPlan"]
+  Plan --> Rpc["import_agent_pack (one transaction)"]
+  Rpc --> Rows[("agents, skills, agent_skills, agent_capabilities")]
+  Rpc --> Events[("pack_events, kind import")]
+  Rows -.trigger.-> Modes[("agent_mode_changes")]
+  Rpc --> Out["report + eventId"]
+```
+
+`buildImportPlan` and the preview are built from the same outcome, so a dry run with the same `conflict` rule shows what the apply does. The database function does not trust the plan: it checks the human owner session, validates every entry, reads tiers from its own catalog and writes everything or nothing.
+
 `parseAgentPack` migrates first (version check and upgrade steps), then validates the shape, then runs the cross-field rules and the secret scan. Nothing is read from or written to a database or the network.
 
 ## Main functions and files
@@ -226,6 +273,15 @@ flowchart LR
 | `runPackImport` | `apps/web/src/features/packs/cli/run-pack-import.ts` | The command: flags, environment, file size, sign-in, owner check, loader, readable or JSON output. `pack-import.ts` wires the real dependencies. |
 | import preview tests | `packages/shared/src/packs/agent-pack-import-preview.test.ts`, `apps/web/src/features/packs/{preview-agent-pack-import,read-limited-body}.test.ts`, `.../cli/run-pack-import.test.ts`, `apps/web/src/app/api/agent-packs/import/preview/route.test.ts` | Limits, preview rules, no writes (a recording client), body reading, route statuses, CLI behaviour. |
 | live preview test | `apps/web/src/app/api/agent-packs/import/preview/route.integration.test.ts` | Runs the real route, role gate and loader against the local Supabase stack as real throw-away users (8 tests): owner succeeds with identical row counts before and after, member, viewer, stranger and another workspace's owner get 403, signed out gets 401, no cross-workspace leak. Skipped unless `E2E_SUPABASE=1`. |
+| `import_agent_pack` | `supabase/migrations/20261117030001_ago_194_pack_import.sql` | The import writer: SECURITY DEFINER, empty `search_path`, human session and owner role checked inside, one transaction for skills, agents, grants and the event. Reads tiers from the catalog; the only mode it writes is Strict (new agents, and the reset of an updated agent). |
+| `loadPackImportContext` | `apps/web/src/features/packs/preview-agent-pack-import.ts` | Reads the workspace as the caller in pages (agents with their mode and grants, skills, catalog) and returns the context both the preview and the apply plan from. |
+| `jsonError`, `NO_STORE`, `REJECTION_STATUS` | `apps/web/src/features/packs/import-route-support.ts` | Response helpers shared by the preview and the apply route. |
+| `applyPackImportQuerySchema` | `apps/web/src/features/packs/preview-request.ts` | The query of the apply route (same schema as the preview, including `conflict`). |
+| `CONFLICT_RULES`, `DEFAULT_CONFLICT_RULE`, `renamedCopyName`, `PACK_INVISIBLE_RANGES`, `isInvisibleCodePoint`, `stripInvisibleText` | `packages/shared/src/packs/agent-pack-import-preview.ts` | The three rules and the default; the copy name on whole graphemes; the one invisible-character set that the SQL scrub is tested against. |
+| `buildImportPlan`, `ImportPlan` | `packages/shared/src/packs/agent-pack-import-plan.ts` (import from `@ago/shared/pack-import-plan`) | Turns the same outcome the preview is built from into the exact rows to write (skipped items omitted). |
+| `applyAgentPackImport`, `ApplyPackImportError` | `apps/web/src/features/packs/apply-agent-pack-import.ts` | Validates, loads the workspace as the caller, plans, then makes the one `import_agent_pack` call and maps the database error to a fixed code. |
+| `POST` | `apps/web/src/app/api/agent-packs/import/route.ts` | Thin route: human-only guard, JSON check, query, owner role before the body is read, size-limited body, apply, status mapping. |
+| import apply tests | `packages/shared/src/packs/agent-pack-import-plan.test.ts`, `apps/web/src/features/packs/apply-agent-pack-import{,.live}.test.ts`, `apps/web/src/app/api/agent-packs/import/route.test.ts`, `packages/shared/src/packs/agent-pack-import-{hardening,hostile-text.acceptance}.test.ts`, `apps/web/src/features/packs/apply-agent-pack-import.{acceptance,acceptance2,acceptance3}.live.test.ts`, `supabase/tests/pack_import.test.sql`, `scripts/ago-194-rollback{,.acceptance3}.test.mjs` | Plan per rule, preview equals apply, route statuses, the SQL function (principals, atomicity, isolation), the live run against the local stack (`RUN_DB_TESTS=1`), and the rollback round trip. |
 | tests | `packages/shared/src/packs/agent-pack*.test.ts`, `apps/web/src/features/packs/**/*.test.ts`, `apps/web/src/app/api/agent-packs/export/route.test.ts`, `supabase/tests/pack_events.test.sql` | Schema, migration, secret scan, JSON Schema staleness, export, checksum, route, CLI, no-service-role scan, table rules. |
 | live test | `apps/web/src/app/api/agent-packs/export/route.integration.test.ts` | Runs the real route, role check, loader, `record_pack_export` and CLI against the local Supabase stack as real throw-away users (42 tests). Skipped unless `E2E_SUPABASE=1`, so plain `pnpm test` needs no database. |
 
@@ -238,7 +294,7 @@ flowchart LR
 - **Timing tests are growth-ratio checks.** The tests that guard linear cost compare run time at two input sizes (4x the text must cost under 11x the time, best of 5 runs, 2 ms floor), not a fixed number of milliseconds, so they do not fail on slow CI machines.
 - **Versions.** `packVersion` is required. A newer version is refused with "update the app"; a gap in the chain or a step that does not bump the version is an error on `packVersion`. Migration does not mutate its input.
 - **Untrusted text.** All pack text (prompts, skills, notes) is data, never instructions to the platform.
-- **Not checked by the format.** Model allowlist, budget cap, capability tiers and Strict mode are not part of the schema; the import preview (AGO-193) checks and reports them, and applying a pack must enforce them again.
+- **Not checked by the format.** Model allowlist, budget cap, capability tiers and Strict mode are not part of the schema; the import preview (AGO-193) checks and reports them, and the import (AGO-194) enforces them again: the plan drops what is not allowed and the database function re-reads every tier from the catalog.
 - **Export edge cases.** A grant whose catalog row is gone is refused (`invalid_pack`) rather than exported with a guessed scope. A repeated agent id counts once. Archived agents are exported only when named. A failed event write fails the whole export.
 - **Running the live export test.** It needs the local stack and the database lock, and only runs with `E2E_SUPABASE=1`:
   `node scripts/db-lock.mjs acquire <KEY>`, `pnpm exec supabase db reset`, then `E2E_SUPABASE=1 pnpm --filter @ago/web exec vitest run src/app/api/agent-packs/export/route.integration.test.ts`, then `node scripts/db-lock.mjs release <KEY>`. Without the flag the file is skipped.

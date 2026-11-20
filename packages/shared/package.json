@@ -54,6 +54,10 @@
       "types": "./dist/packs/agent-pack-import-preview.d.ts",
       "default": "./dist/packs/agent-pack-import-preview.js"
     },
+    "./pack-import-plan": {
+      "types": "./dist/packs/agent-pack-import-plan.d.ts",
+      "default": "./dist/packs/agent-pack-import-plan.js"
+    },
     "./agent-pack.schema.json": "./schemas/agent-pack.v1.schema.json"
   },
   "scripts": {

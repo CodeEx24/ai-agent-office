@@ -1,0 +1,315 @@
+-- AGO-194: import an agent pack into a workspace, all or nothing (epic EP-19).
+--
+-- Rollback: supabase/rollbacks/20261117030001_ago_194_pack_import.down.sql
+--
+-- Decisions (record: docs/tickets/AGO-194.md):
+-- * pack_events gains kind 'import' and a detail jsonb (counts and per-agent outcome, never pack text). An import may
+--   touch no agent at all (every item skipped), so agent_ids may be empty for an import; an export keeps 1..100.
+-- * public.import_agent_pack() is the one writer. It is SECURITY DEFINER with an empty search_path, and it protects
+--   itself: it needs a signed-in person (auth.uid() is null for an agent token or the service role), the owner role
+--   in the named workspace, and it only ever touches rows of that workspace. One call is one transaction: any error
+--   leaves no agent, skill, grant or event behind.
+-- * An imported agent always lands in Strict mode (the probation). A new agent gets the column default, strict; an
+--   existing agent updated by new_version is reset to strict in the same transaction when it was standard or relaxed
+--   (the agent_mode_changes trigger records the change, and the event detail names the mode it left). The function
+--   reads capability tiers from the workspace catalog (never from the plan), grants only approval mode and refuses
+--   Tier 3 or higher. An agent flagged disabled_reason is created and archived in the same transaction.
+-- * A plan that no longer matches the workspace (a name now exists, or an agent to update is gone or archived) is a
+--   stale plan: SQLSTATE 40001, nothing written.
+
+alter table public.pack_events add column detail jsonb;
+alter table public.pack_events add constraint pack_events_detail_object
+  check (detail is null or jsonb_typeof(detail) = 'object');
+
+-- Exactly two checks change, dropped by their (Postgres-generated, stable) names. Nothing else is matched: the AGO-192
+-- table check cardinality(agent_names) = cardinality(agent_ids) stays as it is.
+alter table public.pack_events drop constraint pack_events_kind_check;
+alter table public.pack_events drop constraint pack_events_agent_ids_check;
+
+alter table public.pack_events add constraint pack_events_kind_check check (kind in ('export', 'import'));
+alter table public.pack_events add constraint pack_events_agent_ids_check check (
+  (kind = 'export' and cardinality(agent_ids) between 1 and 100)
+  or (kind = 'import' and cardinality(agent_ids) between 0 and 100)
+);
+
+-- An earlier draft of this migration also dropped the AGO-192 names/ids check. A database that applied that draft gets
+-- it back here; a database that never lost it is left alone.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint c
+     where c.conrelid = 'public.pack_events'::regclass and c.contype = 'c'
+       and pg_get_constraintdef(c.oid) like '%cardinality(agent_names)%'
+  ) then
+    alter table public.pack_events
+      add constraint pack_events_check check (cardinality(agent_names) = cardinality(agent_ids));
+  end if;
+end;
+$$;
+
+comment on column public.pack_events.detail is 'Import only (AGO-194): the conflict rule, counts and the per-agent outcome. Never pack text or secrets.';
+
+create function public.import_agent_pack(
+  p_workspace_id uuid,
+  p_checksum text,
+  p_plan jsonb
+) returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user uuid := (select auth.uid());
+  v_claims jsonb := coalesce((select auth.jwt()), '{}'::jsonb);
+  v_member_id uuid;
+  v_rule text;
+  v_skill jsonb;
+  v_agent jsonb;
+  v_cap text;
+  v_name text;
+  v_skill_id uuid;
+  v_agent_id uuid;
+  v_existing_archived timestamptz;
+  v_tier smallint;
+  v_enabled boolean;
+  v_budget integer;
+  v_agent_ids uuid[] := '{}';
+  v_agent_names text[] := '{}';
+  v_outcomes jsonb := '[]'::jsonb;
+  v_skills_written integer := 0;
+  v_disabled integer := 0;
+  v_event_id uuid;
+  v_action text;
+  v_reason text;
+  v_held text[];
+  v_clean_name text;
+  v_mode text;
+  v_mode_reset text;
+  v_modes_reset integer := 0;
+begin
+  -- Human only: a real person's session, never a token that carries an agent claim.
+  if v_user is null
+     or coalesce(v_claims ->> 'role', '') <> 'authenticated'
+     or v_claims ?| array['agent_id', 'run_id', 'agent_credential'] then
+    raise exception 'import_agent_pack: a human session is required' using errcode = '42501';
+  end if;
+  if p_workspace_id is null or not private.is_member(p_workspace_id, 'owner') then
+    raise exception 'import_agent_pack: not allowed' using errcode = '42501';
+  end if;
+  v_member_id := private.current_member_id(p_workspace_id);
+  if v_member_id is null then
+    raise exception 'import_agent_pack: not allowed' using errcode = '42501';
+  end if;
+
+  if p_checksum is null or p_checksum !~ '^[0-9a-f]{64}$' then
+    raise exception 'import_agent_pack: invalid checksum' using errcode = '22023';
+  end if;
+  if p_plan is null or jsonb_typeof(p_plan) <> 'object'
+     or jsonb_typeof(p_plan -> 'agents') is distinct from 'array'
+     or jsonb_typeof(p_plan -> 'skills') is distinct from 'array' then
+    raise exception 'import_agent_pack: invalid plan' using errcode = '22023';
+  end if;
+  v_rule := p_plan ->> 'rule';
+  if v_rule is null or v_rule not in ('skip', 'rename', 'new_version') then
+    raise exception 'import_agent_pack: invalid conflict rule' using errcode = '22023';
+  end if;
+  if jsonb_array_length(p_plan -> 'agents') > 100 or jsonb_array_length(p_plan -> 'skills') > 500 then
+    raise exception 'import_agent_pack: plan too large' using errcode = '22023';
+  end if;
+
+  -- Two imports into one workspace run one after the other.
+  perform pg_advisory_xact_lock(hashtextextended('import_agent_pack:' || p_workspace_id::text, 0));
+
+  -- Skills first, so an agent can point at them. A new skill is version 1; a new version updates the body and the
+  -- existing triggers bump the version and append to the history. Nothing is ever overwritten silently.
+  -- First pass: every entry is validated before anything is written. An action that is missing, null or unknown is
+  -- refused (a NULL would make a plain `not in` test unknown and fall through to the update branch). jsonb cannot
+  -- hold NUL or a lone surrogate, so hostile text is refused earlier (the web boundary, and the database parse).
+  for v_skill in select * from jsonb_array_elements(p_plan -> 'skills') loop
+    v_name := v_skill ->> 'name';
+    v_action := case when jsonb_typeof(v_skill -> 'action') = 'string' then v_skill ->> 'action' else null end;
+    if jsonb_typeof(v_skill) is distinct from 'object'
+       or v_name is null or char_length(v_name) not between 1 and 120
+       or jsonb_typeof(v_skill -> 'body') is distinct from 'string'
+       or v_action is null or v_action not in ('create', 'new_version') then
+      raise exception 'import_agent_pack: invalid skill entry' using errcode = '22023';
+    end if;
+  end loop;
+  for v_agent in select * from jsonb_array_elements(p_plan -> 'agents') loop
+    v_name := v_agent ->> 'name';
+    v_action := case when jsonb_typeof(v_agent -> 'action') = 'string' then v_agent ->> 'action' else null end;
+    -- Every field has its JSON type checked before it is used, so a wrong type is 22023 here and never a not-null or
+    -- check violation (23502, 23514) half way through. The budget must be a JSON number printed as a whole number
+    -- before any cast: text and fractions (12.5, 100.0) are refused. jsonb normalises an exponent form such as 1e2 to
+    -- the number 100 when it parses the plan, so that arrives as the integer 100 and is accepted as such.
+    if jsonb_typeof(v_agent) is distinct from 'object'
+       or v_name is null or char_length(v_name) not between 1 and 120
+       or v_action is null or v_action not in ('create', 'update')
+       or jsonb_typeof(v_agent -> 'role') is distinct from 'string'
+       or jsonb_typeof(v_agent -> 'model') is distinct from 'string'
+       or jsonb_typeof(v_agent -> 'thinking_effort') is distinct from 'string'
+       or jsonb_typeof(v_agent -> 'prompt') is distinct from 'string'
+       or jsonb_typeof(v_agent -> 'capabilities') is distinct from 'array'
+       or jsonb_typeof(v_agent -> 'skills') is distinct from 'array'
+       or jsonb_typeof(v_agent -> 'daily_budget_cents') is distinct from 'number'
+       or (v_agent -> 'daily_budget_cents')::text !~ '^[0-9]{1,4}$'
+       or (v_agent -> 'disabled_reason') is not null
+          and jsonb_typeof(v_agent -> 'disabled_reason') <> 'null'
+          and (v_agent -> 'disabled_reason') <> '"trifecta_combination"'::jsonb then
+      raise exception 'import_agent_pack: invalid agent entry' using errcode = '22023';
+    end if;
+    -- Only reached for the shapes checked above: sizes (the pack schema's limits), string elements, the budget range.
+    if jsonb_array_length(v_agent -> 'capabilities') > 50 or jsonb_array_length(v_agent -> 'skills') > 50
+       or exists (select 1 from jsonb_array_elements(v_agent -> 'capabilities') e where jsonb_typeof(e) <> 'string')
+       or exists (select 1 from jsonb_array_elements(v_agent -> 'skills') e where jsonb_typeof(e) <> 'string')
+       or ((v_agent -> 'daily_budget_cents')::text)::integer not between 1 and 5000 then
+      raise exception 'import_agent_pack: invalid agent entry' using errcode = '22023';
+    end if;
+  end loop;
+
+  for v_skill in select * from jsonb_array_elements(p_plan -> 'skills') loop
+    v_name := v_skill ->> 'name';
+    v_action := v_skill ->> 'action';
+    if v_action = 'create' then
+      if exists (select 1 from public.skills s where s.workspace_id = p_workspace_id and s.name = v_name) then
+        raise exception 'import_agent_pack: a skill now exists' using errcode = '40001';
+      end if;
+      insert into public.skills (workspace_id, name, body) values (p_workspace_id, v_name, v_skill ->> 'body');
+    elsif v_action = 'new_version' then
+      update public.skills s set body = v_skill ->> 'body'
+       where s.workspace_id = p_workspace_id and s.name = v_name;
+      if not found then
+        raise exception 'import_agent_pack: a skill to version is gone' using errcode = '40001';
+      end if;
+    else
+      raise exception 'import_agent_pack: invalid skill entry' using errcode = '22023';
+    end if;
+    v_skills_written := v_skills_written + 1;
+  end loop;
+
+  for v_agent in select * from jsonb_array_elements(p_plan -> 'agents') loop
+    v_name := v_agent ->> 'name';
+    v_action := v_agent ->> 'action';
+    v_budget := ((v_agent -> 'daily_budget_cents')::text)::integer; -- validated in the first pass
+
+    v_mode_reset := null;
+    if v_action = 'create' then
+      if exists (select 1 from public.agents a where a.workspace_id = p_workspace_id and a.name = v_name) then
+        raise exception 'import_agent_pack: an agent now exists' using errcode = '40001';
+      end if;
+      -- No mode in the column list: the default (strict) is the only value an import can give.
+      insert into public.agents (workspace_id, name, role, model, thinking_effort, prompt, daily_budget_cents)
+      values (p_workspace_id, v_name, v_agent ->> 'role', v_agent ->> 'model', v_agent ->> 'thinking_effort',
+              v_agent ->> 'prompt', v_budget)
+      returning id into v_agent_id;
+    elsif v_action = 'update' then
+      v_agent_id := null;
+      v_mode := null;
+      select a.id, a.archived_at, a.mode into v_agent_id, v_existing_archived, v_mode
+        from public.agents a where a.workspace_id = p_workspace_id and a.name = v_name for update;
+      if v_agent_id is null or v_existing_archived is not null then
+        raise exception 'import_agent_pack: an agent to update is gone or archived' using errcode = '40001';
+      end if;
+      -- Status and archive state are not part of an update. The mode is: the prompt is replaced, so the agent goes
+      -- back to Strict (probation) in the same transaction. The signed-in owner is still auth.uid() here, so the
+      -- mode-change trigger accepts and logs it in agent_mode_changes.
+      update public.agents
+         set role = v_agent ->> 'role', model = v_agent ->> 'model', thinking_effort = v_agent ->> 'thinking_effort',
+             prompt = v_agent ->> 'prompt', daily_budget_cents = v_budget
+       where workspace_id = p_workspace_id and id = v_agent_id;
+      if v_mode is distinct from 'strict' then
+        update public.agents set mode = 'strict' where workspace_id = p_workspace_id and id = v_agent_id;
+        v_mode_reset := v_mode;
+        v_modes_reset := v_modes_reset + 1;
+      end if;
+    else
+      raise exception 'import_agent_pack: invalid agent entry' using errcode = '22023';
+    end if;
+
+    -- Skills by name, within this workspace only.
+    for v_name in select jsonb_array_elements_text(v_agent -> 'skills') loop
+      v_skill_id := null;
+      select s.id into v_skill_id from public.skills s where s.workspace_id = p_workspace_id and s.name = v_name;
+      if v_skill_id is null then
+        raise exception 'import_agent_pack: a skill does not exist in this workspace' using errcode = 'P0002';
+      end if;
+      insert into public.agent_skills (workspace_id, agent_id, skill_id)
+      values (p_workspace_id, v_agent_id, v_skill_id)
+      on conflict (agent_id, skill_id) do nothing;
+    end loop;
+
+    -- Capabilities: the tier comes from the workspace catalog, never from the plan. Approval mode only, below Tier 3.
+    for v_cap in select jsonb_array_elements_text(v_agent -> 'capabilities') loop
+      select c.tier, c.enabled into v_tier, v_enabled
+        from public.capabilities c where c.workspace_id = p_workspace_id and c.key = v_cap;
+      if not found or not v_enabled then
+        raise exception 'import_agent_pack: a capability is not available in this workspace' using errcode = 'P0002';
+      end if;
+      if v_tier >= 3 then
+        raise exception 'import_agent_pack: a capability changed to Tier 3 or higher' using errcode = '40001';
+      end if;
+      insert into public.agent_capabilities (workspace_id, agent_id, capability, tier, mode, granted_by)
+      values (p_workspace_id, v_agent_id, v_cap, v_tier, 'approval', v_member_id)
+      on conflict (agent_id, capability) do nothing;
+    end loop;
+
+    -- A failed trifecta lint: imported, then disabled (archived) in the same transaction, with the reason on record.
+    -- The lint runs again here on what the agent actually holds now (an existing agent's earlier grants plus the
+    -- pack's), so an update that completes the trifecta is archived like a new agent. The key to leg mapping mirrors
+    -- packages/shared/src/agents/trifecta-lint.ts (LEG_CAPABILITIES); keep the two in step.
+    v_reason := nullif(v_agent ->> 'disabled_reason', '');
+    select coalesce(array_agg(ac.capability), '{}') into v_held
+      from public.agent_capabilities ac where ac.workspace_id = p_workspace_id and ac.agent_id = v_agent_id;
+    if v_held && array['web.search', 'web.browse']
+       and v_held && array['vault.read_private', 'vault.read']
+       and v_held && array['message.send_outbound', 'integration.write'] then
+      v_reason := coalesce(v_reason, 'trifecta_combination');
+    end if;
+    if v_reason is not null then
+      update public.agents set archived_at = coalesce(archived_at, now())
+       where workspace_id = p_workspace_id and id = v_agent_id;
+      v_disabled := v_disabled + 1;
+    end if;
+
+    -- Names in the event are stripped of control, zero-width and direction-override characters, so the event row
+    -- and anything that prints it cannot reorder or hide text. The agent row keeps the name as given.
+    -- The class is the shared set in packages/shared/src/packs/agent-pack-import-preview.ts (PACK_INVISIBLE_RANGES):
+    -- C0 and C1 controls, soft hyphen, combining grapheme joiner, Arabic letter mark, Mongolian vowel separator,
+    -- zero-width and direction marks, line and paragraph separators, bidi embeddings, word joiner and invisible
+    -- operators, bidi isolates, the byte order mark and the tag characters. Written with escapes, never raw bytes.
+    v_clean_name := left(
+      regexp_replace(v_agent ->> 'name',
+        '[\u0001-\u001F\u007F-\u009F\u00AD\u034F\u061C\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\U000E0000-\U000E007F]',
+        '', 'g'),
+      120);
+    if v_clean_name = '' then
+      v_clean_name := '?';
+    end if;
+    v_agent_ids := v_agent_ids || v_agent_id;
+    v_agent_names := v_agent_names || v_clean_name;
+    -- mode_reset_from is present only when the agent was reset (absent, not null, otherwise).
+    v_outcomes := v_outcomes || jsonb_build_array(
+      jsonb_build_object('name', v_clean_name, 'action', v_action, 'disabled_reason', v_reason)
+      || case when v_mode_reset is null then '{}'::jsonb else jsonb_build_object('mode_reset_from', v_mode_reset) end
+    );
+  end loop;
+
+  insert into public.pack_events (
+    workspace_id, kind, exported_by, agent_ids, agent_names, skill_count, checksum, detail
+  ) values (
+    p_workspace_id, 'import', v_member_id, v_agent_ids, v_agent_names, v_skills_written, p_checksum,
+    jsonb_build_object(
+      'rule', v_rule,
+      'agents_written', cardinality(v_agent_ids),
+      'skills_written', v_skills_written,
+      'disabled', v_disabled,
+      'modes_reset', v_modes_reset,
+      'agents', v_outcomes
+    )
+  ) returning id into v_event_id;
+  return v_event_id;
+end;
+$$;
+comment on function public.import_agent_pack(uuid, text, jsonb) is 'Imports an agent pack plan in one transaction (AGO-194). Owners with a signed-in session only; agents land strict, Tier 3+ is never granted, and one pack_events row records the import.';
+revoke all on function public.import_agent_pack(uuid, text, jsonb) from public, anon, authenticated, service_role;
+grant execute on function public.import_agent_pack(uuid, text, jsonb) to authenticated;
