@@ -58,6 +58,14 @@
       "types": "./dist/packs/agent-pack-import-plan.d.ts",
       "default": "./dist/packs/agent-pack-import-plan.js"
     },
+    "./run-events": {
+      "types": "./dist/events/run-events.d.ts",
+      "default": "./dist/events/run-events.js"
+    },
+    "./budget": {
+      "types": "./dist/budget/budget.d.ts",
+      "default": "./dist/budget/budget.js"
+    },
     "./agent-pack.schema.json": "./schemas/agent-pack.v1.schema.json"
   },
   "scripts": {
