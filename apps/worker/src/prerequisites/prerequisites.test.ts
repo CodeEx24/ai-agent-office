@@ -197,6 +197,79 @@ describe("the tool-call gate", () => {
   });
 });
 
+describe("run_code egress wiring and error text", () => {
+  const toolContext = {
+    workspaceId: "w",
+    runId: "r",
+    agentId: "a",
+    signal: new AbortController().signal,
+  };
+  const recording = (result: unknown) => {
+    const seen: { request?: { egress?: unknown } } = {};
+    const runner = {
+      run: (request: { egress?: unknown }) => {
+        seen.request = request;
+        return Promise.resolve(result);
+      },
+    } as unknown as SandboxRunner;
+    return { runner, seen };
+  };
+  const ok = { kind: "completed", exitCode: 0, stdout: "", stderr: "" };
+
+  it("passes the worker-side allowlist, never one from the model", async () => {
+    const { runner, seen } = recording(ok);
+    const tool = createRunCodeTool({
+      runner,
+      egressFor: () => Promise.resolve({ hosts: ["api.example.com"], ports: [443] }),
+    });
+    await tool.execute({ command: ["true"] }, toolContext);
+    expect(seen.request?.egress).toEqual({ hosts: ["api.example.com"], ports: [443] });
+  });
+
+  it("keeps the run offline when the allowlist is empty or no provider is wired", async () => {
+    const empty = recording(ok);
+    await createRunCodeTool({
+      runner: empty.runner,
+      egressFor: () => Promise.resolve({ hosts: [], ports: [] }),
+    }).execute({ command: ["true"] }, toolContext);
+    expect(empty.seen.request?.egress).toBeUndefined();
+    const none = recording(ok);
+    await createRunCodeTool({ runner: none.runner }).execute({ command: ["true"] }, toolContext);
+    expect(none.seen.request?.egress).toBeUndefined();
+  });
+
+  it("denies, and never runs, when the allowlist lookup throws", async () => {
+    const { runner, seen } = recording(ok);
+    const tool = createRunCodeTool({
+      runner,
+      egressFor: () => Promise.reject(new Error("db password=hunter2")),
+    });
+    const attempt = tool.execute({ command: ["true"] }, toolContext);
+    await expect(attempt).rejects.toThrow(/runtime_unavailable/);
+    await expect(attempt).rejects.not.toThrow(/hunter2/);
+    expect(seen.request).toBeUndefined();
+  });
+
+  it("trims proxy stderr out of the runtime_unavailable message the model sees", async () => {
+    const { runner } = recording({
+      kind: "denied",
+      reason: "runtime_unavailable",
+      message:
+        "egress proxy unavailable: the egress proxy did not become ready: Error at /app/proxy.js 10.0.0.5",
+    });
+    const attempt = createRunCodeTool({ runner }).execute({ command: ["true"] }, toolContext);
+    await expect(attempt).rejects.toThrow(/runtime_unavailable/);
+    await expect(attempt).rejects.not.toThrow(/proxy\.js|10\.0\.0\.5/);
+  });
+
+  it("keeps other denial messages (the model needs them)", async () => {
+    const { runner } = recording({ kind: "denied", reason: "timeout", message: "took too long" });
+    await expect(
+      createRunCodeTool({ runner }).execute({ command: ["true"] }, toolContext),
+    ).rejects.toThrow(/took too long/);
+  });
+});
+
 describe("SandboxRequest.egress is unreachable from the model", () => {
   it("the run_code schemas have no egress field and strict input rejects it", async () => {
     let seen: unknown;
