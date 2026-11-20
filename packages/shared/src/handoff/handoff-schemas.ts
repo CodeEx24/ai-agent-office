@@ -106,6 +106,7 @@ export const HANDOFF_DENIAL_REASONS = [
   "cycle",
   "depth_exceeded",
   "requester_mismatch",
+  "no_requester",
   "widening_capability",
   "widening_budget",
   "widening_scope",
