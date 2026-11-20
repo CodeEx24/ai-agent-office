@@ -353,6 +353,32 @@ isOneToOne: false
       referencedColumns: ["workspace_id","id"]
     }
                   ]
+                },"goals": {
+                  Row: {
+                    "created_at": string,"created_by": string,"id": string,"text": string,"workspace_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"created_by": string,"id"?: string,"text": string,"workspace_id": string
+                  }
+                  Update: {
+                    "created_at"?: string,"created_by"?: string,"id"?: string,"text"?: string,"workspace_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "goals_workspace_id_created_by_fkey"
+      columns: ["workspace_id","created_by"]
+isOneToOne: false
+      referencedRelation: "members"
+      referencedColumns: ["workspace_id","id"]
+    },{
+      foreignKeyName: "goals_workspace_id_fkey"
+      columns: ["workspace_id"]
+isOneToOne: false
+      referencedRelation: "workspaces"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"members": {
                   Row: {
                     "created_at": string,"id": string,"removed_at": string | null,"role": string,"updated_at": string,"user_id": string,"workspace_id": string
@@ -563,17 +589,23 @@ isOneToOne: false
                   ]
                 },"tasks": {
                   Row: {
-                    "agent_id": string | null,"created_at": string,"created_by": string | null,"department_id": string | null,"description": string,"id": string,"status": string,"title": string,"updated_at": string,"workspace_id": string
+                    "agent_id": string | null,"created_at": string,"created_by": string | null,"department_id": string | null,"description": string,"goal_id": string | null,"id": string,"status": string,"title": string,"updated_at": string,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"department_id"?: string | null,"description"?: string,"id"?: string,"status"?: string,"title": string,"updated_at"?: string,"workspace_id": string
+                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"department_id"?: string | null,"description"?: string,"goal_id"?: string | null,"id"?: string,"status"?: string,"title": string,"updated_at"?: string,"workspace_id": string
                   }
                   Update: {
-                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"department_id"?: string | null,"description"?: string,"id"?: string,"status"?: string,"title"?: string,"updated_at"?: string,"workspace_id"?: string
+                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"department_id"?: string | null,"description"?: string,"goal_id"?: string | null,"id"?: string,"status"?: string,"title"?: string,"updated_at"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
+      foreignKeyName: "tasks_goal_fk"
+      columns: ["workspace_id","goal_id"]
+isOneToOne: false
+      referencedRelation: "goals"
+      referencedColumns: ["workspace_id","id"]
+    },{
       foreignKeyName: "tasks_workspace_id_agent_id_fkey"
       columns: ["workspace_id","agent_id"]
 isOneToOne: false
@@ -663,6 +695,9 @@ isOneToOne: false
                            },
 "set_agent_run_limits":
 { Args: { "p_agent_id": string,"p_limits": Json,"p_workspace_id": string }; Returns: undefined
+                           },
+"submit_goal":
+{ Args: { "p_text": string,"p_workspace_id": string }; Returns: string
                            },
 "sweep_expired_claims":
 { Args: { "p_workspace_id"?: string }; Returns: number

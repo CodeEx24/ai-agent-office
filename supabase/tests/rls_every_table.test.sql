@@ -69,6 +69,9 @@ insert into public.claim_events (id, workspace_id, task_id, claim_id, agent_id, 
 insert into public.pack_events (id, workspace_id, kind, exported_by, agent_ids, agent_names, skill_count, checksum) values
   ('10700000-0000-4000-8000-0000000017a1', '10700000-0000-4000-8000-0000000000a1', 'export', '10700000-0000-4000-8000-0000000001a1', array['10700000-0000-4000-8000-0000000002a1']::uuid[], array['agent-a'], 1, repeat('a', 64)),
   ('10700000-0000-4000-8000-0000000017b1', '10700000-0000-4000-8000-0000000000b1', 'export', '10700000-0000-4000-8000-0000000001b1', array['10700000-0000-4000-8000-0000000002b1']::uuid[], array['agent-b'], 1, repeat('b', 64));
+insert into public.goals (id, workspace_id, text, created_by) values
+  ('10700000-0000-4000-8000-0000000019a1', '10700000-0000-4000-8000-0000000000a1', 'goal a', '10700000-0000-4000-8000-0000000001a1'),
+  ('10700000-0000-4000-8000-0000000019b1', '10700000-0000-4000-8000-0000000000b1', 'goal b', '10700000-0000-4000-8000-0000000001b1');
 insert into public.agent_mode_changes (id, workspace_id, agent_id, from_mode, to_mode, changed_by) values
   ('10700000-0000-4000-8000-0000000018a1', '10700000-0000-4000-8000-0000000000a1', '10700000-0000-4000-8000-0000000002a1', 'strict', 'standard', '10700000-0000-4000-8000-0000000001a1'),
   ('10700000-0000-4000-8000-0000000018b1', '10700000-0000-4000-8000-0000000000b1', '10700000-0000-4000-8000-0000000002b1', 'strict', 'standard', '10700000-0000-4000-8000-0000000001b1');
@@ -157,6 +160,7 @@ insert into ago107_t.expected values
   ('claims', 'select', 1), ('claims', 'insert', null), ('claims', 'update', null), ('claims', 'delete', null),
   ('claim_events', 'select', 1), ('claim_events', 'insert', null), ('claim_events', 'update', null), ('claim_events', 'delete', null),
   ('pack_events', 'select', 1), ('pack_events', 'insert', null), ('pack_events', 'update', null), ('pack_events', 'delete', null),
+  ('goals', 'select', 1), ('goals', 'insert', null), ('goals', 'update', null), ('goals', 'delete', null),
   ('agent_mode_changes', 'select', 1), ('agent_mode_changes', 'insert', null), ('agent_mode_changes', 'update', null), ('agent_mode_changes', 'delete', null),
   ('budgets_usage', 'select', 1), ('budgets_usage', 'insert', 3), ('budgets_usage', 'update', 3), ('budgets_usage', 'delete', null),
   ('notes_index', 'select', 1), ('notes_index', 'insert', 2), ('notes_index', 'update', 2), ('notes_index', 'delete', 2),
@@ -228,6 +232,10 @@ insert into ago107_t.cases values
   ('pack_events', 'insert', $q$insert into public.pack_events (workspace_id, kind, exported_by, agent_ids, agent_names, skill_count, checksum) values ('10700000-0000-4000-8000-0000000000a1', 'export', '10700000-0000-4000-8000-0000000001a1', array['10700000-0000-4000-8000-0000000002a1']::uuid[], array['agent-a'], 0, repeat('e', 64))$q$),
   ('pack_events', 'update', $q$update public.pack_events set skill_count = 9 where id = '10700000-0000-4000-8000-0000000017a1'$q$),
   ('pack_events', 'delete', $q$delete from public.pack_events where id = '10700000-0000-4000-8000-0000000017a1'$q$),
+  ('goals', 'select', $q$select 1 from public.goals where id = '10700000-0000-4000-8000-0000000019a1'$q$),
+  ('goals', 'insert', $q$insert into public.goals (workspace_id, text, created_by) values ('10700000-0000-4000-8000-0000000000a1', 'probe goal', '10700000-0000-4000-8000-0000000001a1')$q$),
+  ('goals', 'update', $q$update public.goals set text = 'edited' where id = '10700000-0000-4000-8000-0000000019a1'$q$),
+  ('goals', 'delete', $q$delete from public.goals where id = '10700000-0000-4000-8000-0000000019a1'$q$),
   ('agent_mode_changes', 'select', $q$select 1 from public.agent_mode_changes where id = '10700000-0000-4000-8000-0000000018a1'$q$),
   ('agent_mode_changes', 'insert', $q$insert into public.agent_mode_changes (workspace_id, agent_id, from_mode, to_mode, changed_by) values ('10700000-0000-4000-8000-0000000000a1', '10700000-0000-4000-8000-0000000002a1', 'strict', 'relaxed', '10700000-0000-4000-8000-0000000001a1')$q$),
   ('agent_mode_changes', 'update', $q$update public.agent_mode_changes set to_mode = 'relaxed' where id = '10700000-0000-4000-8000-0000000018a1'$q$),
@@ -269,8 +277,8 @@ select is_empty(
 select is_empty(
   $$select t.tbl from (select tbl, count(distinct cmd) n from ago107_t.cases group by tbl) t where t.n <> 4$$,
   'AC2: every table is exercised with select, insert, update and delete');
-select is((select count(*)::int from ago107_t.cases), 88, 'AC2: 22 tables x 4 commands = 88 cases');
-select is((select count(*)::int from ago107_t.cases c join ago107_t.expected e using (tbl, cmd)), 88, 'AC2: every case has a documented expectation');
+select is((select count(*)::int from ago107_t.cases), 92, 'AC2: 23 tables x 4 commands = 88 cases');
+select is((select count(*)::int from ago107_t.cases c join ago107_t.expected e using (tbl, cmd)), 92, 'AC2: every case has a documented expectation');
 
 -- run the 88 cases as each principal
 set local role authenticated;
@@ -287,7 +295,7 @@ insert into ago107_t.results select 'outsider', tbl, cmd, ago107_t.attempt(stmt)
 reset role;
 
 -- 5-7. the matrix: actual outcome equals the documented one for every principal, table and command
-select is((select count(*)::int from ago107_t.results), 440, 'AC2: 5 principals x 88 cases were attempted');
+select is((select count(*)::int from ago107_t.results), 460, 'AC2: 5 principals x 92 cases were attempted');
 create view ago107_t.mismatches as
   select r.principal, r.tbl, r.cmd, r.outcome,
          case when e.min_rank is not null and p.rank >= e.min_rank then 'allowed' else 'denied' end as expected
@@ -312,16 +320,16 @@ select is((select count(*)::int from ago107_t.results where principal in ('remov
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000001","role":"authenticated"}', true);
 select is_empty($$select * from ago107_t.visibility('10700000-0000-4000-8000-0000000000a1') where foreign_rows <> 0 or own = 0$$,
-  'AC1: owner of A sees A''s rows in all 22 tables and no row of B');
+  'AC1: owner of A sees A''s rows in all 23 tables and no row of B');
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000002","role":"authenticated"}', true);
 select is_empty($$select * from ago107_t.visibility('10700000-0000-4000-8000-0000000000a1') where foreign_rows <> 0 or own = 0$$,
-  'AC1: member of A sees A''s rows in all 22 tables and no row of B');
+  'AC1: member of A sees A''s rows in all 23 tables and no row of B');
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000003","role":"authenticated"}', true);
 select is_empty($$select * from ago107_t.visibility('10700000-0000-4000-8000-0000000000a1') where foreign_rows <> 0 or own = 0$$,
-  'AC1: viewer of A sees A''s rows in all 22 tables and no row of B');
+  'AC1: viewer of A sees A''s rows in all 23 tables and no row of B');
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000005","role":"authenticated"}', true);
 select is_empty($$select * from ago107_t.visibility('10700000-0000-4000-8000-0000000000b1') where foreign_rows <> 0 or own = 0$$,
-  'AC1: owner of B sees B''s rows in all 22 tables and no row of A');
+  'AC1: owner of B sees B''s rows in all 23 tables and no row of A');
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000004","role":"authenticated"}', true);
 select is((select coalesce(sum(own + foreign_rows), 0)::int from ago107_t.visibility('10700000-0000-4000-8000-0000000000a1')), 0,
   'AC1: a soft-removed member sees zero rows in every table');
