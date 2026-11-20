@@ -42,11 +42,26 @@ Also carried from the ticket comment (AGO-65 notes): wire `createFileEgressAllow
 - **Ask first:** the migration (schema slot), any workflow edit.
 - **Never:** let an agent enable a capability or change the checks; edit `.github/workflows/**`, `scripts/**`, the handoff module, runs or work features.
 
+## Implementation details
+- `packages/shared/src/capabilities/prerequisites/prerequisites.ts`: the registry, the strict result schema, `evaluatePrerequisites` and `describePrerequisiteFailures`.
+- `apps/worker/src/prerequisites/`: `probes.ts` (four real probes), `run-prerequisites.ts` (5 s per probe, throw means `error`, slow means `timeout`), `prerequisite-gate.ts` (policy-hook wrapper, adds a deny only, 10 s cache), `egress-wiring.ts` (production `run_code` with the allowlist provider and the decision logger).
+- `apps/worker/src/egress/egress-log-limiter.ts`: caps blocked-request log lines per run (20) and reports one summary on flush.
+- `apps/worker/src/sandbox/run-code-tool.ts`: optional `egressFor` dependency; the `runtime_unavailable` message is a fixed sentence (no proxy stderr); neither input schema has an `egress` field.
+- `apps/worker/src/server.ts` and `main.ts`: the loopback-only `GET /prerequisites` route, wired from `main.ts`. `agent/wire.ts`: the policy is wrapped in the gate and `run_code` is registered with its egress wiring.
+- `apps/web/src/features/capabilities/`: `prerequisite-report.ts` (the fetcher), `enable-capability.ts` (the logic, behind `CapabilityEnabler`), `capability-enabler.ts` (the real owner-scoped reads and the one `enabled` update under RLS), `actions.ts` (the endpoint), `EnableCapabilityControl.tsx`, and the page `app/app/capabilities/page.tsx`.
+
 ## API changes
-Server action `enableCapability(workspaceId, key)` (web, owner only). No new HTTP route planned.
+- Web: server action `enableCapabilityAction` (people only, owner role, workspace scoped; the form carries `workspaceId` and `capabilityId` only). Page `/app/capabilities`.
+- Worker: `GET /prerequisites` on the health server. Loopback callers only, GET only, no side effects. Response `{results: [{name, status, reason?}]}`; names, statuses and fixed reason codes only. A failure is a bare `500 {"error":"unavailable"}`; anything else is a 404. The route does not exist when no provider is wired.
+- Environment: **`WORKER_INTERNAL_URL`** (web server only, optional). Unset, invalid or unreachable means fail closed. Owner guide: [set-worker-internal-url](../actions/set-worker-internal-url.md). No `.env*` file was edited.
 
 ## Database changes
 None in the first pass. A migration for decision 2 only after the schema slot is granted.
+
+## Deviations
+- The web app reads `WORKER_INTERNAL_URL` from `process.env` and validates it locally in `prerequisite-report.ts`, instead of adding it to the shared env schema (that file is outside this ticket's paths). Behaviour is the same: unset means fail closed.
+- `apps/worker/src/main.ts` got a one-line additive edit (the `prerequisites` provider) beside the granted `agent/wire.ts` edit, because the health server is started there.
+- There is no generator script or `docs/actions/README.md` in the repo, so the owner guide was added without regenerating a to-do list.
 
 ## Dependencies on other tickets
 AGO-71, AGO-65, AGO-157, AGO-47 (done). Schema queue: AGO-81, then AGO-85. AGO-81 adds handoff rules in the policy area (additive only).
@@ -55,7 +70,7 @@ AGO-71, AGO-65, AGO-157, AGO-47 (done). Schema queue: AGO-81, then AGO-85. AGO-8
 **Direct-update gap (open until the schema slot):** an owner can still set `capabilities.enabled = true` through the API grant without going through `enableCapability`. The flag alone grants nothing: the tool-call-time gate denies a gated capability whose checks fail. The migration that revokes the grant is requested after AGO-81. Probes check code and config invariants, not a live Docker daemon (Docker-in-CI is AGO-238). Probe results are not stored.
 
 ## Testing notes
-Vitest: evaluator, each probe passing and broken, timeout and throw mean fail, enable action refuses (agent token refused), tool-call gate denies, `egress` unreachable from model args, stderr trimmed, log aggregation, UI disabled control. No DB-touching tests until the slot.
+Vitest, no database. Shared: the evaluator (11 tests). Worker: the real probes pass (this is the CI check), each probe broken fails by name, throw and timeout mean fail, the gate denies (including through the real policy engine with a seeded enabled `code.run` grant), `egress` unreachable from model args, stderr trimmed, log cap, the `/prerequisites` endpoint (all pass, one failing, 500, GET only, loopback only, absent without a provider). Web: report fetcher (all pass, one failing, worker down, timeout, malformed or extra-field body, unset or invalid `WORKER_INTERNAL_URL`), enable logic (refused on a failing or missing report, non-owner, not found, write failure), action (agent credential refused, extra client fields rejected), enable control (disabled with the failing checks listed). Run: `pnpm --filter @ago/shared test`, `pnpm --filter worker test`, `pnpm --filter web test`, or `bash scripts/workflow/checks.sh`.
 
 ## Decisions
 | # | Decision | Who | When |
