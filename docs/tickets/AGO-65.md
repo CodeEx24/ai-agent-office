@@ -1,11 +1,11 @@
 # AGO-65 - Add the egress proxy with allowlist
 
-Status: In progress (record accepted 2026-11-20)
+Status: Merged
 
 ## Links
 - Ticket: [AGO-65](https://stratyge.atlassian.net/browse/AGO-65) (US-110), epic EP-17, wave 3
-- PRs: [#86](https://github.com/CodeEx24/ai-agent-office/pull/86) (draft)
-- Related: AGO-71 (per-run sandbox, done), AGO-85 (capability prerequisites), AGO-129 (red-team suite), AGO-104 (log shipping), AGO-113 (schema slot)
+- PRs: [#86](https://github.com/CodeEx24/ai-agent-office/pull/86)
+- Related: AGO-71 (per-run sandbox, done), follow-ups AGO-240 (proxy hardening), AGO-241 (SNI decision), AGO-242 (allowlist in the app), AGO-238 (Docker in CI), AGO-85 (capability prerequisites), AGO-129 (red-team suite), AGO-104 (log shipping), AGO-113 (schema slot)
 
 ## Overview
 Risk: high (network isolation boundary). Type: Feature.
@@ -88,7 +88,13 @@ Raise as tickets or attach to AGO-85 / AGO-129.
 - Wiring: AGO-85 must call `createFileEgressAllowlistProvider` and `createEgressDecisionLogger`, and keep `egress` out of model input.
 
 ## Outcome
-Feature guides: [docs/features/egress-proxy.md](../features/egress-proxy.md) and the egress section of [docs/features/sandbox.md](../features/sandbox.md). Merge pending.
+Merged after one review round (gate, functional and device testers, code, security and invariant reviews all PASS; approver APPROVE).
+
+- Deviations from the design: none.
+- Known limitations: nothing in production wires the allowlist provider or the decision logger yet, so no sandbox gets network access until AGO-85; SNI inside an allowed CONNECT tunnel is not checked; the real upstream DNS path through Docker's embedded resolver is not exercised in tests (fails closed); one internal network per run can exhaust Docker's address pools under load (fails closed).
+- Follow-ups: AGO-240 (CONNECT ports, hop-by-hop headers, wildcard suffixes, test-only options, BOM, minimum Docker version), AGO-241 (SNI decision), AGO-242 (allowlist managed in the app), AGO-238 (Docker-in-CI for the real-container suites); wiring, model-argument, stderr-trim and log-volume notes are on AGO-85.
+- Deferred criteria: none.
+- Feature guides: [docs/features/egress-proxy.md](../features/egress-proxy.md) and the egress section of [docs/features/sandbox.md](../features/sandbox.md).
 
 ## Decisions
 | Decision | Who | When |
