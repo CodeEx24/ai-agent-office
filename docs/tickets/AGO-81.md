@@ -56,6 +56,12 @@ Everything is a pure, deterministic function plus a thin worker port, so the sch
   - `HandoffRecord` gained `senderRunId` (null on a record read back), so the database can derive the sender from the run.
   - The party's data scope is empty: agents have no stored vault scope yet, so no data passes on in a handoff until a scope source exists (with AGO-188). Empty is the safe direction.
   - Remaining budget is the agent's daily budget minus today's UTC usage; it is read at handoff time, not reserved (D3 says reserved; reserving belongs with the budget ledger and is a follow-up).
+- **Round 2 (review r1 fixes, 2026-11-20).**
+  - Every hop is bounded by the PARENT handoff, not only by the sender's current grants: on hop 2+ the narrowed set must fit inside the parent's `handoff_grants` (capability, tier, mode, budget), in `createHandoff` (`limitToHandoff`) and in `create_handoff_task`. Tests: `handoff-chain.test.ts` and `agent_handoffs_chain.test.sql` (2-hop and 3-hop widening).
+  - `findByRun` resolves through `runs.task_id`, so any run on a handoff task is clamped, even one nobody passed to `acceptHandoff`. `handoff_run_id` stays as the accepting-run record only.
+  - The budget is bounded in SQL (`0 <= budget <= sender remaining`, or the parent's on hop 2+; whole non-negative cents only) and enforced at tool-call time: the policy hook denies (`handoff_budget_exhausted`) once the `budget.usage` cost of the runs on the task reaches the narrowed budget.
+  - The database refuses a non-empty `dataScope`, validates tier (0..4) and mode, and requires the requester to be an active member (`removed_at is null`). A missing sender is `sender_not_found`.
+  - Table: the path CHECK rejects a NULL entry; indexes on `handoff_from_agent_id` and `requester_member_id`. Same migration, rollback updated.
 
 ## Boundaries
 - **Always:** scope by workspace_id; policy check before every tool call; Zod at the boundary; intersect, never union.
@@ -86,7 +92,7 @@ AGO-148 (credential claims, read-only), AGO-34 (policy engine, read-only), AGO-1
 Unit tests for every widening attempt (more capabilities, higher tier, bigger budget, wider data scope, another workspace, forged requester, depth, cycle, self-handoff, Tier 3/4 never auto-allowed); property-style test that the result is always a subset of both grants; the no-chat guard; `pnpm --filter @ago/shared test`, `pnpm --filter @ago/worker test`. DB-touching tests only under the db lock.
 
 ## Follow-up tasks
-AGO-188 cross-department grants; web screen for a handoff chain; scheduled expiry of unaccepted handoffs.
+AGO-188 cross-department grants; web screen for a handoff chain; scheduled expiry of unaccepted handoffs; audit attribution: `on_behalf_of` on the receiver's events is taken from the task creator, not from a separately verified field (review r1 nit).
 
 ## Outcome
 (empty until merge)

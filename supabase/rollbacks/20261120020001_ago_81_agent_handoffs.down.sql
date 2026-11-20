@@ -4,6 +4,8 @@
 -- tasks themselves stay as ordinary tasks assigned to their receivers.
 drop function if exists public.accept_handoff_task(uuid, uuid, uuid);
 drop function if exists public.create_handoff_task(uuid, uuid, uuid, uuid, text, text, uuid, uuid[], integer, jsonb);
+drop index if exists public.tasks_requester_member_idx;
+drop index if exists public.tasks_handoff_from_agent_idx;
 drop index if exists public.tasks_handoff_run_unique;
 drop index if exists public.tasks_workspace_parent_idx;
 alter table public.tasks

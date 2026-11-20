@@ -352,7 +352,10 @@ describe("createHandoffPolicyHook: the receiver runs inside the intersection", (
 
   it("a store error reaches the loop (which denies)", async () => {
     const hook = createHandoffPolicyHook({
-      store: { findByRun: () => Promise.reject(new Error("db down")) },
+      store: {
+        findByRun: () => Promise.reject(new Error("db down")),
+        spentCentsOnTask: () => Promise.resolve(0),
+      },
       source: { load: () => Promise.resolve(inputsFor([])) },
     });
     await expect(hook.check(call("x", "vault.read", 0), context(RUN_B))).rejects.toThrow("db down");

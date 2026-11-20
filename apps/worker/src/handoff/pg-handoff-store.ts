@@ -164,13 +164,28 @@ export function createPgHandoffStore(db: Queryable): HandoffStore {
     },
 
     async findByRun(workspaceId, runId): Promise<HandoffRecord | null> {
+      // Through the run's own task, not the accept link: a run nobody accepted is still a run on a handoff task.
       const result = await db.query(
         `select ${TASK_COLUMNS} from public.tasks
-          where workspace_id = $1 and handoff_run_id = $2 and handoff_from_agent_id is not null`,
+          where workspace_id = $1 and handoff_from_agent_id is not null
+            and id = (select r.task_id from public.runs r where r.workspace_id = $1 and r.id = $2)`,
         [workspaceId, runId],
       );
       const raw: unknown = result.rows[0];
       return raw === undefined ? null : toRecord(raw);
+    },
+
+    async spentCentsOnTask(workspaceId, taskId): Promise<number> {
+      const result = await db.query(
+        `select coalesce(sum((e.payload ->> 'cost_cents')::bigint), 0) as spent
+           from public.run_events e
+           join public.runs r on r.workspace_id = e.workspace_id and r.id = e.run_id
+          where e.workspace_id = $1 and r.task_id = $2 and e.type = 'budget.usage'
+            and (e.payload ->> 'cost_cents') ~ '^[0-9]+$'`,
+        [workspaceId, taskId],
+      );
+      const raw = result.rows[0] as { spent?: unknown } | undefined;
+      return z.coerce.number().parse(raw?.spent ?? 0);
     },
 
     async findByTask(workspaceId, taskId): Promise<HandoffRecord | null> {

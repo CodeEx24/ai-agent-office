@@ -14,6 +14,9 @@ import type { PolicyEngineGrant } from "@ago/shared";
  * An ordinary run (no handoff) is checked exactly as before. A store error reaches the loop, which denies.
  * `evaluatePolicy` is not changed: this only narrows its input.
  */
+/** Fixed reason code for a tool call refused because the handoff's narrowed budget is spent. */
+export const HANDOFF_BUDGET_EXHAUSTED = "handoff_budget_exhausted";
+
 export function clampToHandoff(inputs: PolicyInputs, handoff: HandoffRecord): PolicyInputs {
   const grants = inputs.agent.grants.flatMap((grant): PolicyEngineGrant[] => {
     const narrowed = handoff.narrowed.capabilities.find(
@@ -33,12 +36,20 @@ export function clampToHandoff(inputs: PolicyInputs, handoff: HandoffRecord): Po
 
 export function createHandoffPolicyHook(deps: {
   readonly source: PolicySource;
-  readonly store: Pick<HandoffStore, "findByRun">;
+  readonly store: Pick<HandoffStore, "findByRun" | "spentCentsOnTask">;
   readonly builtinTools?: readonly string[];
 }): PolicyHook {
   return {
     async check(call: PolicyToolCall, context: PolicyContext) {
       const handoff = await deps.store.findByRun(context.workspaceId, context.runId);
+      if (handoff !== null) {
+        // The narrowed budget is a cap on what the runs on this task may spend: once it is used up, every further
+        // tool call is denied. A store error reaches the loop, which denies (no check, no action).
+        const spent = await deps.store.spentCentsOnTask(context.workspaceId, handoff.taskId);
+        if (spent >= handoff.narrowed.budgetCents) {
+          return { decision: "deny", reasonCode: HANDOFF_BUDGET_EXHAUSTED };
+        }
+      }
       const source: PolicySource =
         handoff === null
           ? deps.source

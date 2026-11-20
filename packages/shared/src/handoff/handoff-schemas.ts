@@ -100,6 +100,7 @@ export const HANDOFF_DENIAL_REASONS = [
   "invalid_request",
   "workspace_mismatch",
   "sender_archived",
+  "sender_not_found",
   "receiver_not_found",
   "receiver_archived",
   "self_handoff",

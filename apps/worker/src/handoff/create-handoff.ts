@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 
+import { intersectDataScopes } from "@ago/shared/handoff";
+
 import { evaluateHandoff } from "../policy/handoff-rule.js";
 
-import type { HandoffStore } from "./handoff-store.js";
+import type { HandoffRecord, HandoffStore } from "./handoff-store.js";
 import type { RunEventEmitter } from "../events/run-event-emitter.js";
-import type { HandoffDenialReason } from "@ago/shared/handoff";
+import type { HandoffDenialReason, HandoffGrant, HandoffParty } from "@ago/shared/handoff";
 
 /**
  * Handoffs are tasks (AGO-81). `createHandoff` writes ONE task row for the receiver and emits `handoff.created`.
@@ -42,12 +44,15 @@ export async function createHandoff(
   sender: HandoffSender,
   input: unknown,
 ): Promise<CreateHandoffResult> {
-  const [senderParty, chain] = await Promise.all([
+  const [loadedSender, chain, parent] = await Promise.all([
     deps.store.loadParty(sender.workspaceId, sender.agentId),
     deps.store.loadChainForRun(sender.workspaceId, sender.runId),
+    // When the sender is itself running a handoff task, it holds only what that handoff passed on to it.
+    deps.store.findByRun(sender.workspaceId, sender.runId),
   ]);
-  if (senderParty === null) return { ok: false, reason: "sender_archived" };
+  if (loadedSender === null) return { ok: false, reason: "sender_not_found" };
   if (chain === null) return { ok: false, reason: "no_requester" };
+  const senderParty = parent === null ? loadedSender : limitToHandoff(loadedSender, parent);
 
   const toAgentId = receiverIdOf(input);
   const receiver =
@@ -121,6 +126,33 @@ export async function acceptHandoff(
     },
   });
   return { ok: true };
+}
+
+/**
+ * What a sender that works on a handoff task really holds: its own grants inside the parent handoff's narrowed set
+ * (same rules as `clampToHandoff`: stricter tier, approval wins), the smaller budget and the overlapping data scope.
+ * So on hop 2 or later B cannot pass on to C anything A did not pass on to B.
+ */
+function limitToHandoff(party: HandoffParty, parent: HandoffRecord): HandoffParty {
+  const grants = party.grants.flatMap((grant): HandoffGrant[] => {
+    const passed = parent.narrowed.capabilities.find(
+      (candidate) => candidate.capabilityKey === grant.capabilityKey,
+    );
+    if (passed === undefined) return [];
+    return [
+      {
+        ...grant,
+        tier: Math.max(grant.tier, passed.tier) as HandoffGrant["tier"],
+        mode: grant.mode === "approval" || passed.mode === "approval" ? "approval" : "automatic",
+      },
+    ];
+  });
+  return {
+    ...party,
+    grants,
+    budgetCents: Math.min(party.budgetCents, parent.narrowed.budgetCents),
+    dataScope: intersectDataScopes(party.dataScope, parent.narrowed.dataScope),
+  };
 }
 
 function asRecord(input: unknown): Record<string, unknown> | undefined {

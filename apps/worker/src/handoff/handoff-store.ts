@@ -39,8 +39,13 @@ export interface HandoffStore {
   loadChainForRun(workspaceId: string, runId: string): Promise<HandoffChain | null>;
   /** Insert the handoff task. Must fail if the task id exists. */
   insert(record: HandoffRecord): Promise<void>;
-  /** The handoff a run works on (set by `markAccepted`), or null for an ordinary run. */
+  /**
+   * The handoff a run works on, or null for an ordinary run. Resolved through the run's own task, so a run that was
+   * never linked by `markAccepted` (or a second run on the same task) is still clamped.
+   */
   findByRun(workspaceId: string, runId: string): Promise<HandoffRecord | null>;
+  /** Cents the runs on this task have spent so far (the sum of their `budget.usage` events). */
+  spentCentsOnTask(workspaceId: string, taskId: string): Promise<number>;
   findByTask(workspaceId: string, taskId: string): Promise<HandoffRecord | null>;
   /** Link the receiver's run to the handoff. False when it was already accepted. */
   markAccepted(workspaceId: string, taskId: string, runId: string): Promise<boolean>;

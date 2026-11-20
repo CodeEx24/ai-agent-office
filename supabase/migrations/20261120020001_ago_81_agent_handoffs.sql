@@ -42,6 +42,7 @@ alter table public.tasks
   add constraint tasks_handoff_path_shape check (
     handoff_path is null
     or (cardinality(handoff_path) = handoff_depth + 1
+        and array_position(handoff_path, null::uuid) is null
         and handoff_path[cardinality(handoff_path) - 1] = handoff_from_agent_id
         and handoff_path[cardinality(handoff_path)] = agent_id
         -- No agent twice. The depth range caps the path at 4 agents, so pairwise checks cover it (a missing
@@ -67,6 +68,9 @@ alter table public.tasks
     references public.runs (workspace_id, id) on delete no action;
 create index tasks_workspace_parent_idx on public.tasks (workspace_id, parent_task_id);
 create unique index tasks_handoff_run_unique on public.tasks (workspace_id, handoff_run_id) where handoff_run_id is not null;
+-- Foreign key lookups (deleting an agent or a member checks these columns).
+create index tasks_handoff_from_agent_idx on public.tasks (workspace_id, handoff_from_agent_id) where handoff_from_agent_id is not null;
+create index tasks_requester_member_idx on public.tasks (workspace_id, requester_member_id) where requester_member_id is not null;
 
 comment on column public.tasks.parent_task_id is 'The task the sending agent was working on when it handed off (AGO-81). Set only by create_handoff_task.';
 comment on column public.tasks.handoff_from_agent_id is 'The agent that handed this task off (AGO-81). Null on an ordinary task. Set only by create_handoff_task.';
@@ -111,6 +115,11 @@ declare
   v_requester uuid;
   v_chain uuid[];
   v_capability jsonb;
+  v_budget bigint;
+  v_stored integer;
+  v_effective bigint;
+  v_used bigint;
+  v_limit bigint;
 begin
   if p_workspace_id is null or p_run_id is null or p_task_id is null or p_to_agent_id is null
      or p_requester_member_id is null or p_path is null or p_depth is null or p_grants is null then
@@ -119,9 +128,20 @@ begin
   if p_title is null or char_length(p_title) not between 1 and 300 or char_length(coalesce(p_description, '')) > 10000 then
     raise exception 'bad handoff title or description' using errcode = '22023';
   end if;
-  if jsonb_typeof(p_grants -> 'capabilities') is distinct from 'array' then
+  if jsonb_typeof(p_grants -> 'capabilities') is distinct from 'array'
+     or jsonb_typeof(p_grants -> 'budgetCents') is distinct from 'number'
+     or jsonb_typeof(p_grants -> 'dataScope') is distinct from 'array' then
     raise exception 'bad handoff grants' using errcode = '22023';
   end if;
+  -- No stored data scope exists for an agent yet, so nothing can be passed on: a non-empty scope is refused.
+  if jsonb_array_length(p_grants -> 'dataScope') <> 0 then
+    raise exception 'the handoff is wider than the sender (data scope)' using errcode = '22023';
+  end if;
+  -- Whole cents only (a fraction or an exponent would not cast).
+  if (p_grants ->> 'budgetCents') !~ '^[0-9]{1,12}$' then
+    raise exception 'bad handoff budget' using errcode = '22023';
+  end if;
+  v_budget := (p_grants ->> 'budgetCents')::bigint;
 
   select * into v_run from public.runs where workspace_id = p_workspace_id and id = p_run_id;
   if not found or v_run.task_id is null then
@@ -166,10 +186,51 @@ begin
     raise exception 'sender or receiver is not an active agent' using errcode = 'P0002';
   end if;
 
+  -- The requester must still be an active member of the workspace.
+  if not exists (
+    select 1 from public.members m
+     where m.workspace_id = p_workspace_id and m.id = v_requester and m.removed_at is null
+  ) then
+    raise exception 'the requester is no longer an active member' using errcode = '22023';
+  end if;
+
+  -- Budget: at most what the sender still has today (its effective daily budget, as effectiveDailyBudgetCents in
+  -- packages/shared: a missing value is 500, above 5000 is pulled to 5000, minus today's UTC usage) and, on hop 2 or
+  -- later, at most the parent handoff's own budget.
+  select a.daily_budget_cents into v_stored
+    from public.agents a where a.workspace_id = p_workspace_id and a.id = v_run.agent_id;
+  v_effective := case when v_stored is null or v_stored < 1 then 500 else least(v_stored, 5000) end;
+  select coalesce(sum(b.cost_used_cents), 0) into v_used
+    from public.budgets_usage b
+   where b.workspace_id = p_workspace_id and b.agent_id = v_run.agent_id
+     and b.period_start = (now() at time zone 'utc')::date;
+  v_limit := greatest(0, v_effective - v_used);
+  if v_parent.handoff_from_agent_id is not null then
+    v_limit := least(v_limit, (v_parent.handoff_grants ->> 'budgetCents')::bigint);
+  end if;
+  if v_budget > v_limit then
+    raise exception 'the handoff is wider than the sender (budget)' using errcode = '22023';
+  end if;
+
   -- Never wider than the sender: every capability in the narrowed set is one the sender holds now, enabled in the
   -- catalog, and the narrowed tier is not lower than the sender's (a bigger number is a stricter tier); the narrowed
-  -- mode is approval whenever the sender's is.
+  -- mode is approval whenever the sender's is. On hop 2 or later the sender is itself running inside a handoff, so
+  -- the set must also fit inside the PARENT handoff's narrowed set (same tier and mode rules): B cannot pass on to C
+  -- what A did not pass on to B.
   for v_capability in select * from jsonb_array_elements(p_grants -> 'capabilities') loop
+    if jsonb_typeof(v_capability) is distinct from 'object'
+       or (v_capability ->> 'tier') !~ '^[0-4]$'
+       or (v_capability ->> 'mode') not in ('automatic', 'approval') then
+      raise exception 'bad handoff grants' using errcode = '22023';
+    end if;
+    if v_parent.handoff_from_agent_id is not null and not exists (
+      select 1 from jsonb_array_elements(v_parent.handoff_grants -> 'capabilities') pc
+       where pc ->> 'capabilityKey' = v_capability ->> 'capabilityKey'
+         and (pc ->> 'tier')::int <= (v_capability ->> 'tier')::int
+         and (pc ->> 'mode' = 'automatic' or v_capability ->> 'mode' = 'approval')
+    ) then
+      raise exception 'the handoff is wider than the sender (parent handoff)' using errcode = '22023';
+    end if;
     if not exists (
       select 1
         from public.agent_capabilities ac

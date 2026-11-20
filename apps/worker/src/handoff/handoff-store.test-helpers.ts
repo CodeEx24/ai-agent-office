@@ -11,6 +11,10 @@ export interface InMemoryHandoffStore extends HandoffStore {
   setParty(party: HandoffParty): void;
   /** Declare the chain a run acts in (what the database derives from the run's task). */
   setChainForRun(runId: string, chain: HandoffChain): void;
+  /** A run on a task, without accepting (what a run inserted for a handoff task looks like). */
+  setRunTask(workspaceId: string, runId: string, taskId: string): void;
+  /** What the runs on a task have spent so far. */
+  setSpentCents(workspaceId: string, taskId: string, cents: number): void;
 }
 
 export function createInMemoryHandoffStore(): InMemoryHandoffStore {
@@ -18,6 +22,7 @@ export function createInMemoryHandoffStore(): InMemoryHandoffStore {
   const chains = new Map<string, HandoffChain>();
   const records: HandoffRecord[] = [];
   const runToTask = new Map<string, string>();
+  const spent = new Map<string, number>();
   const key = (workspaceId: string, id: string): string => `${workspaceId}:${id}`;
 
   return {
@@ -55,6 +60,14 @@ export function createInMemoryHandoffStore(): InMemoryHandoffStore {
       return Promise.resolve(
         records.find((r) => r.workspaceId === workspaceId && r.taskId === taskId) ?? null,
       );
+    },
+    spentCentsOnTask: (workspaceId, taskId) =>
+      Promise.resolve(spent.get(key(workspaceId, taskId)) ?? 0),
+    setRunTask(workspaceId, runId, taskId) {
+      runToTask.set(key(workspaceId, runId), taskId);
+    },
+    setSpentCents(workspaceId, taskId, cents) {
+      spent.set(key(workspaceId, taskId), cents);
     },
     findByTask: (workspaceId, taskId) =>
       Promise.resolve(

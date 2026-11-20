@@ -52,7 +52,8 @@ flowchart LR
 `handoff.created` and `handoff.accepted` gained optional `from_agent_id`, `task_id`, `on_behalf_of` and `depth` (set by the worker from the stored chain). Old events without them still parse.
 
 ## Known limits
-- The production run loop is wired (`agent/wire.ts` uses `createHandoffPolicyHook` and registers `handoff_task`) with the Postgres store. Nothing starts the receiver's run for a handoff task yet, so the run loop does not call `acceptHandoff`; the queue follow-up does that. Until a run is linked, a handoff task exists but no run is clamped by it.
+- The production run loop is wired (`agent/wire.ts` uses `createHandoffPolicyHook` and registers `handoff_task`) with the Postgres store. Nothing starts the receiver's run for a handoff task yet, so the run loop does not call `acceptHandoff`; the queue follow-up does that. The clamp does not need that link: any run on the handoff task (`runs.task_id`) is clamped, and every hop must fit inside the parent handoff's grants and budget, not just the sender's own.
+- The narrowed budget is a cap on the `budget.usage` cost of the runs on the task: once it is reached, tool calls are denied (`handoff_budget_exhausted`). The database refuses a non-empty data scope and a requester who is no longer an active member.
 - A party's data scope is empty (agents have no stored vault scope yet), so a handoff passes on no data scope until AGO-188 adds one. Budget is read at handoff time, not reserved against the sender.
 - A dedicated `tasks.handoff` capability was not added (it needs a catalog seed); the tool reuses `tasks.manage`, so any agent allowed to manage tasks can start a handoff. The handoff rule bounds what it passes on.
 - Data scope is a list of path prefixes; richer scopes belong to AGO-188.

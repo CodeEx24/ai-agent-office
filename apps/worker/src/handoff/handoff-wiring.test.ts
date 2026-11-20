@@ -147,7 +147,7 @@ describe("production handoff wiring", () => {
     });
     const ctx = { workspaceId: WS, runId: RUN_A, agentId: A, signal: SIGNAL };
     expect(await wiring.tool.execute({ to_agent_id: B, title: "t" }, ctx)).toBe(
-      "handoff refused: sender_archived",
+      "handoff refused: sender_not_found",
     );
     expect(
       (await wiring.policy.check(call("create_task", "tasks.manage", 1), context(RUN_B, B)))
