@@ -115,7 +115,7 @@ select is((select count(*)::int from public.agent_skills where agent_id = '89000
 select throws_ok($$select public.duplicate_agent('89aaaaaa-0000-4000-8000-000000000001', '89000000-0000-4000-8000-0000000002a1', 'Source (copy)')$$,
   '23505', null, 'a duplicate name is refused');
 -- a capability disabled in the catalog is skipped, not copied
-update public.capabilities set enabled = false where workspace_id = '89aaaaaa-0000-4000-8000-000000000001' and key = (select low2 from t_keys);
+select public.disable_capability('89aaaaaa-0000-4000-8000-000000000001', (select id from public.capabilities where workspace_id = '89aaaaaa-0000-4000-8000-000000000001' and key = (select low2 from t_keys)));
 create temp table t_copy2 as
   select public.duplicate_agent('89aaaaaa-0000-4000-8000-000000000001', '89000000-0000-4000-8000-0000000002a1', 'Source (copy 2)') as id;
 grant select on t_copy2 to authenticated;

@@ -6,7 +6,11 @@ import { createPgDatabaseCheck } from "./health.js";
 import { createLogger, scrubString, type Logger } from "./logger.js";
 import { createErrorTracker, type CreateErrorTrackerOptions, type ErrorTracker } from "./sentry.js";
 import { createJobQueue, type JobQueue, type RunExecutor } from "./queue/index.js";
-import { runPrerequisiteChecks } from "./prerequisites/index.js";
+import {
+  createPgAttestationStore,
+  runPrerequisiteChecks,
+  startPrerequisiteAttestation,
+} from "./prerequisites/index.js";
 import { startHealthServer } from "./server.js";
 
 import type { EnvSource } from "@ago/shared";
@@ -97,6 +101,15 @@ export async function startWorker(
     // AGO-85: the web app's enable action asks this (loopback only, read-only) before it turns a risky capability on.
     prerequisites: () => runPrerequisiteChecks(),
   });
+  // AGO-85: record the real check results for the database function that enables a capability (it refuses on a
+  // missing, failing or stale row). Its own one-connection pool; a failure only logs, and the rows go stale (deny).
+  const attestationPool = new pg.Pool({ connectionString: config.databaseUrl, max: 1 });
+  attestationPool.on("error", () => undefined);
+  const attestation = startPrerequisiteAttestation({
+    store: createPgAttestationStore(attestationPool),
+    runChecks: () => runPrerequisiteChecks(),
+    logger,
+  });
   // Never throws: if the database is not up yet the queue keeps retrying and health reports it.
   void queue.start();
   logger.info({ app_env: config.env.APP_ENV, port: config.port }, "worker started");
@@ -114,6 +127,8 @@ export async function startWorker(
         }),
       );
       await db.close();
+      attestation.stop();
+      await attestationPool.end().catch(() => undefined);
       await agentPool?.end().catch(() => undefined);
       logger.info("worker stopped");
       await errorTracker.close();

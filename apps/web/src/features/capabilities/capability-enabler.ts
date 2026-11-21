@@ -2,17 +2,18 @@ import "server-only";
 
 import { createSupabaseServerClient } from "../../lib/supabase/server";
 import { requireWorkspaceRole } from "../workspaces/workspace-access";
-import type { CapabilityEnabler } from "./enable-capability";
+import { CapabilityRefusedError, type CapabilityEnabler } from "./enable-capability";
+
+/** `enable_capability` raises this SQLSTATE when a required prerequisite check is not passing (fresh) in the database. */
+const PREREQUISITE_REFUSED_SQLSTATE = "55000";
 
 /**
  * The real enabler. Both calls require the owner role first (`requireWorkspaceRole` verifies the signed-in user
- * and their membership, so an agent credential, which has no member, never gets here), and both queries are
- * scoped to the workspace and run under row-level security: the `capabilities_update_owner` policy lets only an
- * owner of that workspace change the row, and only `enabled` and `description` are updatable.
- *
- * Known gap (AGO-85 record, Known limitations): until the schema slot, an owner can still flip `enabled`
- * straight through the database API. The tool-call gate in the worker denies an enabled risky capability whose
- * checks fail, so that flag alone never lets a risky tool run.
+ * and their membership, so an agent credential, which has no member, never gets here). `find` reads the row under
+ * row-level security. `enable` makes ONE database call: `enable_capability` (SECURITY DEFINER, owner only, with
+ * its own check on `auth.uid()`) re-checks the worker's attested prerequisite results and fails closed on a
+ * missing, failing or stale row. `capabilities.enabled` is no longer updatable through the API at all, so this
+ * function is the only way a capability turns on (AGO-85).
  */
 export const capabilityEnabler: CapabilityEnabler = {
   async find(input) {
@@ -31,12 +32,11 @@ export const capabilityEnabler: CapabilityEnabler = {
   async enable(input) {
     const access = await requireWorkspaceRole(input.workspaceId, "owner");
     const supabase = await createSupabaseServerClient();
-    const { data, error } = await supabase
-      .from("capabilities")
-      .update({ enabled: true })
-      .eq("workspace_id", access.workspaceId)
-      .eq("id", input.capabilityId)
-      .select("id");
-    if (error || data.length !== 1) throw new Error("capability enable failed");
+    const { error } = await supabase.rpc("enable_capability", {
+      p_workspace_id: access.workspaceId,
+      p_capability_id: input.capabilityId,
+    });
+    if (error?.code === PREREQUISITE_REFUSED_SQLSTATE) throw new CapabilityRefusedError();
+    if (error) throw new Error("capability enable failed");
   },
 };

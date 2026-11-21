@@ -48,7 +48,7 @@ Also carried from the ticket comment (AGO-65 notes): wire `createFileEgressAllow
 - `apps/worker/src/egress/egress-log-limiter.ts`: caps blocked-request log lines per run (20) and reports one summary on flush.
 - `apps/worker/src/sandbox/run-code-tool.ts`: optional `egressFor` dependency; the `runtime_unavailable` message is a fixed sentence (no proxy stderr); neither input schema has an `egress` field.
 - `apps/worker/src/server.ts` and `main.ts`: the loopback-only `GET /prerequisites` route, wired from `main.ts`. `agent/wire.ts`: the policy is wrapped in the gate and `run_code` is registered with its egress wiring.
-- `apps/web/src/features/capabilities/`: `prerequisite-report.ts` (the fetcher), `enable-capability.ts` (the logic, behind `CapabilityEnabler`), `capability-enabler.ts` (the real owner-scoped reads and the one `enabled` update under RLS), `actions.ts` (the endpoint), `EnableCapabilityControl.tsx`, and the page `app/app/capabilities/page.tsx`.
+- `apps/web/src/features/capabilities/`: `prerequisite-report.ts` (the fetcher), `enable-capability.ts` (the logic, behind `CapabilityEnabler`), `capability-enabler.ts` (the owner-scoped read and the `enable_capability` RPC), `actions.ts` (the endpoint), `EnableCapabilityControl.tsx`, and the page `app/app/capabilities/page.tsx`.
 
 ## API changes
 - Web: server action `enableCapabilityAction` (people only, owner role, workspace scoped; the form carries `workspaceId` and `capabilityId` only). Page `/app/capabilities`.
@@ -56,9 +56,19 @@ Also carried from the ticket comment (AGO-65 notes): wire `createFileEgressAllow
 - Environment: **`WORKER_INTERNAL_URL`** (web server only, optional). Unset, invalid or unreachable means fail closed. Owner guide: [set-worker-internal-url](../actions/set-worker-internal-url.md). No `.env*` file was edited.
 
 ## Database changes
-None in the first pass. A migration for decision 2 only after the schema slot is granted.
+Migration `20261121010001_ago_85_enable_capability.sql` (rollback: `supabase/rollbacks/20261121010001_ago_85_enable_capability.down.sql`; applied, rolled back and re-applied with an identical schema dump).
+- New table `capability_prerequisite_status` (workspace_id, check_name, status, reason, checked_at; unique per workspace and check; RLS, members read, only `service_role` writes). Statuses and fixed reason codes only.
+- `private.capability_prerequisite_checks(key)`: which checks a gated key needs (a Vitest drift test keeps it equal to the shared registry).
+- `public.enable_capability(workspace, capability)`: SECURITY DEFINER, owner only (`auth.uid()` required, so agent credentials are refused), refuses a gated key unless every required check is `pass` and was recorded within 60 s (missing, stale or future-dated rows refuse, fail closed). Execute: `authenticated` only.
+- `public.disable_capability(workspace, capability)`: same guard, no check (turning off is always allowed). Added so owners keep the ability to switch a capability off after the direct update was closed.
+- `capabilities.enabled` leaves the UPDATE grant of `authenticated` (description stays); `service_role` loses UPDATE on the table.
+- The worker records its probe results for every workspace on start and every 30 s (`apps/worker/src/prerequisites/attestation.ts`, one-connection pool).
+- Existing pgTAP files that pin table counts, column grants, policy counts and the function list were updated (core_schema_qa, rls_catalog, rls_every_table, rls_every_table_qa, capability_catalog, agent_versions).
 
 ## Deviations
+- 2026-11-21: the migration, the attestation table and the worker writer were added after the owner chose option A (database-side re-check). `disable_capability` was added so owners can still turn a capability off. The new table has `id`, `created_at` and `updated_at` to satisfy the schema convention tests.
+- No `scripts/ago-85-rollback.test.mjs` was added (the brief puts `scripts/**` off limits); the rollback was proven by hand under the db lock (apply down, confirm, re-apply, identical dump). A follow-up can add the repo's usual rollback test.
+- `apps/worker/src/handoff/handoff-wiring.test.ts` (AGO-81): one assertion changed. It required the literal `policy: handoff.policy`; the wiring is now `createPrerequisiteGatedPolicyHook({ inner: handoff.policy, ... })`, so it asserts that and keeps the rest. The `wire.ts` merge conflict with AGO-81 was resolved the same way (the gate wraps `handoff.policy`; `run_code` joins `handoff.tool`).
 - The web app reads `WORKER_INTERNAL_URL` from `process.env` and validates it locally in `prerequisite-report.ts`, instead of adding it to the shared env schema (that file is outside this ticket's paths). Behaviour is the same: unset means fail closed.
 - `apps/worker/src/main.ts` got a one-line additive edit (the `prerequisites` provider) beside the granted `agent/wire.ts` edit, because the health server is started there.
 - There is no generator script or `docs/actions/README.md` in the repo, so the owner guide was added without regenerating a to-do list.
@@ -67,10 +77,10 @@ None in the first pass. A migration for decision 2 only after the schema slot is
 AGO-71, AGO-65, AGO-157, AGO-47 (done). Schema queue: AGO-81, then AGO-85. AGO-81 adds handoff rules in the policy area (additive only).
 
 ## Known limitations
-**Direct-update gap (open until the schema slot):** an owner can still set `capabilities.enabled = true` through the API grant without going through `enableCapability`. The flag alone grants nothing: the tool-call-time gate denies a gated capability whose checks fail. The migration that revokes the grant is requested after AGO-81. Probes check code and config invariants, not a live Docker daemon (Docker-in-CI is AGO-238). Probe results are not stored.
+**Direct-update gap: closed** by the migration (no API role can write `capabilities.enabled`; only the table owner and superusers can, and the tool-call gate still denies a risky capability whose checks fail). The worker role must be able to write `capability_prerequisite_status`; if the worker is down the attestation goes stale after 60 s and enabling is refused. Probes check code and config invariants, not a live Docker daemon (Docker-in-CI is AGO-238). Probe results are not stored.
 
 ## Testing notes
-Vitest, no database. Shared: the evaluator (11 tests). Worker: the real probes pass (this is the CI check), each probe broken fails by name, throw and timeout mean fail, the gate denies (including through the real policy engine with a seeded enabled `code.run` grant), `egress` unreachable from model args, stderr trimmed, log cap, the `/prerequisites` endpoint (all pass, one failing, 500, GET only, loopback only, absent without a provider). Web: report fetcher (all pass, one failing, worker down, timeout, malformed or extra-field body, unset or invalid `WORKER_INTERNAL_URL`), enable logic (refused on a failing or missing report, non-owner, not found, write failure), action (agent credential refused, extra client fields rejected), enable control (disabled with the failing checks listed). Run: `pnpm --filter @ago/shared test`, `pnpm --filter worker test`, `pnpm --filter web test`, or `bash scripts/workflow/checks.sh`.
+Vitest, no database. Shared: the evaluator (11 tests). Worker: the real probes pass (this is the CI check), each probe broken fails by name, throw and timeout mean fail, the gate denies (including through the real policy engine with a seeded enabled `code.run` grant), `egress` unreachable from model args, stderr trimmed, log cap, the `/prerequisites` endpoint (all pass, one failing, 500, GET only, loopback only, absent without a provider). Web: report fetcher (all pass, one failing, worker down, timeout, malformed or extra-field body, unset or invalid `WORKER_INTERNAL_URL`), enable logic (refused on a failing or missing report, non-owner, not found, write failure), action (agent credential refused, extra client fields rejected), enable control (disabled with the failing checks listed). Database: `supabase/tests/enable_capability.test.sql` (owner enables; member, viewer, other-workspace owner, agent credential, service_role and anon refused; failing, errored, timed out, not-run, stale, future-dated and missing attestation refused; direct update refused). Worker: attestation store and timer, and the drift guard between the SQL map and the shared registry. Run: `pnpm --filter @ago/shared test`, `pnpm --filter worker test`, `pnpm --filter web test`, or `bash scripts/workflow/checks.sh`.
 
 ## Decisions
 | # | Decision | Who | When |
@@ -78,6 +88,7 @@ Vitest, no database. Shared: the evaluator (11 tests). Worker: the real probes p
 | 1 | Record accepted as written. Web action runs the shared pure checks; worker probes are authoritative at tool-call time; no schema. | Owner (via orchestrator, standing rule) | 2026-11-20 |
 | 2 | Non-schema work first; ask for the schema slot (queue: AGO-113, AGO-81, then this) for the migration that closes the direct `enabled` update. Until then the tool-call gate must provably deny an enabled risky capability whose checks fail. | Owner | 2026-11-20 |
 | 3 | Seed default `enabled = true` stays. Add a test that a seeded enabled risky capability is still denied at call time when a check fails. | Owner | 2026-11-20 |
+| 4 | Database re-check: option A. A worker-written attestation table plus an owner-only `enable_capability()` that fails closed on missing or stale rows; the direct `enabled` update is revoked. | Owner (via orchestrator, standing rule) | 2026-11-21 |
 
 ## Outcome
 (empty until merge)

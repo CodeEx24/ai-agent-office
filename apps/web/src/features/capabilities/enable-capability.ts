@@ -33,7 +33,11 @@ export interface CapabilityToEnable {
 export interface CapabilityEnabler {
   /** Owners only (throws `WorkspaceAccessError` otherwise). */
   find(input: EnableCapabilityInput): Promise<CapabilityToEnable | null>;
-  /** The one write: sets `enabled` for this workspace's row. Throws on any failure. */
+  /**
+   * The one write: the `enable_capability` database function (owner only, re-checks the worker's attested results
+   * and fails closed). Throws `CapabilityRefusedError` when the database refuses on a prerequisite, anything else
+   * on other failures.
+   */
   enable(input: EnableCapabilityInput): Promise<void>;
 }
 
@@ -55,6 +59,19 @@ export const ENABLE_OWNER_ONLY_ERROR = "Only a workspace owner can turn a capabi
 export const ENABLE_NOT_FOUND_ERROR = "That capability was not found.";
 export const ENABLE_FAILED_ERROR = "The capability could not be turned on. Please try again.";
 export const ENABLE_INVALID_ERROR = "Invalid request.";
+export const ENABLE_NOT_READY_ERROR =
+  "A prerequisite check is not passing right now. Try again in a minute.";
+
+/**
+ * The database refused the enable because its own copy of the worker's check results was failing, missing or
+ * stale (AGO-85). It carries no detail: the text shown to the person is fixed.
+ */
+export class CapabilityRefusedError extends Error {
+  constructor() {
+    super("capability enable refused");
+    this.name = "CapabilityRefusedError";
+  }
+}
 
 /** Runs the check against a fresh report and returns the human-readable failures (empty when satisfied). */
 export async function checkPrerequisitesNow(
@@ -103,6 +120,7 @@ export async function enableCapabilityWith(
             : ENABLE_OWNER_ONLY_ERROR,
       };
     }
+    if (error instanceof CapabilityRefusedError) return { error: ENABLE_NOT_READY_ERROR };
     return { error: ENABLE_FAILED_ERROR };
   }
 }

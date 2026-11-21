@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import { WorkspaceAccessError } from "../workspaces/workspace-access";
 import {
+  CapabilityRefusedError,
   ENABLE_FAILED_ERROR,
   ENABLE_NOT_FOUND_ERROR,
+  ENABLE_NOT_READY_ERROR,
   ENABLE_OWNER_ONLY_ERROR,
   enableCapabilityInputSchema,
   enableCapabilityWith,
@@ -134,6 +136,18 @@ describe("enableCapabilityWith", () => {
       INPUT,
     );
     expect(result).toEqual({ error: ENABLE_FAILED_ERROR });
+  });
+
+  it("shows a fixed message when the database refuses on its own attested results", async () => {
+    const enabler: CapabilityEnabler = {
+      find: () => Promise.resolve({ key: "code.run", isEnabled: false }),
+      enable: () => Promise.reject(new CapabilityRefusedError()),
+    };
+    const result = await enableCapabilityWith(
+      { enabler, report: () => Promise.resolve(allPass) },
+      INPUT,
+    );
+    expect(result).toEqual({ error: ENABLE_NOT_READY_ERROR });
   });
 });
 
