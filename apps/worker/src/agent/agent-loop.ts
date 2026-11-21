@@ -1033,6 +1033,7 @@ export function createAgentLoop(deps: AgentLoopDeps): RunExecutor {
                   budget.reserve({
                     workspaceId: ctx.workspaceId,
                     agentId: ctx.agentId,
+                    runId: ctx.runId,
                     model,
                     inputCharacters: requestChars,
                     maxOutputTokens: runLimits.maxOutputTokens,

@@ -17,6 +17,8 @@ import type { BudgetScopeRef, BudgetStore, Reservation } from "./budget-store.js
  */
 
 export interface BudgetCallRequest extends BudgetScopeRef {
+  /** The run making the call (AGO-81): lets a wrapper apply a handed-off task's own cap. Optional for ordinary callers. */
+  readonly runId?: string;
   /** The model that will serve the call, as the provider reports it. Missing or unknown means denied. */
   readonly model: string | undefined;
   /** Size of everything sent to the model: system text, messages and tool definitions. */

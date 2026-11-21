@@ -98,6 +98,34 @@ describe("run event schemas", () => {
     },
   );
 
+  it("parses handoff events in the old shape and the AGO-81 shape (additive optional fields)", () => {
+    const old = wrap("handoff.created", VALID["handoff.created"]!);
+    expect(runEventSchema.safeParse(old).success).toBe(true);
+    const next = wrap("handoff.created", {
+      ...VALID["handoff.created"],
+      from_agent_id: UUID,
+      task_id: UUID,
+      on_behalf_of: UUID,
+      depth: 2,
+    });
+    expect(runEventSchema.safeParse(next).success).toBe(true);
+    expect(
+      runEventSchema.safeParse(
+        wrap("handoff.accepted", {
+          ...VALID["handoff.accepted"],
+          task_id: UUID,
+          on_behalf_of: UUID,
+        }),
+      ).success,
+    ).toBe(true);
+    expect(
+      runEventSchema.safeParse(wrap("handoff.created", { ...next.payload, depth: 0 })).success,
+    ).toBe(false);
+    expect(
+      runEventSchema.safeParse(wrap("handoff.created", { ...next.payload, message: "hi" })).success,
+    ).toBe(false);
+  });
+
   it("rejects unknown types, wrong versions and a missing version", () => {
     expect(runEventSchema.safeParse(wrap("run.exploded", {})).success).toBe(false);
     expect(runEventSchema.safeParse({ type: "run.started", version: 2, payload: {} }).success).toBe(
