@@ -1,0 +1,114 @@
+# AGO-81 - US-113 Enforce agent-to-agent rules
+
+Links
+- Ticket: https://stratyge.atlassian.net/browse/AGO-81
+- PRs: https://github.com/CodeEx24/ai-agent-office/pull/91
+- Follow-up: AGO-252 (ledger reservation of handoff budget, High risk; owner-accepted exception to D3, 2026-11-21)
+- Related: AGO-148 (identity, done), AGO-34 (policy engine, done), AGO-160 (claims), AGO-188 (cross-department requests, unblocked by this), AGO-117 (Manager splits goals, follows this)
+- Status: In review (draft PR 91). Spec accepted 2026-11-20; schema slot granted and used 2026-11-20 (migration, Postgres store, pgTAP)
+
+## Overview
+Handoffs are tasks. A sending agent creates a task for another agent; the receiver gets the smaller permission set and the original human requester's identity. Free-form agent chat does not exist. Epic EP-17, wave 3, risk **high** (authorization between agents).
+
+Acceptance criteria (verbatim):
+1. Free-form agent chat does not exist.
+2. A handoff never grants more than the sender holds.
+3. Tests pass, no regressions, PR reviewed and merged, docs updated (see Definition of Done).
+
+## Design
+Everything is a pure, deterministic function plus a thin worker port, so the schema slot is only needed for persistence.
+
+1. **`packages/shared/src/handoff/`** (new subpath export `@ago/shared/handoff`)
+   - `handoffRequestSchema` (Zod, `.strict()`): `to_agent_id`, `title`, `description`, optional `requested` {capabilities, budget_cents, data_scope}. No `requester`, `approval`, `grants` or `workspace_id` fields: a forged one is rejected, not ignored.
+   - `HandoffChain`: `{ requester_member_id, workspace_id, path: agent_id[], depth }`. Built only from the parent task; the requester is copied from the root task and never taken from agent input.
+   - `narrowHandoff(sender, receiver, request)` returns the **effective permissions = intersection**: capabilities in both grants (and enabled); per-capability tier = max(sender, receiver); mode = `approval` if either is; budget = min(sender remaining, receiver, request); data scope = intersection of path prefixes; workspace must be identical. Never a union.
+   - `checkChain(chain, to_agent)`: max depth `MAX_HANDOFF_DEPTH = 3`; a cycle (receiver already in path, or self-handoff) is refused.
+   - Fixed reason codes (never free text), same style as the policy engine.
+2. **`apps/worker/src/policy/handoff-rule.ts`** (additive, registered in the policy `index.ts`)
+   - `evaluateHandoff(input)`: deterministic allow/deny. Denies: widening attempt (requested capability / tier / budget / scope the sender lacks), cross-workspace, requester mismatch, depth, cycle, archived or missing receiver. Tier 3/4 capabilities may be *listed* in the narrowed set but still escalate at call time through the normal engine; a handoff carries no approval and cannot pre-satisfy one.
+   - `createHandoffScopedPolicySource(inner, store)`: wraps the existing `PolicySource` so that, for a run belonging to a handoff task, the receiver's grants are clamped to the stored narrowed set. The pure `evaluatePolicy` is **not** changed; the existing policy check before every tool call stays and now sees the clamped grants.
+3. **`apps/worker/src/handoff/`**
+   - `createHandoff({ store, sender, request, emitter })`: loads sender grants and the parent chain, runs the rule, writes **one task row** (the handoff) through a `HandoffStore` port, emits `handoff.created`. `acceptHandoff` emits `handoff.accepted`. The sender can never accept for the receiver.
+   - `HandoffStore` port + in-memory implementation for tests. The Postgres implementation arrives with the schema slot.
+   - A `handoff_task` tool (capability `tasks.handoff`, tier 1, human-granted, workspace-scoped) is the only way an agent starts a handoff; it goes through the policy hook like every tool.
+4. **Requester identity on run_events**: the receiver's run events carry `on_behalf_of` (the requester member id) via the existing handoff events. Append-only; nothing updated.
+5. **No free-form chat, proven twice** (`handoff-no-chat.guard.test.ts`): (a) scans `RUN_EVENT_SCHEMAS`, the worker tool registry and `apps/web` route files: fails if any event, tool or route lets an agent send arbitrary text to another agent outside a task row; (b) behavioural: the only text that reaches a receiver is the task title and description, delivered as untrusted data (existing untrusted-content boundary, AGO-23). Adding a "message", "chat", "dm" or "send_to_agent" tool or route fails the guard.
+6. **Human-only routes**: no new route. The existing agent-token rejection (`hasAgentCredential`) is asserted in a test for the future handoff-management routes pattern; nothing is exposed to agent tokens.
+
+## Decisions (recommended, awaiting owner)
+| # | Question | Recommendation | Who / when |
+|---|---|---|---|
+| D1 | Tier of a capability in a handoff | max(sender, receiver): narrower wins | owner (via coordinator), 2026-11-20: accepted |
+| D2 | Max chain depth | 3 (requester, A, B, C) | owner (via coordinator), 2026-11-20: accepted |
+| D3 | Receiver's budget | min(sender remaining, receiver daily, request); the sender's spend is reserved, not shared | owner (via coordinator), 2026-11-20: accepted |
+| D4 | Where the narrowing is enforced at run time | clamp via a wrapping `PolicySource`; `evaluatePolicy` stays untouched | owner (via coordinator), 2026-11-20: accepted |
+| D5 | Persistence | needs a migration: `tasks` gets `parent_task_id`, `handoff_from_agent_id`, `requester_member_id`, `handoff_depth`, `handoff_grants jsonb` (narrowed snapshot); RLS unchanged (workspace scoped), agent writes only via a `SECURITY DEFINER` function for `service_role`. Request the schema slot after acceptance; build and test everything else against the in-memory store first | owner (via coordinator), 2026-11-20: accepted |
+| D6 | Run events | extend `handoff.created` / `handoff.accepted` with optional `from_agent_id`, `task_id`, `on_behalf_of`, `depth` (additive, optional, `.strict()` kept). This edits `packages/shared/src/events/run-events.ts`, outside the listed owned paths: **SCOPE ask** | owner (via coordinator), 2026-11-20: accepted |
+| D7 | Free text in `handoff.created.reason` | keep as the existing bounded field but forbid it from carrying task text: set to a fixed code in the handoff module | owner (via coordinator), 2026-11-20: accepted |
+
+## Deviations (2026-11-20)
+- The `handoff_task` tool reuses `tasks.manage` (tier 1) instead of a new `tasks.handoff` capability: a new catalog row needs a seed migration, which waits for the schema slot.
+- **Wiring done (2026-11-20, SCOPE granted by the coordinator).** `apps/worker/src/agent/wire.ts` registers `handoff_task` in the production tool registry and uses `createHandoffPolicyHook` as the policy hook, through `createHandoffWiring` (`apps/worker/src/handoff/handoff-wiring.ts`) so the edit in `wire.ts` is one small block (AGO-85 has the same grant in that file; the second branch to merge does a mechanical merge). The store is now `createPgHandoffStore(pool)` (see the persistence entry below). `createUnavailableHandoffStore()` stays as a fail-closed store for tests. `acceptHandoff` is not called by the run loop yet: starting the receiver's run for a handoff task belongs to the queue and is a follow-up.
+- Design item 6 (agent-token rejection test) needs no new test: no route is added, and `hasAgentCredential` is already covered by AGO-148.
+- The behavioural half of the no-chat proof checks that only the task row is written and a free-form field is refused. The untrusted-data wrapping of the task text at the receiver belongs to the context builder (AGO-23) and is not re-tested here.
+- **Persistence built (2026-11-20, schema slot granted after PR 88 merged).** Migration `20261120020001_ago_81_agent_handoffs.sql` (rollback in `supabase/rollbacks/`), `pg-handoff-store.ts` (replaces the fail-closed store in `agent/wire.ts`), pgTAP `supabase/tests/agent_handoffs.test.sql` and a live-DB test `pg-handoff-store.integration.test.ts`.
+  - D5 changes: two columns beyond the plan, `handoff_path uuid[]` (the chain, so it is stored rather than re-derived by walking parents) and `handoff_run_id` (the receiver's accepting run, so `findByRun` is one indexed lookup). Two functions, `create_handoff_task` and `accept_handoff_task`, executable by `service_role` only (the AGO-160 convention: `EXECUTE` grants, no in-function role check; the worker connects as the database owner).
+  - The function does not trust the worker: it reads the sender from the run, derives the requester and chain from the sender's own task, and refuses a narrowed set wider than the sender's current grants (capability, tier, mode). Depth, cycle and self handoff are also table CHECK constraints.
+  - `HandoffRecord` gained `senderRunId` (null on a record read back), so the database can derive the sender from the run.
+  - The party's data scope is empty: agents have no stored vault scope yet, so no data passes on in a handoff until a scope source exists (with AGO-188). Empty is the safe direction.
+  - Remaining budget is the agent's daily budget minus today's UTC usage; it is read at handoff time, not reserved (D3 says reserved; reserving belongs with the budget ledger and is a follow-up).
+- **Round 2 (review r1 fixes, 2026-11-20).**
+  - Every hop is bounded by the PARENT handoff, not only by the sender's current grants: on hop 2+ the narrowed set must fit inside the parent's `handoff_grants` (capability, tier, mode, budget), in `createHandoff` (`limitToHandoff`) and in `create_handoff_task`. Tests: `handoff-chain.test.ts` and `agent_handoffs_chain.test.sql` (2-hop and 3-hop widening).
+  - `findByRun` resolves through `runs.task_id`, so any run on a handoff task is clamped, even one nobody passed to `acceptHandoff`. `handoff_run_id` stays as the accepting-run record only.
+  - The budget is bounded in SQL (`0 <= budget <= sender remaining`, or the parent's on hop 2+; whole non-negative cents only) and enforced at tool-call time: the policy hook denies (`handoff_budget_exhausted`) once the `budget.usage` cost of the runs on the task reaches the narrowed budget.
+  - The database refuses a non-empty `dataScope`, validates tier (0..4) and mode, and requires the requester to be an active member (`removed_at is null`). A missing sender is `sender_not_found`.
+  - Table: the path CHECK rejects a NULL entry; indexes on `handoff_from_agent_id` and `requester_member_id`. Same migration, rollback updated.
+- **Round 3 (review r2 fixes, 2026-11-20).**
+  - Budget is checked BEFORE each model call: `withHandoffBudget` (`handoff-budget-guard.ts`) wraps the AGO-40 `BudgetGuard` (no second reservation mechanism) and refuses when spend so far plus the call's worst case (`worstCaseCostCents`) would pass the narrowed budget (`handoff_budget_would_be_exceeded`). No price or a store error is a refusal. The loop passes `runId` to `reserve`; `wire.ts` wraps the guard. The tool-call hook check (`handoff_budget_exhausted`) stays. Concurrent runs on one task read settled spend, so two in-flight calls can both pass; the agent's own reservation still bounds each agent.
+  - Hop 2+ is capped by the parent's REMAINING budget (parent budget minus its task's `budget.usage` spend) in `createHandoff` and `create_handoff_task`.
+  - `spentCentsOnTask` and the function cast `cost_cents` inside `CASE WHEN ... ~ '^[0-9]{1,12}$'`, so a huge value cannot raise 22003 and counts as 0.
+  - Nits: `coalesce` on a missing tier or mode, the run's agent must be the task's assignee, `FOR SHARE` on the parent row.
+- **Round 4 (review r3 fix, owner chose option a, 2026-11-21).**
+  - A sender can no longer split its budget across several child handoffs. The budgets already given to the task's other children (`tasks.parent_task_id`, sum of `handoff_grants.budgetCents`) are subtracted from what the sender may pass on, on every hop: hop 1 from the daily remaining, hop 2+ from the parent's remaining. Done in `create_handoff_task` and in `createHandoff` (new store method `allocatedCentsOnRun`). The function takes `FOR UPDATE` on the parent task row (was `FOR SHARE`), so two handoffs from one task are serialized and cannot both read the same unallocated budget. Uses the existing `tasks_workspace_parent_idx`.
+  - Spend counted against a handoff now also includes an unknown-outcome call (`budget.exceeded` with reason `call_outcome_unknown_charged`, field `used`: it may have been billed), in `spentCentsOnTask` and in the function. So the pre-call check, the tool-call hook and the child cap all see it.
+  - An out-of-range `cost_cents` (13 or more digits) now counts as a LARGE number (999999999999), not 0: it can only shrink a budget. The cast still sits inside the CASE, so 22003 cannot be raised. Anything else non-numeric still counts 0.
+  - Nit: the not-found check comes before the assignee check. The review's note about `run_events_workspace_run_seq_idx` is not cited anywhere in this ticket's files (that index was replaced by `run_events_run_seq_key (workspace_id, run_id, seq)`; the old name appears only in earlier tickets' migrations, which are not touched here).
+  - Tests: `agent_handoffs_chain.test.sql` (hop-2 and hop-1 split, unknown outcome, out-of-range cost), `handoff-chain.test.ts` (split cases), `pg-handoff-budget.integration.test.ts`, `pg-handoff-chain.integration.test.ts`.
+- **Round 5 (review r4 fix, owner authorized, 2026-11-21).**
+  - Give-then-spend closed: a handoff task's OWN spend limit is its narrowed budget minus what it already gave to child handoffs (`allocatedCentsOnRun`), in the pre-call guard (`withHandoffBudget`) and in the tool-call hook (`createHandoffPolicyHook`). So the same budget cannot be given to a child and then spent again: a 100-cent grant is 40 + 30 + 30 across a three-hop chain, never 200 or 300. A task that gave everything away is denied at once.
+  - Tests: unit tests for depth 1 and depth 3 (`handoff-chain.test.ts`), the guard (`handoff-budget-guard.test.ts`), and the real store (`pg-handoff-chain.integration.test.ts`). No new SQL: the guard reads through the existing store query, so no pgTAP change.
+
+## Boundaries
+- **Always:** scope by workspace_id; policy check before every tool call; Zod at the boundary; intersect, never union.
+- **Ask first:** the migration (schema slot), the `run-events.ts` edit.
+- **Never:** let an agent approve, carry or pre-satisfy an approval; accept its own handoff; rewrite the requester; edit or delete run_events; add any agent-to-agent text channel.
+
+## API changes
+None for humans. One new agent tool (`handoff_task`).
+
+## Database changes
+Migration `supabase/migrations/20261120020001_ago_81_agent_handoffs.sql`, rollback `supabase/rollbacks/20261120020001_ago_81_agent_handoffs.down.sql`.
+- `public.tasks`: `parent_task_id`, `handoff_from_agent_id`, `requester_member_id`, `handoff_depth` (1..3), `handoff_path uuid[]`, `handoff_grants jsonb`, `handoff_run_id`; all null on an ordinary task, all-or-none CHECK, composite foreign keys (workspace scoped), unique index on `(workspace_id, handoff_run_id)`.
+- No handoff column is in any grant for `anon` or `authenticated`. RLS on `tasks` is unchanged.
+- `public.create_handoff_task(...)` and `public.accept_handoff_task(...)`: SECURITY DEFINER, `search_path = ''`, `EXECUTE` for `service_role` only.
+- No cycle: a CHECK compares the (at most four) path entries pairwise; no helper function exists, because one would be executable by anon and fail the RLS catalog tests.
+
+## Dependencies on other tickets
+AGO-148 (credential claims, read-only), AGO-34 (policy engine, read-only), AGO-160 (claims, read-only), AGO-164 (event schemas, D6).
+
+## Known limitations
+- A party's data scope is empty (agents have no stored vault scope yet), so a handoff passes on no data scope until AGO-188 adds one.
+- The sender's own daily budget is read at handoff time, not reserved in the ledger. What a task has already handed to its child handoffs is held (Round 4), so one task cannot pass on more in total than it holds.
+- Nothing starts the receiver's run for a handoff task yet, so `acceptHandoff` is not called by the run loop; the queue follow-up does that.
+- The `handoff_task` tool reuses capability `tasks.manage` (tier 1) instead of a new `tasks.handoff` capability, which would need a catalog seed. Accepted by the coordinator. Any agent that may manage tasks can therefore start a handoff; the handoff rule, not the capability, bounds what it passes on.
+- Data scope is modelled as path prefixes; richer scopes belong to AGO-188.
+- **Accepted exception to D3 (owner, 2026-11-21; follow-up AGO-252, ledger reservation, High risk).** Two budget limits stay open: (1) the hop-1 sender's own daily budget is read at handoff time, not reserved in the ledger; (2) two model calls in flight on one task read settled spend, so both can pass and the task can overshoot its limit by one call. AGO-252 reserves the budget in the ledger and closes both.
+
+## Testing notes
+Unit tests for every widening attempt (more capabilities, higher tier, bigger budget, wider data scope, another workspace, forged requester, depth, cycle, self-handoff, Tier 3/4 never auto-allowed); property-style test that the result is always a subset of both grants; the no-chat guard; `pnpm --filter @ago/shared test`, `pnpm --filter @ago/worker test`. DB-touching tests only under the db lock.
+
+## Follow-up tasks
+AGO-188 cross-department grants; web screen for a handoff chain; scheduled expiry of unaccepted handoffs; audit attribution: `on_behalf_of` on the receiver's events is taken from the task creator, not from a separately verified field (review r1 nit).
+
+## Outcome
+(empty until merge)

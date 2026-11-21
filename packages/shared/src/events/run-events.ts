@@ -124,8 +124,23 @@ export const RUN_EVENT_SCHEMAS = [
     estimate: count.optional(),
   }),
   // Handoffs
-  event("handoff.created", { handoff_id: id, to_agent_id: uuid, reason: shortText }),
-  event("handoff.accepted", { handoff_id: id, by_agent_id: uuid }),
+  // AGO-81: the optional fields name the handoff task, the sender, the human the chain acts for and its depth.
+  // They are set by the worker from the stored chain, never from agent input. Old events (without them) still parse.
+  event("handoff.created", {
+    handoff_id: id,
+    to_agent_id: uuid,
+    reason: shortText,
+    from_agent_id: uuid.optional(),
+    task_id: uuid.optional(),
+    on_behalf_of: uuid.optional(),
+    depth: z.number().int().min(1).max(10).optional(),
+  }),
+  event("handoff.accepted", {
+    handoff_id: id,
+    by_agent_id: uuid,
+    task_id: uuid.optional(),
+    on_behalf_of: uuid.optional(),
+  }),
   // Errors and agent output
   event("error.raised", { code, message: shortText, retryable: z.boolean() }),
   event("message.emitted", { role: z.enum(["agent", "system"]), summary: text }),

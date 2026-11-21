@@ -1,0 +1,57 @@
+import type { HandoffChain, HandoffParty, NarrowedPermissions } from "@ago/shared/handoff";
+
+/**
+ * Persistence port for handoffs (AGO-81). A handoff IS a task row: `taskId` is the new task. The Postgres
+ * implementation is `pg-handoff-store.ts` (new columns on `tasks`, written only by `SECURITY DEFINER` functions for
+ * `service_role`; agent roles can never write `requesterMemberId` or `narrowed`). The in-memory store in
+ * `handoff-store.test-helpers.ts` is test-only.
+ */
+export interface HandoffRecord {
+  readonly taskId: string;
+  readonly workspaceId: string;
+  readonly fromAgentId: string;
+  /**
+   * The sender's run when inserting: the database reads the sender and the chain from it, so a stored sender id is
+   * never trusted. Null on a record read back (the run is not kept on the task).
+   */
+  readonly senderRunId: string | null;
+  readonly toAgentId: string;
+  /** The human member the whole chain acts for. Copied from the root task, never from agent input. */
+  readonly requesterMemberId: string;
+  /** Agent ids from the first sender to the receiver (inclusive). */
+  readonly path: readonly string[];
+  readonly depth: number;
+  /** The receiver's effective permissions for this task: the intersection computed at handoff time. */
+  readonly narrowed: NarrowedPermissions;
+  /** The only text the receiver gets. It is untrusted data. */
+  readonly title: string;
+  readonly description: string;
+  readonly acceptedByRunId: string | null;
+}
+
+export interface HandoffStore {
+  /** What an agent holds right now. Null when the agent does not exist in the workspace. */
+  loadParty(workspaceId: string, agentId: string): Promise<HandoffParty | null>;
+  /**
+   * The chain a sender's run acts in: the handoff chain of the task the run works on, or a new chain rooted at that
+   * task's human creator. Null when the run has no task or the task has no human requester.
+   */
+  loadChainForRun(workspaceId: string, runId: string): Promise<HandoffChain | null>;
+  /** Insert the handoff task. Must fail if the task id exists. */
+  insert(record: HandoffRecord): Promise<void>;
+  /**
+   * The handoff a run works on, or null for an ordinary run. Resolved through the run's own task, so a run that was
+   * never linked by `markAccepted` (or a second run on the same task) is still clamped.
+   */
+  findByRun(workspaceId: string, runId: string): Promise<HandoffRecord | null>;
+  /** Cents the runs on this task have spent so far (the sum of their `budget.usage` events). */
+  spentCentsOnTask(workspaceId: string, taskId: string): Promise<number>;
+  /**
+   * Cents the task a run works on has already handed to its child handoffs (the sum of their narrowed budgets). A
+   * sender's budget is held when it is given away, so the next handoff from the same task can only pass on the rest.
+   */
+  allocatedCentsOnRun(workspaceId: string, runId: string): Promise<number>;
+  findByTask(workspaceId: string, taskId: string): Promise<HandoffRecord | null>;
+  /** Link the receiver's run to the handoff. False when it was already accepted. */
+  markAccepted(workspaceId: string, taskId: string, runId: string): Promise<boolean>;
+}

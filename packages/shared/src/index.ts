@@ -39,3 +39,4 @@ export * from "./vault/index.js";
 export * from "./tool-servers/index.js";
 export * from "./goals/index.js";
 export * from "./egress/index.js";
+export * from "./handoff/index.js";
