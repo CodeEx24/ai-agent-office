@@ -8,6 +8,7 @@ import { createModelRouter, createPgAgentModelSource } from "./model-routing.js"
 import { createPgPolicySource } from "../policy/index.js";
 import { createRunEventEmitter, createPgRunEventStore } from "../events/index.js";
 import { createHandoffWiring, createPgHandoffStore, withHandoffBudget } from "../handoff/index.js";
+import { createManagerTools, createPgManagerStore } from "../manager/index.js";
 import { createPgCredentialStore } from "../identity/index.js";
 import { createPgKillSwitchGuard } from "../kill-switch/index.js";
 import { createPgGrantedCapabilitySource, createToolOffer } from "./tool-offer.js";
@@ -81,6 +82,8 @@ export function createProductionAgentExecutor(options: {
     tools: createToolRegistry([
       getCurrentTimeTool,
       handoff.tool,
+      // AGO-117: the Manager reads its goal and proposes Inbox tasks. Neither tool can create or hire an agent.
+      ...createManagerTools({ store: createPgManagerStore(pool) }),
       createEgressWiredRunCodeTool(logger),
     ]),
     // Only granted, catalog-enabled tools are shown to the model (AGO-25), re-read before every model call.

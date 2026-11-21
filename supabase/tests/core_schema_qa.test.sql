@@ -27,7 +27,7 @@ select is(
   (select count(*)::int from pg_constraint k
     where k.contype = 'f' and k.connamespace = 'public'::regnamespace and k.confrelid <> 'public.workspaces'::regclass
       and k.confrelid <> 'auth.users'::regclass),
-  34, 'AC1: 34 parent foreign keys between core tables (16 core + 2 on policies + 2 on skill_versions + 3 on agent_identities and agent_credentials + 2 on agent_versions + 1 on pack_events + 2 on agent_mode_changes + 2 on goals and tasks.goal_id + 4 on the handoff columns of tasks)');
+  35, 'AC1: 35 parent foreign keys between core tables (16 core + 2 on policies + 2 on skill_versions + 3 on agent_identities and agent_credentials + 2 on agent_versions + 1 on pack_events + 2 on agent_mode_changes + 2 on goals and tasks.goal_id + 4 on the handoff columns of tasks + 1 on tasks.suggested_agent_id)');
 
 select is(
   (select count(*)::int from pg_constraint
