@@ -22,6 +22,10 @@
       "types": "./dist/agents/agent-limits.d.ts",
       "default": "./dist/agents/agent-limits.js"
     },
+    "./goal-limits": {
+      "types": "./dist/goals/goal-limits.d.ts",
+      "default": "./dist/goals/goal-limits.js"
+    },
     "./agent-templates": {
       "types": "./dist/agents/agent-templates.d.ts",
       "default": "./dist/agents/agent-templates.js"
@@ -61,6 +65,14 @@
     "./pack-import-plan": {
       "types": "./dist/packs/agent-pack-import-plan.d.ts",
       "default": "./dist/packs/agent-pack-import-plan.js"
+    },
+    "./run-events": {
+      "types": "./dist/events/run-events.d.ts",
+      "default": "./dist/events/run-events.js"
+    },
+    "./budget": {
+      "types": "./dist/budget/budget.d.ts",
+      "default": "./dist/budget/budget.js"
     },
     "./agent-pack.schema.json": "./schemas/agent-pack.v1.schema.json"
   },
