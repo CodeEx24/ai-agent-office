@@ -324,8 +324,10 @@ describe.skipIf(!live)("AGO-81 handoff chain rules (live database)", { timeout: 
 
     it("the parent's tier and mode bound the next hop (tier 2 approval passed on: lower tier or automatic is refused)", async () => {
       const root = await rootRun(A);
+      // Budget 2: the two accepted children below take 1 cent each (budget given to children is held, round 4).
       const parent = await expectAccepted(root, B, {
         capabilities: [cap("tasks.manage", 2, "approval")],
+        budgetCents: 2,
       });
       const bRun = await runOnTask(parent.taskId, B);
 
@@ -635,13 +637,43 @@ describe.skipIf(!live)("AGO-81 handoff chain rules (live database)", { timeout: 
       expect(await store().spentCentsOnTask(ws, task.taskId)).toBe(7);
     });
 
-    it("a cost too large for the ledger never raises 22003: the cast sits inside a CASE, so it counts as 0 (round 3)", async () => {
+    it("a cost too large for the ledger never raises 22003 (the cast sits inside a CASE) and counts as LARGE, so the budget is spent (round 4)", async () => {
       const task = await handoffWithBudget(400);
       await cost(task.runId, 7);
       await usage(task.runId, { cost_cents: "99999999999999999999999" });
       await usage(task.runId, { cost_cents: "1234567890123" }); // 13 digits: outside ^[0-9]{1,12}$
-      await expect(store().spentCentsOnTask(ws, task.taskId)).resolves.toBe(7);
+      await expect(store().spentCentsOnTask(ws, task.taskId)).resolves.toBeGreaterThanOrEqual(
+        999_999_999_999,
+      );
+      expect(await hook().check(toolCall, contextFor(task.runId, B))).toEqual({
+        decision: "deny",
+        reasonCode: HANDOFF_BUDGET_EXHAUSTED,
+      });
+    });
+
+    it("an unknown-outcome call (budget.exceeded, call_outcome_unknown_charged) counts toward the handoff budget (round 4)", async () => {
+      const task = await handoffWithBudget(50);
+      await usage(
+        task.runId,
+        { scope: "ledger", reason: "call_outcome_unknown_charged", limit: 20, used: 20 },
+        "budget.exceeded",
+      );
+      await usage(
+        task.runId,
+        { scope: "ledger", reason: "call_cost_overran_reservation", limit: 20, used: 99 },
+        "budget.exceeded",
+      );
+      await expect(store().spentCentsOnTask(ws, task.taskId)).resolves.toBe(20);
       expect((await hook().check(toolCall, contextFor(task.runId, B))).decision).toBe("allow");
+      await usage(
+        task.runId,
+        { scope: "ledger", reason: "call_outcome_unknown_charged", limit: 30, used: 30 },
+        "budget.exceeded",
+      );
+      expect(await hook().check(toolCall, contextFor(task.runId, B))).toEqual({
+        decision: "deny",
+        reasonCode: HANDOFF_BUDGET_EXHAUSTED,
+      });
     });
 
     it("allows a call while spending is below the cap and denies it when spending equals the cap", async () => {

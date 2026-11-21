@@ -46,6 +46,11 @@ export interface HandoffStore {
   findByRun(workspaceId: string, runId: string): Promise<HandoffRecord | null>;
   /** Cents the runs on this task have spent so far (the sum of their `budget.usage` events). */
   spentCentsOnTask(workspaceId: string, taskId: string): Promise<number>;
+  /**
+   * Cents the task a run works on has already handed to its child handoffs (the sum of their narrowed budgets). A
+   * sender's budget is held when it is given away, so the next handoff from the same task can only pass on the rest.
+   */
+  allocatedCentsOnRun(workspaceId: string, runId: string): Promise<number>;
   findByTask(workspaceId: string, taskId: string): Promise<HandoffRecord | null>;
   /** Link the receiver's run to the handoff. False when it was already accepted. */
   markAccepted(workspaceId: string, taskId: string, runId: string): Promise<boolean>;

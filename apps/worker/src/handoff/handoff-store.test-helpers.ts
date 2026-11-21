@@ -24,6 +24,11 @@ export function createInMemoryHandoffStore(): InMemoryHandoffStore {
   const runToTask = new Map<string, string>();
   const spent = new Map<string, number>();
   const key = (workspaceId: string, id: string): string => `${workspaceId}:${id}`;
+  // The task each handoff hangs under (tasks.parent_task_id): the sender run's task, or the run itself when the run has
+  // no task mapping (a hop-1 test run), so siblings of one parent share a key.
+  const parentOf = new Map<string, string>();
+  const parentKeyOfRun = (workspaceId: string, runId: string): string =>
+    runToTask.get(key(workspaceId, runId)) ?? `run:${key(workspaceId, runId)}`;
 
   return {
     records,
@@ -53,7 +58,18 @@ export function createInMemoryHandoffStore(): InMemoryHandoffStore {
         return Promise.reject(new Error("duplicate task id"));
       }
       records.push(record);
+      if (record.senderRunId !== null) {
+        parentOf.set(record.taskId, parentKeyOfRun(record.workspaceId, record.senderRunId));
+      }
       return Promise.resolve();
+    },
+    allocatedCentsOnRun(workspaceId, runId) {
+      const parentKey = parentKeyOfRun(workspaceId, runId);
+      return Promise.resolve(
+        records
+          .filter((r) => r.workspaceId === workspaceId && parentOf.get(r.taskId) === parentKey)
+          .reduce((sum, r) => sum + r.narrowed.budgetCents, 0),
+      );
     },
     findByRun(workspaceId, runId) {
       const taskId = runToTask.get(key(workspaceId, runId));

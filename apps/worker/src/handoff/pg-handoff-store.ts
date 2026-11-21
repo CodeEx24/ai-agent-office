@@ -177,17 +177,39 @@ export function createPgHandoffStore(db: Queryable): HandoffStore {
 
     async spentCentsOnTask(workspaceId, taskId): Promise<number> {
       const result = await db.query(
-        // The cast sits inside the CASE, so a value that is not 1..12 digits is never cast (Postgres may run a select-list
-        // expression before the WHERE filter, and a huge number would raise 22003). Such a value counts as 0 here.
-        `select coalesce(sum(case when (e.payload ->> 'cost_cents') ~ '^[0-9]{1,12}$'
-                                  then (e.payload ->> 'cost_cents')::bigint else 0 end), 0) as spent
+        // Spend = the cost of budget.usage events plus the held cents of a call whose outcome is unknown
+        // (budget.exceeded, reason call_outcome_unknown_charged, field "used": it may have been billed). The casts sit
+        // inside the CASE, so a huge number never raises 22003 (Postgres may run a select-list expression before the
+        // WHERE filter): 1..12 digits count as is, a longer all-digit value counts as a large number (it can only shrink
+        // a budget), anything else counts 0. Same rule as the parent-spend query in create_handoff_task.
+        `select coalesce(sum(case
+                  when e.type = 'budget.usage' then
+                    case when (e.payload ->> 'cost_cents') ~ '^[0-9]{1,12}$' then (e.payload ->> 'cost_cents')::bigint
+                         when (e.payload ->> 'cost_cents') ~ '^[0-9]{13,}$' then 999999999999 else 0 end
+                  when e.type = 'budget.exceeded' and e.payload ->> 'reason' = 'call_outcome_unknown_charged' then
+                    case when (e.payload ->> 'used') ~ '^[0-9]{1,12}$' then (e.payload ->> 'used')::bigint
+                         when (e.payload ->> 'used') ~ '^[0-9]{13,}$' then 999999999999 else 0 end
+                  else 0 end), 0) as spent
            from public.run_events e
            join public.runs r on r.workspace_id = e.workspace_id and r.id = e.run_id
-          where e.workspace_id = $1 and r.task_id = $2 and e.type = 'budget.usage'`,
+          where e.workspace_id = $1 and r.task_id = $2 and e.type in ('budget.usage', 'budget.exceeded')`,
         [workspaceId, taskId],
       );
       const raw = result.rows[0] as { spent?: unknown } | undefined;
       return z.coerce.number().parse(raw?.spent ?? 0);
+    },
+
+    async allocatedCentsOnRun(workspaceId, runId): Promise<number> {
+      // The budgets this run's task already gave to its child handoffs (siblings of the one being made).
+      const result = await db.query(
+        `select coalesce(sum((t.handoff_grants ->> 'budgetCents')::bigint), 0) as allocated
+           from public.tasks t
+          where t.workspace_id = $1 and t.handoff_from_agent_id is not null
+            and t.parent_task_id = (select r.task_id from public.runs r where r.workspace_id = $1 and r.id = $2)`,
+        [workspaceId, runId],
+      );
+      const raw = result.rows[0] as { allocated?: unknown } | undefined;
+      return z.coerce.number().parse(raw?.allocated ?? 0);
     },
 
     async findByTask(workspaceId, taskId): Promise<HandoffRecord | null> {

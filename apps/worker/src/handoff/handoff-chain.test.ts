@@ -152,15 +152,49 @@ describe("a handoff is never wider than what the sender was handed (2-hop and 3-
     if (!one.ok) throw new Error(`setup failed: ${one.reason}`);
     await take(RUN.B, B, one.taskId);
     store.setSpentCents(WS, one.taskId, 60);
-    // 100 - 60 = 40 left: 41 is wider, 40 is fine, and no request gets the remaining 40.
+    // 100 - 60 = 40 left: 41 is wider, and a request with no budget gets the remaining 40.
     expect(await hop(RUN.B, B, C, { requested: { budget_cents: 41 } })).toEqual({
       ok: false,
       reason: "widening_budget",
     });
-    expect((await hop(RUN.B, B, C, { requested: { budget_cents: 40 } })).ok).toBe(true);
     const defaulted = await hop(RUN.B, B, C);
     expect(defaulted.ok).toBe(true);
     expect(store.records.at(-1)?.narrowed.budgetCents).toBe(40);
+  });
+
+  it("a sender cannot split its remaining budget across several children (budget already given is held)", async () => {
+    const { store, hop, take } = setup();
+    const one = await hop(RUN.A, A, B, { requested: { budget_cents: 100 } });
+    if (!one.ok) throw new Error(`setup failed: ${one.reason}`);
+    await take(RUN.B, B, one.taskId);
+    store.setSpentCents(WS, one.taskId, 60); // 40 left
+    expect((await hop(RUN.B, B, C, { requested: { budget_cents: 25 } })).ok).toBe(true);
+    // 15 left after the first child: 16 is wider, a second child asking for the whole 40 again is refused.
+    expect(await hop(RUN.B, B, D, { requested: { budget_cents: 16 } })).toEqual({
+      ok: false,
+      reason: "widening_budget",
+    });
+    expect(await hop(RUN.B, B, D, { requested: { budget_cents: 40 } })).toEqual({
+      ok: false,
+      reason: "widening_budget",
+    });
+    expect((await hop(RUN.B, B, D, { requested: { budget_cents: 15 } })).ok).toBe(true);
+    // Nothing is left: any further child is refused, whatever it asks for.
+    expect((await hop(RUN.B, B, E, { requested: { budget_cents: 1 } })).ok).toBe(false);
+    expect((await hop(RUN.B, B, E)).ok).toBe(false);
+    expect(store.records.map((r) => r.narrowed.budgetCents)).toEqual([100, 25, 15]);
+  });
+
+  it("hop 1: several children of one task cannot pass on more than the sender's daily remaining", async () => {
+    const { store, hop } = setup(); // every agent holds a 500 cent daily budget
+    expect((await hop(RUN.A, A, B, { requested: { budget_cents: 300 } })).ok).toBe(true);
+    expect(await hop(RUN.A, A, C, { requested: { budget_cents: 201 } })).toEqual({
+      ok: false,
+      reason: "widening_budget",
+    });
+    expect((await hop(RUN.A, A, C, { requested: { budget_cents: 200 } })).ok).toBe(true);
+    expect((await hop(RUN.A, A, D, { requested: { budget_cents: 1 } })).ok).toBe(false);
+    expect(store.records).toHaveLength(2);
   });
 
   it("a parent that spent its whole budget cannot hand anything on", async () => {

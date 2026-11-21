@@ -294,6 +294,42 @@ describe.skipIf(!live)("AGO-81 round 3 handoff budget (live database)", { timeou
         expect((await store().findByTask(ws, made.taskId))?.narrowed.budgetCents).toBe(60);
       expect(await rawOutcome(parent.runId, D, 1)).toBe(FUNCTION_REFUSAL);
     });
+
+    it("round 4: a sender cannot split its remaining budget across children; budget already given is held (worker and SQL)", async () => {
+      const root = await rootRun(A);
+      const parent = await handOver(root, A, B, 100);
+      await cost(parent.runId, 60); // 40 left
+      expect((await hop(parent.runId, B, C, 25)).ok).toBe(true);
+
+      // 15 are left after the first child: more is refused by the worker rule and by the database function.
+      expect(await hop(parent.runId, B, D, 16)).toEqual({ ok: false, reason: "widening_budget" });
+      expect(await rawOutcome(parent.runId, D, 16)).toBe(FUNCTION_REFUSAL);
+      expect(await rawOutcome(parent.runId, D, 15)).toBe("ok");
+      // Everything is now spent or given.
+      expect(await rawOutcome(parent.runId, D, 1)).toBe(FUNCTION_REFUSAL);
+      expect(await hop(parent.runId, B, D)).toEqual({ ok: false, reason: "no_budget" });
+    });
+
+    it("round 4: an unknown-outcome charge counts as spent, an ordinary overrun event does not (worker store and SQL agree)", async () => {
+      const root = await rootRun(A);
+      const parent = await handOver(root, A, B, 100);
+      await event(parent.runId, "budget.exceeded", {
+        scope: "ledger",
+        reason: "call_outcome_unknown_charged",
+        limit: 30,
+        used: 30,
+      });
+      await event(parent.runId, "budget.exceeded", {
+        scope: "ledger",
+        reason: "call_cost_overran_reservation",
+        limit: 30,
+        used: 50,
+      });
+
+      expect(await store().spentCentsOnTask(ws, parent.taskId)).toBe(30);
+      expect(await rawOutcome(parent.runId, C, 71)).toBe(FUNCTION_REFUSAL);
+      expect(await rawOutcome(parent.runId, C, 70)).toBe("ok");
+    });
   });
 
   // =============================================================================================================
@@ -338,8 +374,9 @@ describe.skipIf(!live)("AGO-81 round 3 handoff budget (live database)", { timeou
 
     it.each([
       ["a 12-digit value counts in full", widths(12), 999_999_999_999],
-      ["a 13-digit value counts as 0 and does not raise", widths(13), 0],
-      ["a 20-digit value counts as 0 and does not raise", widths(20), 0],
+      // Round 4: an out-of-range cost counts as a LARGE number (it can only shrink a budget), and never raises 22003.
+      ["a 13-digit value counts as large and does not raise", widths(13), 999_999_999_999],
+      ["a 20-digit value counts as large and does not raise", widths(20), 999_999_999_999],
       ["a negative number counts as 0", "-5", 0],
       ["a float counts as 0", "2.5", 0],
       // jsonb stores 1e3 as the number 1000, so it is read back as the whole number it is.
@@ -367,12 +404,25 @@ describe.skipIf(!live)("AGO-81 round 3 handoff budget (live database)", { timeou
       await costJson(task.runId, "-4");
       await cost(task.runId, 8);
 
-      expect(await store().spentCentsOnTask(ws, task.taskId)).toBe(20);
+      expect(await store().spentCentsOnTask(ws, task.taskId)).toBe(999_999_999_999 + 20);
     });
 
     it.each([
       ["a 13-digit", widths(13)],
       ["a 40-digit", widths(40)],
+    ])(
+      "the SQL function counts %s cost on the parent task as large: no 22003, and nothing can pass on",
+      async (_name, rawJson) => {
+        const root = await rootRun(A);
+        const parent = await handOver(root, A, B, 100);
+        await costJson(parent.runId, rawJson);
+
+        expect(await rawOutcome(parent.runId, C, 1)).toBe(FUNCTION_REFUSAL);
+        expect(await hop(parent.runId, B, C)).toEqual({ ok: false, reason: "no_budget" });
+      },
+    );
+
+    it.each([
       ["a negative", "-50"],
       ["a float", "2.5"],
       ["a non-numeric string", '"lots"'],
@@ -399,7 +449,7 @@ describe.skipIf(!live)("AGO-81 round 3 handoff budget (live database)", { timeou
     it("the SQL function and spentCentsOnTask agree on a mix of payloads", async () => {
       const root = await rootRun(A);
       const parent = await handOver(root, A, B, 100);
-      for (const rawJson of [widths(13), "-5", "2.5", '"abc"', "10", '"5"', "null"]) {
+      for (const rawJson of ["-5", "2.5", '"abc"', "10", '"5"', "null"]) {
         await costJson(parent.runId, rawJson);
       }
       // Counted: 10 and "5" -> 15. So 85 remain.

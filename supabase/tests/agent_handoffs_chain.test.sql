@@ -108,8 +108,8 @@ select lives_ok(
   $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b1', '82000000-0000-4000-8000-0000000006a2',
        '82000000-0000-4000-8000-0000000002a3', 'h2', '', '82000000-0000-4000-8000-0000000001a1',
        array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2', '82000000-0000-4000-8000-0000000002a3']::uuid[], 2,
-       '{"capabilities":[{"capabilityKey":"vault.read","tier":0,"mode":"automatic"}],"budgetCents":100,"dataScope":[]}'::jsonb) $$,
-  'hop 2: passing on what the parent passed on, within the parent''s budget, works');
+       '{"capabilities":[{"capabilityKey":"vault.read","tier":0,"mode":"automatic"}],"budgetCents":30,"dataScope":[]}'::jsonb) $$,
+  'hop 2: passing on what the parent passed on, within the parent''s budget, works (30 of 100 held)');
 
 -- Hop 3: C (running a2) is held to the same rule: tasks.manage was dropped on hop 1 and stays dropped.
 reset role;
@@ -129,26 +129,103 @@ select lives_ok(
        '{"capabilities":[{"capabilityKey":"vault.read","tier":0,"mode":"automatic"}],"budgetCents":10,"dataScope":[]}'::jsonb) $$,
   'hop 3: the narrowed set passes on');
 
--- Round 3: hop 2+ is capped by the parent's REMAINING budget. Task a1 (budget 100) already spent 60 on run b1; a huge or
--- non-numeric cost in the same task must not raise (the cast sits inside a CASE) and counts as 0.
+-- Round 3 and 4: hop 2+ is capped by the parent's REMAINING budget, and the budget the parent already gave to its other
+-- children is held. Task a1 (budget 100) spent 60 on run b1 and gave 30 to task a2 above, so 10 is left.
 reset role;
 insert into public.run_events (workspace_id, run_id, type, payload) values
-  ('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b1', 'budget.usage', '{"cost_cents": 60}'::jsonb),
-  ('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b1', 'budget.usage', '{"cost_cents": 99999999999999999999}'::jsonb),
-  ('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b1', 'budget.usage', '{"cost_cents": "abc"}'::jsonb);
+  ('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b1', 'budget.usage', '{"cost_cents": 60}'::jsonb);
 set local role service_role;
 select throws_ok(
   $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b1', '82000000-0000-4000-8000-0000000006e1',
        '82000000-0000-4000-8000-0000000002a3', 't', '', '82000000-0000-4000-8000-0000000001a1',
        array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2', '82000000-0000-4000-8000-0000000002a3']::uuid[], 2,
-       '{"capabilities":[],"budgetCents":41,"dataScope":[]}'::jsonb) $$,
-  '22023', null, 'hop 2: a budget above the parent''s REMAINING budget (100 - 60) is refused');
+       '{"capabilities":[],"budgetCents":11,"dataScope":[]}'::jsonb) $$,
+  '22023', null, 'hop 2: a budget above what is left (100 - 60 spent - 30 already given) is refused');
 select lives_ok(
   $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b1', '82000000-0000-4000-8000-0000000006e2',
        '82000000-0000-4000-8000-0000000002a3', 'h2b', '', '82000000-0000-4000-8000-0000000001a1',
        array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2', '82000000-0000-4000-8000-0000000002a3']::uuid[], 2,
-       '{"capabilities":[],"budgetCents":40,"dataScope":[]}'::jsonb) $$,
-  'hop 2: exactly the parent''s remaining budget works, and a huge or non-numeric cost does not raise');
+       '{"capabilities":[],"budgetCents":10,"dataScope":[]}'::jsonb) $$,
+  'hop 2: exactly what is left works (a second child of the same parent)');
+-- The split case: everything is now spent or given, so a third child is refused, even for a single cent.
+select throws_ok(
+  $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b1', '82000000-0000-4000-8000-0000000006c2',
+       '82000000-0000-4000-8000-0000000002a3', 't', '', '82000000-0000-4000-8000-0000000001a1',
+       array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2', '82000000-0000-4000-8000-0000000002a3']::uuid[], 2,
+       '{"capabilities":[],"budgetCents":1,"dataScope":[]}'::jsonb) $$,
+  '22023', null, 'hop 2: a sender cannot split its budget across children to pass on more than it holds');
+
+-- Hop 1 split: the root task already gave 100 (h1). Three more children of 100 each use 300 of the sender's 500 a day.
+select lives_ok(
+  $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007a1', '82000000-0000-4000-8000-0000000006b2',
+       '82000000-0000-4000-8000-0000000002a2', 'h1b', '', '82000000-0000-4000-8000-0000000001a1',
+       array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2']::uuid[], 1,
+       '{"capabilities":[],"budgetCents":100,"dataScope":[]}'::jsonb) $$,
+  'hop 1: a second child of the root task is created');
+select lives_ok(
+  $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007a1', '82000000-0000-4000-8000-0000000006b3',
+       '82000000-0000-4000-8000-0000000002a2', 'h1c', '', '82000000-0000-4000-8000-0000000001a1',
+       array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2']::uuid[], 1,
+       '{"capabilities":[],"budgetCents":100,"dataScope":[]}'::jsonb) $$,
+  'hop 1: a third child of the root task is created');
+select lives_ok(
+  $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007a1', '82000000-0000-4000-8000-0000000006b4',
+       '82000000-0000-4000-8000-0000000002a2', 'h1d', '', '82000000-0000-4000-8000-0000000001a1',
+       array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2']::uuid[], 1,
+       '{"capabilities":[],"budgetCents":100,"dataScope":[]}'::jsonb) $$,
+  'hop 1: a fourth child of the root task is created');
+-- 500 - 400 given = 100 left: 101 is refused, 99 works and leaves 1 cent (later tests hand off 1 cent), 2 is refused.
+select throws_ok(
+  $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007a1', '82000000-0000-4000-8000-0000000006c3',
+       '82000000-0000-4000-8000-0000000002a2', 't', '', '82000000-0000-4000-8000-0000000001a1',
+       array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2']::uuid[], 1,
+       '{"capabilities":[],"budgetCents":101,"dataScope":[]}'::jsonb) $$,
+  '22023', null, 'hop 1: several children cannot pass on more than the sender''s daily remaining in total');
+select lives_ok(
+  $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007a1', '82000000-0000-4000-8000-0000000006b5',
+       '82000000-0000-4000-8000-0000000002a2', 'h1e', '', '82000000-0000-4000-8000-0000000001a1',
+       array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2']::uuid[], 1,
+       '{"capabilities":[],"budgetCents":99,"dataScope":[]}'::jsonb) $$,
+  'hop 1: a child within the daily remaining works');
+select throws_ok(
+  $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007a1', '82000000-0000-4000-8000-0000000006c4',
+       '82000000-0000-4000-8000-0000000002a2', 't', '', '82000000-0000-4000-8000-0000000001a1',
+       array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2']::uuid[], 1,
+       '{"capabilities":[],"budgetCents":2,"dataScope":[]}'::jsonb) $$,
+  '22023', null, 'hop 1: with 499 of the daily 500 given away, two more cents are refused');
+
+-- Round 4: how the parent's spend is counted. Runs on three of the new tasks: b2 has an out-of-range cost (counts as
+-- LARGE, and must not raise 22003), b3 an unknown-outcome charge (it may have been billed, so it counts), b4 an
+-- ordinary overrun event and a non-numeric cost (neither counts).
+reset role;
+insert into public.runs (id, workspace_id, task_id, agent_id) values
+  ('82000000-0000-4000-8000-0000000007b2', '82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000006b2', '82000000-0000-4000-8000-0000000002a2'),
+  ('82000000-0000-4000-8000-0000000007b3', '82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000006b3', '82000000-0000-4000-8000-0000000002a2'),
+  ('82000000-0000-4000-8000-0000000007b4', '82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000006b4', '82000000-0000-4000-8000-0000000002a2');
+insert into public.run_events (workspace_id, run_id, type, payload) values
+  ('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b2', 'budget.usage', '{"cost_cents": 99999999999999999999}'::jsonb),
+  ('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b3', 'budget.exceeded', '{"scope":"ledger","reason":"call_outcome_unknown_charged","limit":100,"used":100}'::jsonb),
+  ('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b4', 'budget.exceeded', '{"scope":"ledger","reason":"call_cost_overran_reservation","limit":100,"used":100}'::jsonb),
+  ('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b4', 'budget.usage', '{"cost_cents": "abc"}'::jsonb);
+set local role service_role;
+select throws_ok(
+  $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b2', '82000000-0000-4000-8000-0000000006c5',
+       '82000000-0000-4000-8000-0000000002a3', 't', '', '82000000-0000-4000-8000-0000000001a1',
+       array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2', '82000000-0000-4000-8000-0000000002a3']::uuid[], 2,
+       '{"capabilities":[],"budgetCents":1,"dataScope":[]}'::jsonb) $$,
+  '22023', null, 'hop 2: an out-of-range cost counts as large (not 0) and does not raise a numeric overflow');
+select throws_ok(
+  $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b3', '82000000-0000-4000-8000-0000000006c6',
+       '82000000-0000-4000-8000-0000000002a3', 't', '', '82000000-0000-4000-8000-0000000001a1',
+       array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2', '82000000-0000-4000-8000-0000000002a3']::uuid[], 2,
+       '{"capabilities":[],"budgetCents":1,"dataScope":[]}'::jsonb) $$,
+  '22023', null, 'hop 2: an unknown-outcome charge counts as spent');
+select lives_ok(
+  $$ select public.create_handoff_task('82000000-0000-4000-8000-0000000000a1', '82000000-0000-4000-8000-0000000007b4', '82000000-0000-4000-8000-0000000006b6',
+       '82000000-0000-4000-8000-0000000002a3', 'h2c', '', '82000000-0000-4000-8000-0000000001a1',
+       array['82000000-0000-4000-8000-0000000002a1', '82000000-0000-4000-8000-0000000002a2', '82000000-0000-4000-8000-0000000002a3']::uuid[], 2,
+       '{"capabilities":[],"budgetCents":100,"dataScope":[]}'::jsonb) $$,
+  'hop 2: another overrun event and a non-numeric cost do not count, so the whole 100 is still available');
 
 -- A run whose agent is not the task's assignee is not a sender (round 3).
 reset role;

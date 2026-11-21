@@ -42,5 +42,6 @@ export function createUnavailableHandoffStore(): HandoffStore {
     findByTask: () => Promise.resolve(null),
     markAccepted: unavailable,
     spentCentsOnTask: unavailable,
+    allocatedCentsOnRun: unavailable,
   };
 }

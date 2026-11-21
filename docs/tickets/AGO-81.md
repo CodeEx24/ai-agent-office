@@ -67,6 +67,12 @@ Everything is a pure, deterministic function plus a thin worker port, so the sch
   - Hop 2+ is capped by the parent's REMAINING budget (parent budget minus its task's `budget.usage` spend) in `createHandoff` and `create_handoff_task`.
   - `spentCentsOnTask` and the function cast `cost_cents` inside `CASE WHEN ... ~ '^[0-9]{1,12}$'`, so a huge value cannot raise 22003 and counts as 0.
   - Nits: `coalesce` on a missing tier or mode, the run's agent must be the task's assignee, `FOR SHARE` on the parent row.
+- **Round 4 (review r3 fix, owner chose option a, 2026-11-21).**
+  - A sender can no longer split its budget across several child handoffs. The budgets already given to the task's other children (`tasks.parent_task_id`, sum of `handoff_grants.budgetCents`) are subtracted from what the sender may pass on, on every hop: hop 1 from the daily remaining, hop 2+ from the parent's remaining. Done in `create_handoff_task` and in `createHandoff` (new store method `allocatedCentsOnRun`). The function takes `FOR UPDATE` on the parent task row (was `FOR SHARE`), so two handoffs from one task are serialized and cannot both read the same unallocated budget. Uses the existing `tasks_workspace_parent_idx`.
+  - Spend counted against a handoff now also includes an unknown-outcome call (`budget.exceeded` with reason `call_outcome_unknown_charged`, field `used`: it may have been billed), in `spentCentsOnTask` and in the function. So the pre-call check, the tool-call hook and the child cap all see it.
+  - An out-of-range `cost_cents` (13 or more digits) now counts as a LARGE number (999999999999), not 0: it can only shrink a budget. The cast still sits inside the CASE, so 22003 cannot be raised. Anything else non-numeric still counts 0.
+  - Nit: the not-found check comes before the assignee check. The review's note about `run_events_workspace_run_seq_idx` is not cited anywhere in this ticket's files (that index was replaced by `run_events_run_seq_key (workspace_id, run_id, seq)`; the old name appears only in earlier tickets' migrations, which are not touched here).
+  - Tests: `agent_handoffs_chain.test.sql` (hop-2 and hop-1 split, unknown outcome, out-of-range cost), `handoff-chain.test.ts` (split cases), `pg-handoff-budget.integration.test.ts`, `pg-handoff-chain.integration.test.ts`.
 
 ## Boundaries
 - **Always:** scope by workspace_id; policy check before every tool call; Zod at the boundary; intersect, never union.
@@ -88,7 +94,7 @@ AGO-148 (credential claims, read-only), AGO-34 (policy engine, read-only), AGO-1
 
 ## Known limitations
 - A party's data scope is empty (agents have no stored vault scope yet), so a handoff passes on no data scope until AGO-188 adds one.
-- Budget is read at handoff time, not reserved against the sender.
+- The sender's own daily budget is read at handoff time, not reserved in the ledger. What a task has already handed to its child handoffs is held (Round 4), so one task cannot pass on more in total than it holds.
 - Nothing starts the receiver's run for a handoff task yet, so `acceptHandoff` is not called by the run loop; the queue follow-up does that.
 - The `handoff_task` tool reuses capability `tasks.manage` (tier 1) instead of a new `tasks.handoff` capability, which would need a catalog seed. Accepted by the coordinator. Any agent that may manage tasks can therefore start a handoff; the handoff rule, not the capability, bounds what it passes on.
 - Data scope is modelled as path prefixes; richer scopes belong to AGO-188.

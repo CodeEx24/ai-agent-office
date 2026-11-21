@@ -55,8 +55,15 @@ export async function createHandoff(
   // The parent's REMAINING budget (its budget minus what the runs on its task already spent), not its static one.
   const parentSpent =
     parent === null ? 0 : await deps.store.spentCentsOnTask(sender.workspaceId, parent.taskId);
-  const senderParty =
+  const limited =
     parent === null ? loadedSender : limitToHandoff(loadedSender, parent, parentSpent);
+  // Budget already given to this task's other child handoffs is held: a sender cannot split what it has left across
+  // several children and pass on more than it holds in total (the database re-checks this under a row lock).
+  const allocated = await deps.store.allocatedCentsOnRun(sender.workspaceId, sender.runId);
+  const senderParty: HandoffParty = {
+    ...limited,
+    budgetCents: Math.max(0, limited.budgetCents - allocated),
+  };
 
   const toAgentId = receiverIdOf(input);
   const receiver =

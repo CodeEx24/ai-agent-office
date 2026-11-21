@@ -121,6 +121,7 @@ declare
   v_used bigint;
   v_limit bigint;
   v_parent_spent bigint;
+  v_allocated bigint;
 begin
   if p_workspace_id is null or p_run_id is null or p_task_id is null or p_to_agent_id is null
      or p_requester_member_id is null or p_path is null or p_depth is null or p_grants is null then
@@ -148,14 +149,15 @@ begin
   if not found or v_run.task_id is null then
     raise exception 'run not found or has no task' using errcode = 'P0002';
   end if;
-  -- FOR SHARE: the parent row cannot change under this call (its grants are read below).
-  select * into v_parent from public.tasks where workspace_id = p_workspace_id and id = v_run.task_id for share;
+  -- FOR UPDATE: two handoffs from the same task are serialized, so each reads the budget the other one gave away
+  -- (the sibling sum below) and the total passed on can never exceed what the sender holds.
+  select * into v_parent from public.tasks where workspace_id = p_workspace_id and id = v_run.task_id for update;
+  if not found then
+    raise exception 'task not found' using errcode = 'P0002';
+  end if;
   -- The run's agent is the task's assignee: a run on someone else's task is not a sender we can read a chain from.
   if v_parent.agent_id is distinct from v_run.agent_id then
     raise exception 'the run does not belong to the task''s agent' using errcode = 'P0002';
-  end if;
-  if not found then
-    raise exception 'task not found' using errcode = 'P0002';
   end if;
 
   -- The chain comes from the sender's own task: a handoff task passes its requester and path on; a human task
@@ -212,16 +214,32 @@ begin
      and b.period_start = (now() at time zone 'utc')::date;
   v_limit := greatest(0, v_effective - v_used);
   if v_parent.handoff_from_agent_id is not null then
-    -- The parent's REMAINING budget: its budget minus what the runs on its task already spent (budget.usage events;
-    -- a cost that is not 1..12 digits counts as 0, and the cast sits inside the CASE so it never runs on a huge value).
-    select coalesce(sum(case when (e.payload ->> 'cost_cents') ~ '^[0-9]{1,12}$'
-                             then (e.payload ->> 'cost_cents')::bigint else 0 end), 0)
+    -- The parent's REMAINING budget: its budget minus what the runs on its task already spent. Spend is the cost of
+    -- budget.usage events plus the held cents of a call whose outcome is unknown (budget.exceeded with reason
+    -- call_outcome_unknown_charged, field "used"). A value of 1..12 digits is counted as is, a longer all-digit value
+    -- counts as a large number (999999999999, so it can only shrink the budget), anything else counts 0. The casts sit
+    -- inside the CASE so they never run on a huge value (22003).
+    select coalesce(sum(case
+             when e.type = 'budget.usage' then
+               case when (e.payload ->> 'cost_cents') ~ '^[0-9]{1,12}$' then (e.payload ->> 'cost_cents')::bigint
+                    when (e.payload ->> 'cost_cents') ~ '^[0-9]{13,}$' then 999999999999 else 0 end
+             when e.type = 'budget.exceeded' and e.payload ->> 'reason' = 'call_outcome_unknown_charged' then
+               case when (e.payload ->> 'used') ~ '^[0-9]{1,12}$' then (e.payload ->> 'used')::bigint
+                    when (e.payload ->> 'used') ~ '^[0-9]{13,}$' then 999999999999 else 0 end
+             else 0 end), 0)
       into v_parent_spent
       from public.run_events e
       join public.runs r on r.workspace_id = e.workspace_id and r.id = e.run_id
-     where e.workspace_id = p_workspace_id and r.task_id = v_parent.id and e.type = 'budget.usage';
+     where e.workspace_id = p_workspace_id and r.task_id = v_parent.id
+       and e.type in ('budget.usage', 'budget.exceeded');
     v_limit := least(v_limit, greatest(0, (v_parent.handoff_grants ->> 'budgetCents')::bigint - v_parent_spent));
   end if;
+  -- What this task already handed to its other children is held: one remaining budget cannot be given out twice. The
+  -- parent row is locked above, so a concurrent handoff from the same task waits and then sees this one.
+  select coalesce(sum((t.handoff_grants ->> 'budgetCents')::bigint), 0) into v_allocated
+    from public.tasks t
+   where t.workspace_id = p_workspace_id and t.parent_task_id = v_parent.id and t.handoff_from_agent_id is not null;
+  v_limit := greatest(0, v_limit - v_allocated);
   if v_budget > v_limit then
     raise exception 'the handoff is wider than the sender (budget)' using errcode = '22023';
   end if;
