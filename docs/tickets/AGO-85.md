@@ -91,4 +91,5 @@ Vitest, no database. Shared: the evaluator (11 tests). Worker: the real probes p
 | 4 | Database re-check: option A. A worker-written attestation table plus an owner-only `enable_capability()` that fails closed on missing or stale rows; the direct `enabled` update is revoked. | Owner (via orchestrator, standing rule) | 2026-11-21 |
 
 ## Outcome
-(empty until merge)
+Approved in review round 2 at head df296ae (tester, security and code reviews all PASS). Feature guide: [capability-prerequisites](../features/capability-prerequisites.md). PR: https://github.com/CodeEx24/ai-agent-office/pull/92. The final merge result is added at merge.
+Follow-ups: remove `service_role` INSERT/DELETE on `public.capabilities`; add the usual rollback script test; owner action `docs/actions/set-worker-internal-url.md` before a live deploy.
