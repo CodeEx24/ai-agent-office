@@ -609,14 +609,14 @@ isOneToOne: false
                   ]
                 },"tasks": {
                   Row: {
-                    "agent_id": string | null,"created_at": string,"created_by": string | null,"department_id": string | null,"description": string,"goal_id": string | null,"handoff_depth": number | null,"handoff_from_agent_id": string | null,"handoff_grants": Json | null,"handoff_path": (string)[] | null,"handoff_run_id": string | null,"id": string,"parent_task_id": string | null,"requester_member_id": string | null,"status": string,"title": string,"updated_at": string,"workspace_id": string
+                    "agent_id": string | null,"created_at": string,"created_by": string | null,"department_id": string | null,"depends_on_task_ids": (string)[],"description": string,"goal_id": string | null,"handoff_depth": number | null,"handoff_from_agent_id": string | null,"handoff_grants": Json | null,"handoff_path": (string)[] | null,"handoff_run_id": string | null,"id": string,"parent_task_id": string | null,"requester_member_id": string | null,"status": string,"suggested_agent_id": string | null,"title": string,"updated_at": string,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"department_id"?: string | null,"description"?: string,"goal_id"?: string | null,"handoff_depth"?: number | null,"handoff_from_agent_id"?: string | null,"handoff_grants"?: Json | null,"handoff_path"?: (string)[] | null,"handoff_run_id"?: string | null,"id"?: string,"parent_task_id"?: string | null,"requester_member_id"?: string | null,"status"?: string,"title": string,"updated_at"?: string,"workspace_id": string
+                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"department_id"?: string | null,"depends_on_task_ids"?: (string)[],"description"?: string,"goal_id"?: string | null,"handoff_depth"?: number | null,"handoff_from_agent_id"?: string | null,"handoff_grants"?: Json | null,"handoff_path"?: (string)[] | null,"handoff_run_id"?: string | null,"id"?: string,"parent_task_id"?: string | null,"requester_member_id"?: string | null,"status"?: string,"suggested_agent_id"?: string | null,"title": string,"updated_at"?: string,"workspace_id": string
                   }
                   Update: {
-                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"department_id"?: string | null,"description"?: string,"goal_id"?: string | null,"handoff_depth"?: number | null,"handoff_from_agent_id"?: string | null,"handoff_grants"?: Json | null,"handoff_path"?: (string)[] | null,"handoff_run_id"?: string | null,"id"?: string,"parent_task_id"?: string | null,"requester_member_id"?: string | null,"status"?: string,"title"?: string,"updated_at"?: string,"workspace_id"?: string
+                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"department_id"?: string | null,"depends_on_task_ids"?: (string)[],"description"?: string,"goal_id"?: string | null,"handoff_depth"?: number | null,"handoff_from_agent_id"?: string | null,"handoff_grants"?: Json | null,"handoff_path"?: (string)[] | null,"handoff_run_id"?: string | null,"id"?: string,"parent_task_id"?: string | null,"requester_member_id"?: string | null,"status"?: string,"suggested_agent_id"?: string | null,"title"?: string,"updated_at"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -648,6 +648,12 @@ isOneToOne: false
       columns: ["workspace_id","handoff_run_id"]
 isOneToOne: false
       referencedRelation: "runs"
+      referencedColumns: ["workspace_id","id"]
+    },{
+      foreignKeyName: "tasks_suggested_agent_fk"
+      columns: ["workspace_id","suggested_agent_id"]
+isOneToOne: false
+      referencedRelation: "agents"
       referencedColumns: ["workspace_id","id"]
     },{
       foreignKeyName: "tasks_workspace_id_agent_id_fkey"
@@ -705,6 +711,9 @@ isOneToOne: false
                            },
 "create_agent":
 { Args: { "p_capabilities": Json,"p_daily_budget_cents": number,"p_model": string,"p_name": string,"p_prompt": string,"p_role": string,"p_skill_ids": (string)[],"p_workspace_id": string }; Returns: string
+                           },
+"create_goal_tasks":
+{ Args: { "p_goal_id": string,"p_items": Json,"p_run_id": string,"p_workspace_id": string }; Returns: (string)[]
                            },
 "create_handoff_task":
 { Args: { "p_depth": number,"p_description": string,"p_grants": Json,"p_path": (string)[],"p_requester_member_id": string,"p_run_id": string,"p_task_id": string,"p_title": string,"p_to_agent_id": string,"p_workspace_id": string }; Returns: string
