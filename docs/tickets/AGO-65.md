@@ -88,7 +88,7 @@ Raise as tickets or attach to AGO-85 / AGO-129.
 - Wiring: AGO-85 must call `createFileEgressAllowlistProvider` and `createEgressDecisionLogger`, and keep `egress` out of model input.
 
 ## Outcome
-Merged after one review round (gate, functional and device testers, code, security and invariant reviews all PASS; approver APPROVE).
+Merged after one review round (gate, functional tester (no device tester: worker-only change), code, security and invariant reviews all PASS; approver APPROVE).
 
 - Deviations from the design: none.
 - Known limitations: nothing in production wires the allowlist provider or the decision logger yet, so no sandbox gets network access until AGO-85; SNI inside an allowed CONNECT tunnel is not checked; the real upstream DNS path through Docker's embedded resolver is not exercised in tests (fails closed); one internal network per run can exhaust Docker's address pools under load (fails closed).
