@@ -295,6 +295,26 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"capability_prerequisite_status": {
+                  Row: {
+                    "check_name": string,"checked_at": string,"created_at": string,"id": string,"reason": string | null,"status": string,"updated_at": string,"workspace_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "check_name": string,"checked_at"?: string,"created_at"?: string,"id"?: string,"reason"?: string | null,"status": string,"updated_at"?: string,"workspace_id": string
+                  }
+                  Update: {
+                    "check_name"?: string,"checked_at"?: string,"created_at"?: string,"id"?: string,"reason"?: string | null,"status"?: string,"updated_at"?: string,"workspace_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "capability_prerequisite_status_workspace_id_fkey"
+      columns: ["workspace_id"]
+isOneToOne: false
+      referencedRelation: "workspaces"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"claim_events": {
                   Row: {
                     "agent_id": string,"claim_id": string,"created_at": string,"id": string,"payload": NonNullable<Json>,"task_id": string,"type": string,"workspace_id": string
@@ -589,14 +609,14 @@ isOneToOne: false
                   ]
                 },"tasks": {
                   Row: {
-                    "agent_id": string | null,"created_at": string,"created_by": string | null,"department_id": string | null,"description": string,"goal_id": string | null,"id": string,"status": string,"title": string,"updated_at": string,"workspace_id": string
+                    "agent_id": string | null,"created_at": string,"created_by": string | null,"department_id": string | null,"description": string,"goal_id": string | null,"handoff_depth": number | null,"handoff_from_agent_id": string | null,"handoff_grants": Json | null,"handoff_path": (string)[] | null,"handoff_run_id": string | null,"id": string,"parent_task_id": string | null,"requester_member_id": string | null,"status": string,"title": string,"updated_at": string,"workspace_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"department_id"?: string | null,"description"?: string,"goal_id"?: string | null,"id"?: string,"status"?: string,"title": string,"updated_at"?: string,"workspace_id": string
+                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"department_id"?: string | null,"description"?: string,"goal_id"?: string | null,"handoff_depth"?: number | null,"handoff_from_agent_id"?: string | null,"handoff_grants"?: Json | null,"handoff_path"?: (string)[] | null,"handoff_run_id"?: string | null,"id"?: string,"parent_task_id"?: string | null,"requester_member_id"?: string | null,"status"?: string,"title": string,"updated_at"?: string,"workspace_id": string
                   }
                   Update: {
-                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"department_id"?: string | null,"description"?: string,"goal_id"?: string | null,"id"?: string,"status"?: string,"title"?: string,"updated_at"?: string,"workspace_id"?: string
+                    "agent_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"department_id"?: string | null,"description"?: string,"goal_id"?: string | null,"handoff_depth"?: number | null,"handoff_from_agent_id"?: string | null,"handoff_grants"?: Json | null,"handoff_path"?: (string)[] | null,"handoff_run_id"?: string | null,"id"?: string,"parent_task_id"?: string | null,"requester_member_id"?: string | null,"status"?: string,"title"?: string,"updated_at"?: string,"workspace_id"?: string
                   }
                   Relationships: [
                     {
@@ -604,6 +624,30 @@ isOneToOne: false
       columns: ["workspace_id","goal_id"]
 isOneToOne: false
       referencedRelation: "goals"
+      referencedColumns: ["workspace_id","id"]
+    },{
+      foreignKeyName: "tasks_handoff_from_agent_fk"
+      columns: ["workspace_id","handoff_from_agent_id"]
+isOneToOne: false
+      referencedRelation: "agents"
+      referencedColumns: ["workspace_id","id"]
+    },{
+      foreignKeyName: "tasks_handoff_parent_fk"
+      columns: ["workspace_id","parent_task_id"]
+isOneToOne: false
+      referencedRelation: "tasks"
+      referencedColumns: ["workspace_id","id"]
+    },{
+      foreignKeyName: "tasks_handoff_requester_fk"
+      columns: ["workspace_id","requester_member_id"]
+isOneToOne: false
+      referencedRelation: "members"
+      referencedColumns: ["workspace_id","id"]
+    },{
+      foreignKeyName: "tasks_handoff_run_fk"
+      columns: ["workspace_id","handoff_run_id"]
+isOneToOne: false
+      referencedRelation: "runs"
       referencedColumns: ["workspace_id","id"]
     },{
       foreignKeyName: "tasks_workspace_id_agent_id_fkey"
@@ -645,7 +689,10 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            "activate_kill_switch":
+            "accept_handoff_task":
+{ Args: { "p_run_id": string,"p_task_id": string,"p_workspace_id": string }; Returns: boolean
+                           },
+"activate_kill_switch":
 { Args: { "p_agent_id"?: string,"p_scope": string,"p_workspace_id": string }; Returns: Json
                            },
 "archive_agent":
@@ -659,8 +706,17 @@ isOneToOne: false
 "create_agent":
 { Args: { "p_capabilities": Json,"p_daily_budget_cents": number,"p_model": string,"p_name": string,"p_prompt": string,"p_role": string,"p_skill_ids": (string)[],"p_workspace_id": string }; Returns: string
                            },
+"create_handoff_task":
+{ Args: { "p_depth": number,"p_description": string,"p_grants": Json,"p_path": (string)[],"p_requester_member_id": string,"p_run_id": string,"p_task_id": string,"p_title": string,"p_to_agent_id": string,"p_workspace_id": string }; Returns: string
+                           },
+"disable_capability":
+{ Args: { "p_capability_id": string,"p_workspace_id": string }; Returns: undefined
+                           },
 "duplicate_agent":
 { Args: { "p_agent_id": string,"p_name": string,"p_workspace_id": string }; Returns: string
+                           },
+"enable_capability":
+{ Args: { "p_capability_id": string,"p_workspace_id": string }; Returns: undefined
                            },
 "import_agent_pack":
 { Args: { "p_checksum": string,"p_plan": Json,"p_workspace_id": string }; Returns: string

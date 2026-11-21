@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 import type { AgentTool } from "../agent/tools.js";
+import type { EgressRuntimeAllowlist } from "../egress/egress-launcher.js";
+
+/** What the model is told when the sandbox or its egress proxy could not start. Never runtime output. */
+export const RUNTIME_UNAVAILABLE_MESSAGE = "the sandbox is unavailable; the code did not run";
 import type { SandboxLimits, SandboxRunner } from "./sandbox-runner.js";
 
 /** Thrown for a denied sandbox call. The loop records it as `tool_call.failed` with this message. */
@@ -29,6 +33,12 @@ const runCodeInputSchema = z.strictObject({
 export function createRunCodeTool(deps: {
   readonly runner: SandboxRunner;
   readonly limits?: Partial<SandboxLimits>;
+  /**
+   * Egress for the run (AGO-65, wired by AGO-85): worker code looks the workspace allowlist up here, so the
+   * model never supplies it (`SandboxRequest.egress` is not in either input schema). An allowlist with no
+   * hosts leaves the run on `--network none`. A lookup that throws is a deny, never a network.
+   */
+  readonly egressFor?: (workspaceId: string) => Promise<EgressRuntimeAllowlist>;
 }): AgentTool {
   return {
     name: "run_code",
@@ -62,15 +72,31 @@ export function createRunCodeTool(deps: {
     },
     async execute(input, context) {
       const parsed = runCodeInputSchema.parse(input);
+      let egress: EgressRuntimeAllowlist | undefined;
+      if (deps.egressFor !== undefined) {
+        try {
+          const allowlist = await deps.egressFor(context.workspaceId);
+          if (allowlist.hosts.length > 0) egress = allowlist;
+        } catch {
+          throw new SandboxDeniedError("runtime_unavailable", RUNTIME_UNAVAILABLE_MESSAGE);
+        }
+      }
       const result = await deps.runner.run({
         workspaceId: context.workspaceId,
         runId: context.runId,
         command: parsed.command,
         files: parsed.files,
         limits: deps.limits,
+        egress,
         signal: context.signal,
       });
-      if (result.kind === "denied") throw new SandboxDeniedError(result.reason, result.message);
+      if (result.kind === "denied") {
+        // The runtime's own message can carry docker or proxy output (stderr, paths, addresses): the model gets
+        // a fixed sentence instead. The detail stays in the worker logs.
+        const message =
+          result.reason === "runtime_unavailable" ? RUNTIME_UNAVAILABLE_MESSAGE : result.message;
+        throw new SandboxDeniedError(result.reason, message);
+      }
       return `exit_code: ${String(result.exitCode)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
     },
   };

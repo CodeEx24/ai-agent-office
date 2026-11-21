@@ -72,6 +72,9 @@ insert into public.pack_events (id, workspace_id, kind, exported_by, agent_ids, 
 insert into public.goals (id, workspace_id, text, created_by) values
   ('10700000-0000-4000-8000-0000000019a1', '10700000-0000-4000-8000-0000000000a1', 'goal a', '10700000-0000-4000-8000-0000000001a1'),
   ('10700000-0000-4000-8000-0000000019b1', '10700000-0000-4000-8000-0000000000b1', 'goal b', '10700000-0000-4000-8000-0000000001b1');
+insert into public.capability_prerequisite_status (id, workspace_id, check_name, status) values
+  ('10700000-0000-4000-8000-0000000020a1', '10700000-0000-4000-8000-0000000000a1', 'credential_broker', 'pass'),
+  ('10700000-0000-4000-8000-0000000020b1', '10700000-0000-4000-8000-0000000000b1', 'credential_broker', 'pass');
 insert into public.agent_mode_changes (id, workspace_id, agent_id, from_mode, to_mode, changed_by) values
   ('10700000-0000-4000-8000-0000000018a1', '10700000-0000-4000-8000-0000000000a1', '10700000-0000-4000-8000-0000000002a1', 'strict', 'standard', '10700000-0000-4000-8000-0000000001a1'),
   ('10700000-0000-4000-8000-0000000018b1', '10700000-0000-4000-8000-0000000000b1', '10700000-0000-4000-8000-0000000002b1', 'strict', 'standard', '10700000-0000-4000-8000-0000000001b1');
@@ -162,6 +165,7 @@ insert into ago107_t.expected values
   ('pack_events', 'select', 1), ('pack_events', 'insert', null), ('pack_events', 'update', null), ('pack_events', 'delete', null),
   ('goals', 'select', 1), ('goals', 'insert', null), ('goals', 'update', null), ('goals', 'delete', null),
   ('agent_mode_changes', 'select', 1), ('agent_mode_changes', 'insert', null), ('agent_mode_changes', 'update', null), ('agent_mode_changes', 'delete', null),
+  ('capability_prerequisite_status', 'select', 1), ('capability_prerequisite_status', 'insert', null), ('capability_prerequisite_status', 'update', null), ('capability_prerequisite_status', 'delete', null),
   ('budgets_usage', 'select', 1), ('budgets_usage', 'insert', 3), ('budgets_usage', 'update', 3), ('budgets_usage', 'delete', null),
   ('notes_index', 'select', 1), ('notes_index', 'insert', 2), ('notes_index', 'update', 2), ('notes_index', 'delete', 2),
   ('policies', 'select', 1), ('policies', 'insert', 3), ('policies', 'update', 3), ('policies', 'delete', null),
@@ -240,6 +244,10 @@ insert into ago107_t.cases values
   ('agent_mode_changes', 'insert', $q$insert into public.agent_mode_changes (workspace_id, agent_id, from_mode, to_mode, changed_by) values ('10700000-0000-4000-8000-0000000000a1', '10700000-0000-4000-8000-0000000002a1', 'strict', 'relaxed', '10700000-0000-4000-8000-0000000001a1')$q$),
   ('agent_mode_changes', 'update', $q$update public.agent_mode_changes set to_mode = 'relaxed' where id = '10700000-0000-4000-8000-0000000018a1'$q$),
   ('agent_mode_changes', 'delete', $q$delete from public.agent_mode_changes where id = '10700000-0000-4000-8000-0000000018a1'$q$),
+  ('capability_prerequisite_status', 'select', $q$select 1 from public.capability_prerequisite_status where id = '10700000-0000-4000-8000-0000000020a1'$q$),
+  ('capability_prerequisite_status', 'insert', $q$insert into public.capability_prerequisite_status (workspace_id, check_name, status) values ('10700000-0000-4000-8000-0000000000a1', 'sandbox_hardened', 'pass')$q$),
+  ('capability_prerequisite_status', 'update', $q$update public.capability_prerequisite_status set status = 'fail' where id = '10700000-0000-4000-8000-0000000020a1'$q$),
+  ('capability_prerequisite_status', 'delete', $q$delete from public.capability_prerequisite_status where id = '10700000-0000-4000-8000-0000000020a1'$q$),
   ('budgets_usage', 'select', $q$select 1 from public.budgets_usage where id = '10700000-0000-4000-8000-0000000011a1'$q$),
   ('budgets_usage', 'insert', $q$insert into public.budgets_usage (workspace_id, agent_id, period_start, period_end, token_budget) values ('10700000-0000-4000-8000-0000000000a1', null, '2026-12-01', '2027-01-01', 1000)$q$),
   ('budgets_usage', 'update', $q$update public.budgets_usage set token_budget = 5 where id = '10700000-0000-4000-8000-0000000011a1'$q$),
@@ -277,10 +285,10 @@ select is_empty(
 select is_empty(
   $$select t.tbl from (select tbl, count(distinct cmd) n from ago107_t.cases group by tbl) t where t.n <> 4$$,
   'AC2: every table is exercised with select, insert, update and delete');
-select is((select count(*)::int from ago107_t.cases), 92, 'AC2: 23 tables x 4 commands = 92 cases');
-select is((select count(*)::int from ago107_t.cases c join ago107_t.expected e using (tbl, cmd)), 92, 'AC2: every case has a documented expectation');
+select is((select count(*)::int from ago107_t.cases), 96, 'AC2: 24 tables x 4 commands = 96 cases');
+select is((select count(*)::int from ago107_t.cases c join ago107_t.expected e using (tbl, cmd)), 96, 'AC2: every case has a documented expectation');
 
--- run the 92 cases as each principal
+-- run the 96 cases as each principal
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000001","role":"authenticated"}', true);
 insert into ago107_t.results select 'owner', tbl, cmd, ago107_t.attempt(stmt) from ago107_t.cases;
@@ -295,7 +303,7 @@ insert into ago107_t.results select 'outsider', tbl, cmd, ago107_t.attempt(stmt)
 reset role;
 
 -- 5-7. the matrix: actual outcome equals the documented one for every principal, table and command
-select is((select count(*)::int from ago107_t.results), 460, 'AC2: 5 principals x 92 cases were attempted');
+select is((select count(*)::int from ago107_t.results), 480, 'AC2: 5 principals x 96 cases were attempted');
 create view ago107_t.mismatches as
   select r.principal, r.tbl, r.cmd, r.outcome,
          case when e.min_rank is not null and p.rank >= e.min_rank then 'allowed' else 'denied' end as expected
@@ -320,16 +328,16 @@ select is((select count(*)::int from ago107_t.results where principal in ('remov
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000001","role":"authenticated"}', true);
 select is_empty($$select * from ago107_t.visibility('10700000-0000-4000-8000-0000000000a1') where foreign_rows <> 0 or own = 0$$,
-  'AC1: owner of A sees A''s rows in all 23 tables and no row of B');
+  'AC1: owner of A sees A''s rows in all 24 tables and no row of B');
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000002","role":"authenticated"}', true);
 select is_empty($$select * from ago107_t.visibility('10700000-0000-4000-8000-0000000000a1') where foreign_rows <> 0 or own = 0$$,
-  'AC1: member of A sees A''s rows in all 23 tables and no row of B');
+  'AC1: member of A sees A''s rows in all 24 tables and no row of B');
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000003","role":"authenticated"}', true);
 select is_empty($$select * from ago107_t.visibility('10700000-0000-4000-8000-0000000000a1') where foreign_rows <> 0 or own = 0$$,
-  'AC1: viewer of A sees A''s rows in all 23 tables and no row of B');
+  'AC1: viewer of A sees A''s rows in all 24 tables and no row of B');
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000005","role":"authenticated"}', true);
 select is_empty($$select * from ago107_t.visibility('10700000-0000-4000-8000-0000000000b1') where foreign_rows <> 0 or own = 0$$,
-  'AC1: owner of B sees B''s rows in all 23 tables and no row of A');
+  'AC1: owner of B sees B''s rows in all 24 tables and no row of A');
 select set_config('request.jwt.claims', '{"sub":"10700000-0000-4000-8000-000000000004","role":"authenticated"}', true);
 select is((select coalesce(sum(own + foreign_rows), 0)::int from ago107_t.visibility('10700000-0000-4000-8000-0000000000a1')), 0,
   'AC1: a soft-removed member sees zero rows in every table');

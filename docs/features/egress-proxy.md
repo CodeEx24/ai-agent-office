@@ -44,4 +44,4 @@ The proxy and the network are labelled `ago.egress=true` and `ago.egress.run=<ru
 - Test-only knobs exist on the runner options (`unsafeAllowEgressAddressesForTests`, `egressAddHostsForTests`; they reach the proxy as `unsafeAllowAddressesForTests` and `addHostsForTests`). They are not reachable from the allowlist file.
 
 ## Known limits
-Needs Docker on the worker host. A client can still lie about SNI inside an allowed CONNECT tunnel. Each egress run starts its own proxy (about a second). The allowlist is a file: no UI or per-workspace storage yet. `run_code` is not wired to egress; that belongs with AGO-85. Docker-in-CI for the real-container suite is AGO-238.
+Needs Docker on the worker host. A client can still lie about SNI inside an allowed CONNECT tunnel. Each egress run starts its own proxy (about a second). The allowlist is a file: no UI or per-workspace storage yet. `run_code` is wired to egress by AGO-85: worker code reads this file per run and sets `egress`, blocks are logged with a per-run cap, and the model can never supply `egress` (see [capability prerequisites](capability-prerequisites.md)). Docker-in-CI for the real-container suite is AGO-238.

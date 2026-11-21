@@ -5,6 +5,7 @@ export * from "./policy/policy-schemas.js";
 export * from "./policy/policy-engine.js";
 export * from "./capabilities/capability-schemas.js";
 export * from "./capabilities/starter-capabilities.js";
+export * from "./capabilities/prerequisites/prerequisites.js";
 export * from "./skills/skill-schemas.js";
 export * from "./context/context-schemas.js";
 export * from "./agents/agent-schemas.js";

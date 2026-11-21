@@ -1,7 +1,7 @@
 -- AGO-125: the capability catalog.
 --   AC1  every workspace has the 12 starter capabilities (seeded for existing and new workspaces, idempotent)
 --   AC2  tier 3 and 4 cannot be automatic, in data (CHECK), even for the table owner
---   AC3  members and viewers read the catalog; owners change only enabled and description; isolation holds
+--   AC3  members and viewers read the catalog; owners change only the description (enabled: enable_capability, AGO-85); isolation holds
 -- The AGO-107 catalog test (rls_catalog.test.sql) covers RLS, grants and the pinned search_path for this
 -- table automatically.
 -- Run: pnpm exec supabase test db (inside the db lock).
@@ -113,20 +113,20 @@ set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"12500000-0000-4000-8000-00000000000d","role":"authenticated"}', true);
 select is((select count(*)::int from public.capabilities), 14, 'AC3: a viewer reads their workspace''s whole catalog (12 + 2 test rows) and nothing of B');
 select is((select count(*)::int from public.capabilities where workspace_id = '125bbbbb-0000-4000-8000-000000000001'), 0, 'AC3: a viewer of A cannot read B''s catalog');
-with u as (update public.capabilities set enabled = false where key = 'vault.read' returning 1)
+with u as (update public.capabilities set description = 'x' where key = 'vault.read' returning 1)
 select is((select count(*)::int from u), 0, 'AC3: a viewer''s update changes no row');
 select throws_ok($$insert into public.capabilities (workspace_id, key, name, tier, scope, default_mode)
   values ('125aaaaa-0000-4000-8000-000000000001', 'v.new', 'N', 0, 'agent', 'automatic')$$, '42501', null, 'AC3: a viewer cannot insert');
 
 select set_config('request.jwt.claims', '{"sub":"12500000-0000-4000-8000-00000000000c","role":"authenticated"}', true);
 select is((select count(*)::int from public.capabilities), 14, 'AC3: a member reads the catalog');
-with u as (update public.capabilities set enabled = false where key = 'vault.read' returning 1)
+with u as (update public.capabilities set description = 'x' where key = 'vault.read' returning 1)
 select is((select count(*)::int from u), 0, 'AC3: a member''s update changes no row');
 
 select set_config('request.jwt.claims', '{"sub":"12500000-0000-4000-8000-00000000000a","role":"authenticated"}', true);
 select is((select count(*)::int from public.capabilities), 14, 'AC3: an owner reads the catalog');
-with u as (update public.capabilities set enabled = false, description = 'owner edit' where key = 'vault.read' returning 1)
-select is((select count(*)::int from u), 1, 'AC3: an owner can change enabled and description');
+with u as (update public.capabilities set description = 'owner edit' where key = 'vault.read' returning 1)
+select is((select count(*)::int from u), 1, 'AC3: an owner can change the description (enabled moved to enable_capability, AGO-85)');
 select throws_ok($$update public.capabilities set tier = 0 where key = 'payments.execute'$$, '42501', null, 'AC3: not even an owner can change a tier through the API');
 select throws_ok($$update public.capabilities set default_mode = 'automatic' where key = 'code.run'$$, '42501', null, 'AC3: not even an owner can change the default through the API');
 select throws_ok($$update public.capabilities set key = 'renamed.key' where key = 'vault.read'$$, '42501', null, 'AC3: not even an owner can rename a key through the API');
@@ -135,7 +135,7 @@ select throws_ok($$delete from public.capabilities where key = 'vault.read'$$, '
 -- 34-36. an owner of B cannot touch A's catalog
 select set_config('request.jwt.claims', '{"sub":"12500000-0000-4000-8000-00000000000b","role":"authenticated"}', true);
 select is((select count(*)::int from public.capabilities where workspace_id = '125aaaaa-0000-4000-8000-000000000001'), 0, 'isolation: an owner of B cannot read A''s catalog');
-with u as (update public.capabilities set enabled = false where workspace_id = '125aaaaa-0000-4000-8000-000000000001' returning 1)
+with u as (update public.capabilities set description = 'x' where workspace_id = '125aaaaa-0000-4000-8000-000000000001' returning 1)
 select is((select count(*)::int from u), 0, 'isolation: an owner of B cannot update A''s catalog');
 select is((select count(*)::int from public.capabilities), 12, 'isolation: an owner of B sees exactly their own 12');
 
@@ -149,7 +149,7 @@ select throws_ok($$select count(*) from public.capabilities$$, '42501', null, 'a
 -- 39-40. owner's edit stuck, and the high-tier invariant survives it (as postgres)
 reset role;
 select is((select enabled::text || '/' || description from public.capabilities where workspace_id = '125aaaaa-0000-4000-8000-000000000001' and key = 'vault.read'),
-  'false/owner edit', 'the owner''s safe edit was stored');
+  'true/owner edit', 'the owner''s safe edit was stored');
 select is((select count(*)::int from public.capabilities where tier >= 3 and default_mode = 'automatic'), 0,
   'AC2: no capability anywhere is tier 3 or 4 and automatic');
 

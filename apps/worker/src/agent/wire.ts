@@ -14,6 +14,11 @@ import { createPgGrantedCapabilitySource, createToolOffer } from "./tool-offer.j
 import { createPgAgentRunLimitsSource } from "./pg-run-limits-source.js";
 import { createRunLimitsResolver } from "./run-limits.js";
 import { createToolRegistry, getCurrentTimeTool } from "./tools.js";
+import {
+  createPrerequisiteGatedPolicyHook,
+  createEgressWiredRunCodeTool,
+  runPrerequisiteChecks,
+} from "../prerequisites/index.js";
 
 import type { WorkerConfig } from "../config.js";
 import type { Logger } from "../logger.js";
@@ -64,8 +69,20 @@ export function createProductionAgentExecutor(options: {
       maxChars: config.contextMaxChars,
     }),
     // The deterministic policy engine (AGO-34): grants and layered policies are read from the database.
-    policy: handoff.policy,
-    tools: createToolRegistry([getCurrentTimeTool, handoff.tool]),
+    // AGO-85: risky capabilities (code, browse, outbound message) are denied at call time whenever a prerequisite
+    // check fails, even if the catalog says they are enabled. The gate only ever adds a deny, so it wraps the
+    // handoff-aware policy hook (AGO-81) and leaves its decisions alone.
+    policy: createPrerequisiteGatedPolicyHook({
+      inner: handoff.policy,
+      runChecks: () => runPrerequisiteChecks(),
+    }),
+    // AGO-85: `run_code` gets its egress allowlist from the host file (never from the model); blocks are logged
+    // with a per-run cap. No allowlist file means no network at all.
+    tools: createToolRegistry([
+      getCurrentTimeTool,
+      handoff.tool,
+      createEgressWiredRunCodeTool(logger),
+    ]),
     // Only granted, catalog-enabled tools are shown to the model (AGO-25), re-read before every model call.
     toolOffer: createToolOffer({
       source: createPgGrantedCapabilitySource(createPgCredentialStore(pool)),

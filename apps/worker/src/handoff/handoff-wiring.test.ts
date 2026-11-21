@@ -158,7 +158,10 @@ describe("production handoff wiring", () => {
   it("agent/wire.ts uses this wiring, so the run loop cannot silently drop the clamp", () => {
     const source = readFileSync(new URL("../agent/wire.ts", import.meta.url), "utf8");
     expect(source).toContain("createHandoffWiring");
-    expect(source).toContain("policy: handoff.policy");
+    // AGO-85 wraps the handoff policy in the prerequisite gate (it only ever adds a deny): the loop's policy must
+    // still be built on `handoff.policy`, so the clamp cannot be dropped.
+    expect(source).toContain("createPrerequisiteGatedPolicyHook");
+    expect(source).toContain("inner: handoff.policy");
     expect(source).toContain("handoff.tool");
     expect(source).not.toContain("createPolicyEngineHook");
   });
