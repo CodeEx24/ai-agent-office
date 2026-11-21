@@ -3,6 +3,7 @@
 Links
 - Ticket: https://stratyge.atlassian.net/browse/AGO-81
 - PRs: https://github.com/CodeEx24/ai-agent-office/pull/91
+- Follow-up: AGO-252 (ledger reservation of handoff budget, High risk; owner-accepted exception to D3, 2026-11-21)
 - Related: AGO-148 (identity, done), AGO-34 (policy engine, done), AGO-160 (claims), AGO-188 (cross-department requests, unblocked by this), AGO-117 (Manager splits goals, follows this)
 - Status: In review (draft PR 91). Spec accepted 2026-11-20; schema slot granted and used 2026-11-20 (migration, Postgres store, pgTAP)
 
@@ -101,6 +102,7 @@ AGO-148 (credential claims, read-only), AGO-34 (policy engine, read-only), AGO-1
 - Nothing starts the receiver's run for a handoff task yet, so `acceptHandoff` is not called by the run loop; the queue follow-up does that.
 - The `handoff_task` tool reuses capability `tasks.manage` (tier 1) instead of a new `tasks.handoff` capability, which would need a catalog seed. Accepted by the coordinator. Any agent that may manage tasks can therefore start a handoff; the handoff rule, not the capability, bounds what it passes on.
 - Data scope is modelled as path prefixes; richer scopes belong to AGO-188.
+- **Accepted exception to D3 (owner, 2026-11-21; follow-up AGO-252, ledger reservation, High risk).** Two budget limits stay open: (1) the hop-1 sender's own daily budget is read at handoff time, not reserved in the ledger; (2) two model calls in flight on one task read settled spend, so both can pass and the task can overshoot its limit by one call. AGO-252 reserves the budget in the ledger and closes both.
 
 ## Testing notes
 Unit tests for every widening attempt (more capabilities, higher tier, bigger budget, wider data scope, another workspace, forged requester, depth, cycle, self-handoff, Tier 3/4 never auto-allowed); property-style test that the result is always a subset of both grants; the no-chat guard; `pnpm --filter @ago/shared test`, `pnpm --filter @ago/worker test`. DB-touching tests only under the db lock.
