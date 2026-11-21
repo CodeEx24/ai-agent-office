@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-
 import type { EgressDecision } from "@ago/shared";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -9,28 +7,12 @@ import {
   type SandboxRequest,
   type SandboxResult,
 } from "../sandbox/sandbox-runner.js";
-import { EGRESS_LABEL, EGRESS_PROXY_IMAGE, startEgressProxy } from "./egress-launcher.js";
+import { createRunScope, docker, dockerReady } from "./docker-test-support.js";
+import { EGRESS_PROXY_IMAGE, startEgressProxy } from "./egress-launcher.js";
 
 // Real containers: the proof that the proxy is verified from OUTSIDE the sandbox (AGO-65 AC2). No outbound call
 // to any real third-party host: the "internet" is a local target container reached only through the proxy.
 vi.setConfig({ testTimeout: 120_000, hookTimeout: 180_000 });
-
-function docker(args: string[], timeout = 60_000): { ok: boolean; out: string } {
-  const result = spawnSync("docker", args, { encoding: "utf8", timeout });
-  return { ok: result.status === 0, out: `${result.stdout}${result.stderr}`.trim() };
-}
-
-function dockerReady(): { ok: true } | { ok: false; reason: string } {
-  const info = docker(["info", "--format", "{{.OSType}}"], 20_000);
-  if (!info.ok) return { ok: false, reason: "the docker daemon is not reachable" };
-  if (info.out !== "linux") return { ok: false, reason: "docker is not running Linux containers" };
-  for (const image of [SANDBOX_IMAGE, EGRESS_PROXY_IMAGE]) {
-    if (!docker(["image", "inspect", image], 20_000).ok && !docker(["pull", image], 120_000).ok) {
-      return { ok: false, reason: `the pinned image ${image} is not available` };
-    }
-  }
-  return { ok: true };
-}
 
 const ready = dockerReady();
 if (!ready.ok) {
@@ -38,6 +20,8 @@ if (!ready.ok) {
   console.warn(`[egress] SKIPPING the real-container egress tests: ${ready.reason}`);
 }
 
+// Run ids are unique to this process; "leaves nothing behind" is checked only for what this file created.
+const scope = createRunScope();
 const TARGET_NAME = `ago-egress-target-${String(process.pid)}`;
 const TARGET_SCRIPT = [
   'const http = require("http");',
@@ -74,7 +58,7 @@ function makeRunner(): ReturnType<typeof createDockerSandboxRunner> {
 
 async function run(script: string, egress: SandboxRequest["egress"]): Promise<string> {
   counter += 1;
-  const runId = `egress-${String(process.pid)}-${String(counter)}`;
+  const runId = scope.id(`egress-${String(counter)}`);
   const result: SandboxResult = await makeRunner().run({
     workspaceId: "ws-egress",
     runId,
@@ -116,6 +100,7 @@ beforeAll(() => {
 afterAll(() => {
   if (!ready.ok) return;
   docker(["rm", "-f", TARGET_NAME]);
+  scope.cleanup();
 });
 
 const PROXY_VARS = "P=${HTTP_PROXY#http://}; H=${P%:*}; PT=${P#*:}";
@@ -234,15 +219,16 @@ describe.skipIf(!ready.ok)("egress proxy, verified from inside a real sandbox", 
   });
 
   it("a proxy that is down means deny: no direct connection on the same internal network", async () => {
+    const downRunId = scope.id("egress-down");
     const started = await startEgressProxy({
-      runId: "egress-down",
+      runId: downRunId,
       workspaceId: "ws-egress",
       allowlist: ALLOW,
     });
     if (!started.ok) throw new Error(started.message);
     const { session } = started;
     try {
-      const proxyId = docker(["ps", "-q", "--filter", "label=ago.egress.run=egress-down"]).out;
+      const proxyId = docker(["ps", "-q", "--filter", `label=ago.egress.run=${downRunId}`]).out;
       expect(proxyId).not.toBe("");
       docker(["kill", proxyId]);
       const [host = "", port = ""] = session.proxyUrl.replace("http://", "").split(":");
@@ -267,23 +253,24 @@ describe.skipIf(!ready.ok)("egress proxy, verified from inside a real sandbox", 
   });
 
   it("is a typed deny, with no sandbox started, when the proxy cannot start", async () => {
+    const noProxyRunId = scope.id("egress-noproxy");
     const runner = createDockerSandboxRunner({ egressImage: `node@sha256:${"0".repeat(64)}` });
     const result = await runner.run({
       workspaceId: "ws-egress",
-      runId: "egress-noproxy",
+      runId: noProxyRunId,
       command: ["sh", "-c", "echo should-not-run"],
       egress: ALLOW,
     });
     expect(result).toMatchObject({ kind: "denied", reason: "runtime_unavailable" });
-    expect(docker(["ps", "-a", "-q", "--filter", "label=ago.sandbox.run=egress-noproxy"]).out).toBe(
-      "",
-    );
+    expect(
+      docker(["ps", "-a", "-q", "--filter", `label=ago.sandbox.run=${noProxyRunId}`]).out,
+    ).toBe("");
   });
 
   it("an invalid allowlist is refused before anything starts", async () => {
     const result = await createDockerSandboxRunner().run({
       workspaceId: "ws-egress",
-      runId: "egress-badlist",
+      runId: scope.id("egress-badlist"),
       command: ["true"],
       egress: { hosts: ["*.com"], ports: [80] },
     });
@@ -291,9 +278,6 @@ describe.skipIf(!ready.ok)("egress proxy, verified from inside a real sandbox", 
   });
 
   it("leaves no proxy container or network behind", () => {
-    const containers = docker(["ps", "-a", "-q", "--filter", `label=${EGRESS_LABEL}=true`]).out;
-    const networks = docker(["network", "ls", "-q", "--filter", `label=${EGRESS_LABEL}=true`]).out;
-    expect(containers).toBe("");
-    expect(networks).toBe("");
+    expect(scope.leftovers()).toBe("");
   });
 });
