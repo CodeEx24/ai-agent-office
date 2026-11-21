@@ -355,6 +355,7 @@ describe("createHandoffPolicyHook: the receiver runs inside the intersection", (
       store: {
         findByRun: () => Promise.reject(new Error("db down")),
         spentCentsOnTask: () => Promise.resolve(0),
+        allocatedCentsOnRun: () => Promise.resolve(0),
       },
       source: { load: () => Promise.resolve(inputsFor([])) },
     });

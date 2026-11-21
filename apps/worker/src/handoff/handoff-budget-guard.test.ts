@@ -14,6 +14,7 @@ const WS = "11111111-1111-4111-8111-111111111111";
 const HUMAN = "99999999-9999-4999-8999-999999999999";
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const C = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const MODEL = "claude-haiku-5-5"; // 100 / 500 cents per million tokens
 
 const grant = (capabilityKey: string): HandoffGrant => ({
@@ -119,6 +120,41 @@ describe("the handoff budget is checked before each model call", () => {
     expect(reserve).toHaveBeenCalledTimes(1);
   });
 
+  it("round 5: budget the task already gave to a child handoff is not its to spend (give-then-spend)", async () => {
+    const { store, taskId } = await handedOff(100);
+    store.setParty(party(C));
+    const { guard, reserve } = inner();
+    const wrapped = withHandoffBudget(guard, store);
+    const hand = (budgetCents: number) =>
+      createHandoff(
+        {
+          store,
+          emitter: createRunEventEmitter({
+            workspaceId: WS,
+            runId: "run-b",
+            store: {
+              insert: () =>
+                Promise.resolve({ id: "e", seq: 1, created_at: "2026-11-20T00:00:00Z" }),
+            },
+          }),
+          newId: () => "7a5c0000-0000-4000-8000-000000000002",
+        },
+        { workspaceId: WS, runId: "run-b", agentId: B },
+        { to_agent_id: C, title: "t", requested: { budget_cents: budgetCents } },
+      );
+
+    expect((await wrapped.reserve(call())).allowed).toBe(true); // 6 <= 100
+    expect((await hand(95)).ok).toBe(true); // B keeps 5
+    expect(await wrapped.reserve(call())).toMatchObject({
+      allowed: false,
+      reason: "handoff_budget_would_be_exceeded",
+      limit: 5,
+      used: 0,
+    });
+    expect(reserve).toHaveBeenCalledTimes(1);
+    expect(taskId).toBeTruthy();
+  });
+
   it("denies a model with no price (the worst case cannot be computed)", async () => {
     const { store } = await handedOff(500);
     const { guard, reserve } = inner();
@@ -141,6 +177,7 @@ describe("the handoff budget is checked before each model call", () => {
     const broken = {
       findByRun: store.findByRun.bind(store),
       spentCentsOnTask: () => Promise.reject(new Error("db down")),
+      allocatedCentsOnRun: store.allocatedCentsOnRun.bind(store),
     };
     expect(await withHandoffBudget(guard, broken, onError).reserve(call())).toMatchObject({
       allowed: false,

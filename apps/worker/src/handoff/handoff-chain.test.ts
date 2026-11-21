@@ -339,4 +339,74 @@ describe("the narrowed budget is enforced at tool-call time", () => {
       reasonCode: HANDOFF_BUDGET_EXHAUSTED,
     });
   });
+
+  const contextOf = (runId: string, agentId: string): PolicyContext => ({
+    ...context,
+    runId,
+    agentId,
+  });
+
+  it("round 5, depth 1: a task that gave budget to a child cannot spend it again (100 granted, 60 given, 40 left)", async () => {
+    const { store, hop, take } = setup();
+    const one = await hop(RUN.A, A, B, { requested: { budget_cents: 100 } });
+    if (!one.ok) throw new Error(`setup failed: ${one.reason}`);
+    await take(RUN.B, B, one.taskId);
+    const hook = createHandoffPolicyHook({ store, source: { load: () => Promise.resolve(own) } });
+
+    expect((await hook.check(call, contextOf(RUN.B, B))).decision).toBe("allow");
+    const two = await hop(RUN.B, B, C, { requested: { budget_cents: 60 } });
+    if (!two.ok) throw new Error(`setup failed: ${two.reason}`);
+
+    store.setSpentCents(WS, one.taskId, 39);
+    expect((await hook.check(call, contextOf(RUN.B, B))).decision).toBe("allow");
+    store.setSpentCents(WS, one.taskId, 40); // its own 40 are spent: the 60 given away are not its to spend
+    expect(await hook.check(call, contextOf(RUN.B, B))).toMatchObject({
+      decision: "deny",
+      reasonCode: HANDOFF_BUDGET_EXHAUSTED,
+    });
+  });
+
+  it("round 5: a task that gave its whole budget away is denied at once", async () => {
+    const { store, hop, take } = setup();
+    const one = await hop(RUN.A, A, B, { requested: { budget_cents: 100 } });
+    if (!one.ok) throw new Error(`setup failed: ${one.reason}`);
+    await take(RUN.B, B, one.taskId);
+    expect((await hop(RUN.B, B, C, { requested: { budget_cents: 100 } })).ok).toBe(true);
+    const hook = createHandoffPolicyHook({ store, source: { load: () => Promise.resolve(own) } });
+    expect(await hook.check(call, contextOf(RUN.B, B))).toMatchObject({
+      decision: "deny",
+      reasonCode: HANDOFF_BUDGET_EXHAUSTED,
+    });
+  });
+
+  it("round 5, depth 3: the limits of the whole chain add up to the first grant, never more (100 = 40 + 30 + 30)", async () => {
+    const { store, hop, take } = setup();
+    const one = await hop(RUN.A, A, B, { requested: { budget_cents: 100 } });
+    if (!one.ok) throw new Error(`setup failed: ${one.reason}`);
+    await take(RUN.B, B, one.taskId);
+    const two = await hop(RUN.B, B, C, { requested: { budget_cents: 60 } });
+    if (!two.ok) throw new Error(`setup failed: ${two.reason}`);
+    await take(RUN.C, C, two.taskId);
+    const three = await hop(RUN.C, C, D, { requested: { budget_cents: 30 } });
+    if (!three.ok) throw new Error(`setup failed: ${three.reason}`);
+    await take(RUN.D, D, three.taskId);
+    const hook = createHandoffPolicyHook({ store, source: { load: () => Promise.resolve(own) } });
+
+    // B holds 100 - 60 = 40, C holds 60 - 30 = 30, D holds 30. Each is denied exactly at its own limit.
+    const limits = [
+      { run: RUN.B, agent: B, task: one.taskId, limit: 40 },
+      { run: RUN.C, agent: C, task: two.taskId, limit: 30 },
+      { run: RUN.D, agent: D, task: three.taskId, limit: 30 },
+    ];
+    for (const { run, agent, task, limit } of limits) {
+      store.setSpentCents(WS, task, limit - 1);
+      expect((await hook.check(call, contextOf(run, agent))).decision).toBe("allow");
+      store.setSpentCents(WS, task, limit);
+      expect(await hook.check(call, contextOf(run, agent))).toMatchObject({
+        decision: "deny",
+        reasonCode: HANDOFF_BUDGET_EXHAUSTED,
+      });
+    }
+    expect(limits.reduce((sum, l) => sum + l.limit, 0)).toBe(100);
+  });
 });

@@ -73,6 +73,9 @@ Everything is a pure, deterministic function plus a thin worker port, so the sch
   - An out-of-range `cost_cents` (13 or more digits) now counts as a LARGE number (999999999999), not 0: it can only shrink a budget. The cast still sits inside the CASE, so 22003 cannot be raised. Anything else non-numeric still counts 0.
   - Nit: the not-found check comes before the assignee check. The review's note about `run_events_workspace_run_seq_idx` is not cited anywhere in this ticket's files (that index was replaced by `run_events_run_seq_key (workspace_id, run_id, seq)`; the old name appears only in earlier tickets' migrations, which are not touched here).
   - Tests: `agent_handoffs_chain.test.sql` (hop-2 and hop-1 split, unknown outcome, out-of-range cost), `handoff-chain.test.ts` (split cases), `pg-handoff-budget.integration.test.ts`, `pg-handoff-chain.integration.test.ts`.
+- **Round 5 (review r4 fix, owner authorized, 2026-11-21).**
+  - Give-then-spend closed: a handoff task's OWN spend limit is its narrowed budget minus what it already gave to child handoffs (`allocatedCentsOnRun`), in the pre-call guard (`withHandoffBudget`) and in the tool-call hook (`createHandoffPolicyHook`). So the same budget cannot be given to a child and then spent again: a 100-cent grant is 40 + 30 + 30 across a three-hop chain, never 200 or 300. A task that gave everything away is denied at once.
+  - Tests: unit tests for depth 1 and depth 3 (`handoff-chain.test.ts`), the guard (`handoff-budget-guard.test.ts`), and the real store (`pg-handoff-chain.integration.test.ts`). No new SQL: the guard reads through the existing store query, so no pgTAP change.
 
 ## Boundaries
 - **Always:** scope by workspace_id; policy check before every tool call; Zod at the boundary; intersect, never union.

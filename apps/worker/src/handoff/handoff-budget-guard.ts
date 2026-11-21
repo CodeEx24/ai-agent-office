@@ -15,7 +15,7 @@ import type { HandoffStore } from "./handoff-store.js";
  */
 export function withHandoffBudget(
   guard: BudgetGuard,
-  store: Pick<HandoffStore, "findByRun" | "spentCentsOnTask">,
+  store: Pick<HandoffStore, "findByRun" | "spentCentsOnTask" | "allocatedCentsOnRun">,
   onStoreError?: (error: unknown) => void,
 ): BudgetGuard {
   const refuse = (
@@ -48,8 +48,12 @@ export function withHandoffBudget(
             ? null
             : worstCaseCostCents(call.model, call.inputCharacters, call.maxOutputTokens);
         if (estimate === null) return refuse("model_not_priced", 0, 0);
-        const spent = await store.spentCentsOnTask(call.workspaceId, handoff.taskId);
-        const limit = handoff.narrowed.budgetCents;
+        const [spent, given] = await Promise.all([
+          store.spentCentsOnTask(call.workspaceId, handoff.taskId),
+          store.allocatedCentsOnRun(call.workspaceId, call.runId),
+        ]);
+        // Budget already given to child handoffs is not this task's to spend: its own limit is what is left.
+        const limit = Math.max(0, handoff.narrowed.budgetCents - given);
         if (spent + estimate > limit) {
           return refuse("handoff_budget_would_be_exceeded", limit, spent, estimate);
         }

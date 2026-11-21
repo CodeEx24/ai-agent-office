@@ -36,7 +36,7 @@ export function clampToHandoff(inputs: PolicyInputs, handoff: HandoffRecord): Po
 
 export function createHandoffPolicyHook(deps: {
   readonly source: PolicySource;
-  readonly store: Pick<HandoffStore, "findByRun" | "spentCentsOnTask">;
+  readonly store: Pick<HandoffStore, "findByRun" | "spentCentsOnTask" | "allocatedCentsOnRun">;
   readonly builtinTools?: readonly string[];
 }): PolicyHook {
   return {
@@ -45,8 +45,13 @@ export function createHandoffPolicyHook(deps: {
       if (handoff !== null) {
         // The narrowed budget is a cap on what the runs on this task may spend: once it is used up, every further
         // tool call is denied. A store error reaches the loop, which denies (no check, no action).
-        const spent = await deps.store.spentCentsOnTask(context.workspaceId, handoff.taskId);
-        if (spent >= handoff.narrowed.budgetCents) {
+        // What the task already gave to its child handoffs is no longer its own to spend (the same budget cannot be
+        // given away and then spent again), so its own limit is the narrowed budget minus that.
+        const [spent, given] = await Promise.all([
+          deps.store.spentCentsOnTask(context.workspaceId, handoff.taskId),
+          deps.store.allocatedCentsOnRun(context.workspaceId, context.runId),
+        ]);
+        if (spent >= Math.max(0, handoff.narrowed.budgetCents - given)) {
           return { decision: "deny", reasonCode: HANDOFF_BUDGET_EXHAUSTED };
         }
       }

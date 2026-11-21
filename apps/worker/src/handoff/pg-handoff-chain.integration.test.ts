@@ -676,6 +676,22 @@ describe.skipIf(!live)("AGO-81 handoff chain rules (live database)", { timeout: 
       });
     });
 
+    it("round 5: budget given to a child handoff is not the task's to spend; allocatedCentsOnRun feeds the hook (real store)", async () => {
+      const task = await handoffWithBudget(100);
+      expect(await store().allocatedCentsOnRun(ws, task.runId)).toBe(0);
+      const child = await hop(task.runId, B, C, { requested: { budget_cents: 60 } });
+      expect(child.ok).toBe(true);
+      expect(await store().allocatedCentsOnRun(ws, task.runId)).toBe(60);
+
+      await cost(task.runId, 39);
+      expect((await hook().check(toolCall, contextFor(task.runId, B))).decision).toBe("allow");
+      await cost(task.runId, 1); // 40 spent = its own 100 - 60 given
+      expect(await hook().check(toolCall, contextFor(task.runId, B))).toEqual({
+        decision: "deny",
+        reasonCode: HANDOFF_BUDGET_EXHAUSTED,
+      });
+    });
+
     it("allows a call while spending is below the cap and denies it when spending equals the cap", async () => {
       const task = await handoffWithBudget(50);
       const second = await runOnTask(task.taskId, B);
